@@ -5,9 +5,12 @@ spring:
     password: ${DB_PASSWORD:farm2home@123}
   flyway:
     schemas: subscription
+    create-schemas: true
 
-jwt:
-  secret: ${JWT_SECRET}
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eureka@secret@discovery-service:8761/eureka
 
 management:
   endpoints:

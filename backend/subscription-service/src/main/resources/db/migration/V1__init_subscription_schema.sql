@@ -5,10 +5,10 @@
 CREATE TABLE subscription.subscriptions (
     id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     customer_id    UUID          NOT NULL,
-    milk_type      VARCHAR(50)   NOT NULL,   -- FULL_CREAM | TONED | DOUBLE_TONED | SKIMMED
-    quantity       DECIMAL(5, 2) NOT NULL,   -- in liters
-    schedule_type  VARCHAR(30)   NOT NULL,   -- DAILY | ALTERNATE_DAY | WEEKLY
-    delivery_days  VARCHAR(50),              -- e.g. MON,WED,FRI for WEEKLY
+    milk_type      VARCHAR(50)   NOT NULL,     -- FULL_CREAM | TONED | DOUBLE_TONED | SKIMMED
+    quantity       DECIMAL(5, 2) NOT NULL,     -- in litres per delivery
+    schedule_type  VARCHAR(30)   NOT NULL,     -- DAILY | ALTERNATE_DAY | WEEKLY
+    delivery_days  VARCHAR(50),               -- MON,WED,FRI — only for WEEKLY
     start_date     DATE          NOT NULL,
     end_date       DATE,
     status         VARCHAR(20)   NOT NULL DEFAULT 'ACTIVE',  -- ACTIVE | PAUSED | CANCELLED | EXPIRED
@@ -25,3 +25,7 @@ CREATE TABLE subscription.subscriptions (
 CREATE INDEX idx_subscriptions_customer ON subscription.subscriptions(customer_id);
 CREATE INDEX idx_subscriptions_status   ON subscription.subscriptions(status);
 CREATE INDEX idx_subscriptions_dates    ON subscription.subscriptions(start_date, end_date);
+CREATE INDEX idx_subscriptions_pause    ON subscription.subscriptions(pause_end)
+    WHERE status = 'PAUSED';
+CREATE INDEX idx_subscriptions_active   ON subscription.subscriptions(customer_id, status)
+    WHERE is_deleted = FALSE;
