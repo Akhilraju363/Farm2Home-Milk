@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/farm2home?currentSchema=customer
+    username: ${DB_USERNAME:farm2home}
+    password: ${DB_PASSWORD:farm2home@123}
+  flyway:
+    schemas: customer
+
+jwt:
+  secret: ${JWT_SECRET}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.farm2home: INFO
