@@ -1,5 +1,5 @@
 -- ============================================================
--- Order Service — Schema: order
+-- Order Service — Schema: "order"   (reserved keyword → quoted)
 -- ============================================================
 
 CREATE TABLE "order".orders (
@@ -8,7 +8,8 @@ CREATE TABLE "order".orders (
     customer_id     UUID          NOT NULL,
     subscription_id UUID,
     order_date      DATE          NOT NULL,
-    order_type      VARCHAR(20)   NOT NULL DEFAULT 'SUBSCRIPTION',  -- SUBSCRIPTION | ONE_TIME
+    order_type      VARCHAR(20)   NOT NULL DEFAULT 'SUBSCRIPTION',
+    -- SUBSCRIPTION | ONE_TIME
     total_amount    DECIMAL(10,2) NOT NULL DEFAULT 0,
     status          VARCHAR(30)   NOT NULL DEFAULT 'PENDING',
     -- PENDING | ASSIGNED | OUT_FOR_DELIVERY | DELIVERED | CANCELLED
@@ -30,12 +31,29 @@ CREATE TABLE "order".order_items (
     created_at  TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
+-- Local read-model: populated by Kafka events from subscription-service
+CREATE TABLE "order".subscription_snapshots (
+    subscription_id UUID         PRIMARY KEY,
+    customer_id     UUID         NOT NULL,
+    milk_type       VARCHAR(50)  NOT NULL,
+    quantity        DECIMAL(5,2) NOT NULL,
+    schedule_type   VARCHAR(30)  NOT NULL,
+    delivery_days   VARCHAR(50),
+    start_date      DATE         NOT NULL,
+    end_date        DATE,
+    status          VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
+    updated_at      TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+
 -- Indexes
 CREATE INDEX idx_orders_customer      ON "order".orders(customer_id);
 CREATE INDEX idx_orders_status        ON "order".orders(status);
 CREATE INDEX idx_orders_date          ON "order".orders(order_date);
 CREATE INDEX idx_orders_subscription  ON "order".orders(subscription_id);
 CREATE INDEX idx_order_items_order    ON "order".order_items(order_id);
+CREATE INDEX idx_snapshot_status      ON "order".subscription_snapshots(status);
+CREATE INDEX idx_orders_sub_date      ON "order".orders(subscription_id, order_date)
+    WHERE is_deleted = FALSE;
 
--- Sequence for order_number
+-- Sequence for order_number (ORD-YYYY-NNNNNN)
 CREATE SEQUENCE "order".order_number_seq START 100000;

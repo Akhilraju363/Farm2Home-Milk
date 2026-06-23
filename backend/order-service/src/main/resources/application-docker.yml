@@ -5,9 +5,21 @@ spring:
     password: ${DB_PASSWORD:farm2home@123}
   flyway:
     schemas: order
+    create-schemas: true
+  kafka:
+    bootstrap-servers: kafka:29092
 
-jwt:
-  secret: ${JWT_SECRET}
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eureka@secret@discovery-service:8761/eureka
+
+milk:
+  prices:
+    FULL_CREAM: ${MILK_PRICE_FULL_CREAM:80.00}
+    TONED: ${MILK_PRICE_TONED:65.00}
+    DOUBLE_TONED: ${MILK_PRICE_DOUBLE_TONED:55.00}
+    SKIMMED: ${MILK_PRICE_SKIMMED:75.00}
 
 management:
   endpoints:

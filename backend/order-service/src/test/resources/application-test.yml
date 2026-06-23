@@ -1,0 +1,24 @@
+spring:
+  flyway:
+    create-schemas: true
+    schemas: order
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+milk:
+  prices:
+    FULL_CREAM: 80.00
+    TONED: 65.00
+    DOUBLE_TONED: 55.00
+    SKIMMED: 75.00
+
+logging:
+  level:
+    com.farm2home.order: DEBUG

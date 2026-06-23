@@ -8,6 +8,11 @@ spring:
     url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=order
     username: farm2home
     password: farm2home@123
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -15,27 +20,59 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        default_schema: order
+        format_sql: true
   flyway:
     enabled: true
     schemas: order
     locations: classpath:db/migration
+    baseline-on-migrate: true
+    create-schemas: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: order-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    producer:
+      acks: all
+      retries: 3
 
-jwt:
-  secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eureka@secret@localhost:8761/eureka
+    register-with-eureka: true
+    fetch-registry: false
+  instance:
+    prefer-ip-address: true
+
+# Milk prices in INR per litre
+milk:
+  prices:
+    FULL_CREAM: 80.00
+    TONED: 65.00
+    DOUBLE_TONED: 55.00
+    SKIMMED: 75.00
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
 
 springdoc:
   api-docs:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
+    operationsSorter: method
 
 logging:
   level:
     com.farm2home.order: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN
+    org.springframework.kafka: WARN
