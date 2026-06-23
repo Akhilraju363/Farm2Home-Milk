@@ -57,6 +57,40 @@ services:
     networks:
       - farm2home-network
 
+  # ─── Spring Cloud Services ─────────────────────────────────────
+  discovery-service:
+    build: ./backend/discovery-service
+    container_name: farm2home-discovery
+    ports:
+      - "8761:8761"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_USERNAME: eureka
+      EUREKA_PASSWORD: eureka@secret
+    networks:
+      - farm2home-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8761/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  config-server:
+    build: ./backend/config-server
+    container_name: farm2home-config-server
+    ports:
+      - "8888:8888"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      CONFIG_USERNAME: configuser
+      CONFIG_PASSWORD: config@secret
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka@secret@discovery-service:8761/eureka
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
   # ─── Backend Services ──────────────────────────────────────────
   api-gateway:
     build: ./backend/api-gateway
@@ -65,8 +99,11 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      JWT_SECRET: ${JWT_SECRET:-ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka@secret@discovery-service:8761/eureka
     depends_on:
-      - auth-service
+      discovery-service:
+        condition: service_healthy
     networks:
       - farm2home-network
 
@@ -77,11 +114,15 @@ services:
       - "8081:8081"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=auth
       SPRING_DATASOURCE_USERNAME: farm2home
       SPRING_DATASOURCE_PASSWORD: farm2home@123
+      JWT_SECRET: ${JWT_SECRET:-ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka@secret@discovery-service:8761/eureka
     depends_on:
       postgres:
+        condition: service_healthy
+      discovery-service:
         condition: service_healthy
     networks:
       - farm2home-network

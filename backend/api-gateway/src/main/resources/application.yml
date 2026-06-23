@@ -6,62 +6,103 @@ spring:
     name: api-gateway
   cloud:
     gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
       routes:
         - id: auth-service
-          uri: http://auth-service:8081
+          uri: lb://auth-service
           predicates:
             - Path=/api/v1/auth/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authServiceCB
+                fallbackUri: forward:/fallback/auth
+
         - id: customer-service
-          uri: http://customer-service:8082
+          uri: lb://customer-service
           predicates:
             - Path=/api/v1/customers/**
+
         - id: subscription-service
-          uri: http://subscription-service:8083
+          uri: lb://subscription-service
           predicates:
             - Path=/api/v1/subscriptions/**
+
         - id: order-service
-          uri: http://order-service:8084
+          uri: lb://order-service
           predicates:
             - Path=/api/v1/orders/**
+
         - id: payment-service
-          uri: http://payment-service:8085
+          uri: lb://payment-service
           predicates:
             - Path=/api/v1/payments/**
+
         - id: delivery-service
-          uri: http://delivery-service:8086
+          uri: lb://delivery-service
           predicates:
             - Path=/api/v1/delivery/**
+
         - id: farm-service
-          uri: http://farm-service:8087
+          uri: lb://farm-service
           predicates:
             - Path=/api/v1/cows/**,/api/v1/farm/**
+
         - id: production-service
-          uri: http://production-service:8088
+          uri: lb://production-service
           predicates:
             - Path=/api/v1/production/**
+
         - id: inventory-service
-          uri: http://inventory-service:8089
+          uri: lb://inventory-service
           predicates:
             - Path=/api/v1/inventory/**
+
         - id: notification-service
-          uri: http://notification-service:8090
+          uri: lb://notification-service
           predicates:
             - Path=/api/v1/notifications/**
 
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "GET,POST,PUT,DELETE,OPTIONS,PATCH"
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eureka@secret@localhost:8761/eureka
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${spring.application.instance_id:${random.value}}
+
 jwt:
-  secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
-  expiration: 86400000
+  secret: ${JWT_SECRET:ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,gateway
   endpoint:
     health:
       show-details: always
+    gateway:
+      enabled: true
 
 logging:
   level:
-    com.farm2home: DEBUG
-    org.springframework.cloud.gateway: DEBUG
+    com.farm2home.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO

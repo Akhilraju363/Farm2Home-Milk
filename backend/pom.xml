@@ -19,6 +19,8 @@
     <description>Enterprise Dairy Farm Management and Milk Delivery Platform</description>
 
     <modules>
+        <module>discovery-service</module>
+        <module>config-server</module>
         <module>api-gateway</module>
         <module>auth-service</module>
         <module>customer-service</module>

@@ -9,6 +9,10 @@ spring:
     username: farm2home
     password: farm2home@123
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
   jpa:
     hibernate:
       ddl-auto: validate
@@ -16,23 +20,34 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
         default_schema: auth
+        format_sql: true
   flyway:
     enabled: true
     schemas: auth
     locations: classpath:db/migration
+    baseline-on-migrate: true
+    create-schemas: true
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eureka@secret@localhost:8761/eureka
+    register-with-eureka: true
+    fetch-registry: false
+  instance:
+    prefer-ip-address: true
 
 jwt:
-  secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
-  expiration: 86400000
-  refresh-expiration: 604800000
+  secret: ${JWT_SECRET:ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
+  expiration: 86400000        # 24h in ms
+  refresh-expiration: 604800000 # 7d in ms
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
@@ -42,7 +57,10 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
+    operationsSorter: method
 
 logging:
   level:
     com.farm2home.auth: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN

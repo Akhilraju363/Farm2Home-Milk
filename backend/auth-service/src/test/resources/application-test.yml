@@ -1,0 +1,22 @@
+spring:
+  flyway:
+    create-schemas: true
+    schemas: auth
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+jwt:
+  secret: dGVzdC1zZWNyZXQta2V5LWZvci10ZXN0aW5nLW9ubHktbXVzdC1iZS0yNTYtYml0cw==
+  expiration: 3600000
+  refresh-expiration: 86400000
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+logging:
+  level:
+    com.farm2home.auth: DEBUG
