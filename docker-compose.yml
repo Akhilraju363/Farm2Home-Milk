@@ -212,12 +212,18 @@ services:
       - "8086:8086"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
-      SPRING_DATASOURCE_USERNAME: farm2home
-      SPRING_DATASOURCE_PASSWORD: farm2home@123
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=delivery
+      DB_USERNAME: farm2home
+      DB_PASSWORD: farm2home@123
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:password@discovery-service:8761/eureka
     depends_on:
       postgres:
         condition: service_healthy
+      discovery-service:
+        condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
       - farm2home-network
 
