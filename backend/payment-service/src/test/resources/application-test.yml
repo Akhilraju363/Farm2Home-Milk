@@ -1,0 +1,17 @@
+spring:
+  flyway:
+    create-schemas: true
+    schemas: payment
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+logging:
+  level:
+    com.farm2home.payment: DEBUG
