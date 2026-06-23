@@ -1,0 +1,252 @@
+version: '3.9'
+
+services:
+
+  # ─── Infrastructure ────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: farm2home-postgres
+    environment:
+      POSTGRES_USER: farm2home
+      POSTGRES_PASSWORD: farm2home@123
+      POSTGRES_DB: farm2home
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - farm2home-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U farm2home"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: farm2home-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - farm2home-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: farm2home-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - farm2home-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: farm2home-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - farm2home-network
+
+  # ─── Backend Services ──────────────────────────────────────────
+  api-gateway:
+    build: ./backend/api-gateway
+    container_name: farm2home-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - auth-service
+    networks:
+      - farm2home-network
+
+  auth-service:
+    build: ./backend/auth-service
+    container_name: farm2home-auth-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  customer-service:
+    build: ./backend/customer-service
+    container_name: farm2home-customer-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  subscription-service:
+    build: ./backend/subscription-service
+    container_name: farm2home-subscription-service
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  order-service:
+    build: ./backend/order-service
+    container_name: farm2home-order-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  payment-service:
+    build: ./backend/payment-service
+    container_name: farm2home-payment-service
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  delivery-service:
+    build: ./backend/delivery-service
+    container_name: farm2home-delivery-service
+    ports:
+      - "8086:8086"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  farm-service:
+    build: ./backend/farm-service
+    container_name: farm2home-farm-service
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  production-service:
+    build: ./backend/production-service
+    container_name: farm2home-production-service
+    ports:
+      - "8088:8088"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  inventory-service:
+    build: ./backend/inventory-service
+    container_name: farm2home-inventory-service
+    ports:
+      - "8089:8089"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - farm2home-network
+
+  notification-service:
+    build: ./backend/notification-service
+    container_name: farm2home-notification-service
+    ports:
+      - "8090:8090"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_USERNAME: farm2home
+      SPRING_DATASOURCE_PASSWORD: farm2home@123
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - farm2home-network
+
+  # ─── Frontend ─────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: farm2home-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - farm2home-network
+
+volumes:
+  postgres_data:
+
+networks:
+  farm2home-network:
+    driver: bridge

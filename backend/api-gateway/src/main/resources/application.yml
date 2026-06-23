@@ -1,0 +1,67 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: auth-service
+          uri: http://auth-service:8081
+          predicates:
+            - Path=/api/v1/auth/**
+        - id: customer-service
+          uri: http://customer-service:8082
+          predicates:
+            - Path=/api/v1/customers/**
+        - id: subscription-service
+          uri: http://subscription-service:8083
+          predicates:
+            - Path=/api/v1/subscriptions/**
+        - id: order-service
+          uri: http://order-service:8084
+          predicates:
+            - Path=/api/v1/orders/**
+        - id: payment-service
+          uri: http://payment-service:8085
+          predicates:
+            - Path=/api/v1/payments/**
+        - id: delivery-service
+          uri: http://delivery-service:8086
+          predicates:
+            - Path=/api/v1/delivery/**
+        - id: farm-service
+          uri: http://farm-service:8087
+          predicates:
+            - Path=/api/v1/cows/**,/api/v1/farm/**
+        - id: production-service
+          uri: http://production-service:8088
+          predicates:
+            - Path=/api/v1/production/**
+        - id: inventory-service
+          uri: http://inventory-service:8089
+          predicates:
+            - Path=/api/v1/inventory/**
+        - id: notification-service
+          uri: http://notification-service:8090
+          predicates:
+            - Path=/api/v1/notifications/**
+
+jwt:
+  secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
+  expiration: 86400000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.farm2home: DEBUG
+    org.springframework.cloud.gateway: DEBUG

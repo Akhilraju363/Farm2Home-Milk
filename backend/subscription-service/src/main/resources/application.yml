@@ -1,0 +1,41 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: subscription-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=subscription
+    username: farm2home
+    password: farm2home@123
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: subscription
+  flyway:
+    enabled: true
+    schemas: subscription
+    locations: classpath:db/migration
+
+jwt:
+  secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.farm2home.subscription: DEBUG

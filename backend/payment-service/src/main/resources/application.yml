@@ -1,0 +1,41 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: payment-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=payment
+    username: farm2home
+    password: farm2home@123
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: payment
+  flyway:
+    enabled: true
+    schemas: payment
+    locations: classpath:db/migration
+
+jwt:
+  secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.farm2home.payment: DEBUG
