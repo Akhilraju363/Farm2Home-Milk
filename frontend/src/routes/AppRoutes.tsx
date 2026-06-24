@@ -1,36 +1,43 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { AuthLayout } from '../layouts/AuthLayout'
+import { MainLayout } from '../layouts/MainLayout'
+import { ProtectedRoute } from '../components/common/ProtectedRoute'
+import { LoginPage } from '../pages/auth/LoginPage'
+import { DashboardPage } from '../pages/dashboard/DashboardPage'
+import { CustomersPage } from '../pages/customers/CustomersPage'
+import { SubscriptionsPage } from '../pages/subscriptions/SubscriptionsPage'
+import { OrdersPage } from '../pages/orders/OrdersPage'
+import { PaymentsPage } from '../pages/payments/PaymentsPage'
+import { InventoryPage } from '../pages/inventory/InventoryPage'
+import { ProductionPage } from '../pages/production/ProductionPage'
+import { ReportsPage } from '../pages/reports/ReportsPage'
 
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/login" replace />} />
-      {/* Auth routes */}
-      <Route path="/login" element={<div>Login Page</div>} />
-      <Route path="/register" element={<div>Register Page</div>} />
-      <Route path="/verify-otp" element={<div>OTP Verification Page</div>} />
-      <Route path="/forgot-password" element={<div>Forgot Password Page</div>} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-      {/* Customer routes */}
-      <Route path="/customer/dashboard" element={<div>Customer Dashboard</div>} />
-      <Route path="/customer/subscriptions" element={<div>Subscriptions</div>} />
-      <Route path="/customer/orders" element={<div>Orders</div>} />
-      <Route path="/customer/payments" element={<div>Payments</div>} />
-      <Route path="/customer/profile" element={<div>Profile</div>} />
+      {/* Public auth routes */}
+      <Route element={<AuthLayout />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<div style={{ textAlign: 'center', padding: 16 }}>Registration coming soon</div>} />
+      </Route>
 
-      {/* Admin routes */}
-      <Route path="/admin/dashboard" element={<div>Admin Dashboard</div>} />
-      <Route path="/admin/customers" element={<div>Customers</div>} />
-      <Route path="/admin/cows" element={<div>Cows</div>} />
-      <Route path="/admin/production" element={<div>Production</div>} />
-      <Route path="/admin/inventory" element={<div>Inventory</div>} />
-      <Route path="/admin/deliveries" element={<div>Deliveries</div>} />
-      <Route path="/admin/reports" element={<div>Reports</div>} />
+      {/* Protected main app routes */}
+      <Route element={<ProtectedRoute />}>
+        <Route element={<MainLayout />}>
+          <Route path="/dashboard"     element={<DashboardPage />} />
+          <Route path="/customers"     element={<CustomersPage />} />
+          <Route path="/subscriptions" element={<SubscriptionsPage />} />
+          <Route path="/orders"        element={<OrdersPage />} />
+          <Route path="/payments"      element={<PaymentsPage />} />
+          <Route path="/inventory"     element={<InventoryPage />} />
+          <Route path="/production"    element={<ProductionPage />} />
+          <Route path="/reports"       element={<ReportsPage />} />
+        </Route>
+      </Route>
 
-      {/* Delivery Partner routes */}
-      <Route path="/delivery/today" element={<div>Today's Deliveries</div>} />
-      <Route path="/delivery/:id" element={<div>Delivery Details</div>} />
-
-      <Route path="*" element={<div>404 Not Found</div>} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   )
 }
