@@ -6,8 +6,10 @@ spring:
   flyway:
     schemas: farm
 
-jwt:
-  secret: ${JWT_SECRET}
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE:http://eureka:password@discovery-service:8761/eureka}
 
 management:
   endpoints:
