@@ -20,6 +20,8 @@ replay_pid*
 .apt_generated_test
 .springBeans
 .sts4-cache
+.settings/
+bin/
 
 # ========================
 # Node / React / Frontend
@@ -59,7 +61,10 @@ application-secret.yml
 *.iml
 *.iws
 *.ipr
-.vscode/
+# .vscode/ is ignored except settings.json, which holds shared, non-machine-specific
+# workspace config (e.g. Java build update mode) that's useful for every contributor.
+.vscode/*
+!.vscode/settings.json
 *.swp
 *.swo
 *~

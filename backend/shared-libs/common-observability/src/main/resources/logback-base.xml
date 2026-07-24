@@ -1,0 +1,52 @@
+<included>
+    <!-- Resolved once per service from spring.application.name / logging.file.path (env LOGGING_FILE_PATH
+         or -Dlogging.file.path also work via Spring's relaxed binding). Default assumes the process is
+         started from its own module directory (backend/<service>/), so two levels up reaches the repo
+         root's shared logs/ folder. Override per-environment instead of editing this file. -->
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="application"/>
+    <springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="../../logs"/>
+
+    <!-- Single line-oriented layout shared by console and file so a line looks identical in both places:
+         2026-07-24 14:15:20.123 INFO  auth-service [http-nio-8081-exec-1] [traceId=abc123] UserService : User registered successfully
+         %ex on its own prints nothing when there's no throwable, and the full stack trace when there is. -->
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level ${appName} [%thread] [traceId=%X{traceId:-N/A}] %logger{36} : %msg%n%ex"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- Active log file lives directly under LOG_PATH (e.g. logs/auth-service.log); rotated/compressed
+         files move into logs/archive/ once they cross the daily boundary or the 50MB size cap. Logback
+         creates LOG_PATH and the archive/ subfolder automatically on first write if they don't exist. -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${appName}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/archive/${appName}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- Framework noise stays at WARN; SQL statements are visible at INFO without flooding logs with
+         bound parameter values, which are opt-in at DEBUG (Hibernate 6's logger name is the primary one,
+         the legacy 5.x name is kept alongside so this still works if a module pins an older Hibernate). -->
+    <logger name="org.springframework" level="WARN"/>
+    <logger name="org.hibernate.SQL" level="INFO"/>
+    <logger name="org.hibernate.orm.jdbc.bind" level="DEBUG"/>
+    <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="DEBUG"/>
+    <logger name="com.farm2home" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</included>
