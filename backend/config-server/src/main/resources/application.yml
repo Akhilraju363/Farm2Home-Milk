@@ -10,7 +10,7 @@ spring:
     config:
       server:
         native:
-          search-locations: classpath:/configs/{application}
+          search-locations: classpath:/configs
   security:
     user:
       name: ${CONFIG_USERNAME:configuser}

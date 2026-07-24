@@ -1,0 +1,8 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: production-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=production

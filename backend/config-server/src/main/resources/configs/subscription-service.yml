@@ -1,0 +1,8 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: subscription-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=subscription

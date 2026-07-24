@@ -19,6 +19,7 @@
     <description>Enterprise Dairy Farm Management and Milk Delivery Platform</description>
 
     <modules>
+        <module>shared-libs</module>
         <module>discovery-service</module>
         <module>config-server</module>
         <module>api-gateway</module>
@@ -41,7 +42,10 @@
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <flyway.version>10.4.1</flyway.version>
         <testcontainers.version>1.19.3</testcontainers.version>
+        <springdoc.version>2.3.0</springdoc.version>
         <jacoco.version>0.8.11</jacoco.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <dependencyManagement>

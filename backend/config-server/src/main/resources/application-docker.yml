@@ -1,0 +1,11 @@
+spring:
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: classpath:/configs
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_USERNAME:eureka}:${EUREKA_PASSWORD:eureka@secret}@discovery-service:8761/eureka/

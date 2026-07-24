@@ -7,9 +7,9 @@ services:
     image: postgres:16-alpine
     container_name: farm2home-postgres
     environment:
-      POSTGRES_USER: farm2home
-      POSTGRES_PASSWORD: farm2home@123
-      POSTGRES_DB: farm2home
+      POSTGRES_USER: ${POSTGRES_USER:-farm2home}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-farm2home@123}
+      POSTGRES_DB: ${POSTGRES_DB:-farm2home}
     ports:
       - "5432:5432"
     volumes:
@@ -65,8 +65,8 @@ services:
       - "8761:8761"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      EUREKA_USERNAME: eureka
-      EUREKA_PASSWORD: eureka@secret
+      EUREKA_USERNAME: ${EUREKA_USERNAME:-eureka}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:-eureka@secret}
     networks:
       - farm2home-network
     healthcheck:
@@ -82,8 +82,8 @@ services:
       - "8888:8888"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      CONFIG_USERNAME: configuser
-      CONFIG_PASSWORD: config@secret
+      CONFIG_USERNAME: ${CONFIG_USERNAME:-configuser}
+      CONFIG_PASSWORD: ${CONFIG_PASSWORD:-config@secret}
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka@secret@discovery-service:8761/eureka
     depends_on:
       discovery-service:
