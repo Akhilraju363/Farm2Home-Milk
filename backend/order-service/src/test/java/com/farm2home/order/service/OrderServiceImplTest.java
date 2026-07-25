@@ -16,6 +16,7 @@ import com.farm2home.order.exception.ResourceNotFoundException;
 import com.farm2home.order.kafka.OrderEventProducer;
 import com.farm2home.order.mapper.OrderMapper;
 import com.farm2home.order.service.impl.OrderServiceImpl;
+import com.farm2home.common.core.audit.AuditLogService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -44,6 +45,7 @@ class OrderServiceImplTest {
     @Mock private MilkPriceProperties priceProperties;
     @Mock private OrderMapper orderMapper;
     @Mock private OrderEventProducer eventProducer;
+    @Mock private AuditLogService auditLogService;
 
     @InjectMocks private OrderServiceImpl service;
 
@@ -52,8 +54,11 @@ class OrderServiceImplTest {
 
     @BeforeEach
     void setupPrices() {
-        when(priceProperties.getPriceFor("FULL_CREAM")).thenReturn(new BigDecimal("80.00"));
-        when(priceProperties.getPriceFor("TONED")).thenReturn(new BigDecimal("65.00"));
+        // lenient: only the Create tests actually invoke getPriceFor(); MockitoExtension's
+        // strict stubbing would otherwise flag this shared setup as unused in every other
+        // nested test class.
+        lenient().when(priceProperties.getPriceFor("FULL_CREAM")).thenReturn(new BigDecimal("80.00"));
+        lenient().when(priceProperties.getPriceFor("TONED")).thenReturn(new BigDecimal("65.00"));
     }
 
     private Order buildPendingOrder() {
@@ -119,7 +124,11 @@ class OrderServiceImplTest {
                     .build();
 
             when(orderRepository.nextOrderNumber()).thenReturn(100002L);
-            when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID()); // real repository.save() always assigns an id
+                return o;
+            });
             when(orderMapper.toResponse(any())).thenAnswer(inv -> {
                 Order o = inv.getArgument(0);
                 return OrderResponse.builder().totalAmount(o.getTotalAmount()).build();
@@ -206,7 +215,7 @@ class OrderServiceImplTest {
             when(orderRepository.save(order)).thenReturn(order);
             when(orderMapper.toResponse(order)).thenReturn(buildResponse(OrderStatus.ASSIGNED));
 
-            OrderResponse result = service.updateStatus(orderId, req, customerId, false);
+            OrderResponse result = service.updateStatus(orderId, req, customerId, false, customerId);
 
             assertThat(order.getStatus()).isEqualTo(OrderStatus.ASSIGNED);
             assertThat(result.getStatus()).isEqualTo("ASSIGNED");
@@ -222,7 +231,7 @@ class OrderServiceImplTest {
             when(orderRepository.findByIdAndCustomerIdAndDeletedFalse(orderId, customerId))
                     .thenReturn(Optional.of(order));
 
-            assertThatThrownBy(() -> service.updateStatus(orderId, req, customerId, false))
+            assertThatThrownBy(() -> service.updateStatus(orderId, req, customerId, false, customerId))
                     .isInstanceOf(OrderException.class)
                     .hasMessageContaining("Invalid status transition");
         }
@@ -238,7 +247,7 @@ class OrderServiceImplTest {
             when(orderRepository.findByIdAndCustomerIdAndDeletedFalse(orderId, customerId))
                     .thenReturn(Optional.of(order));
 
-            assertThatThrownBy(() -> service.updateStatus(orderId, req, customerId, false))
+            assertThatThrownBy(() -> service.updateStatus(orderId, req, customerId, false, customerId))
                     .isInstanceOf(OrderException.class)
                     .hasMessageContaining("Invalid status transition");
         }
@@ -258,7 +267,7 @@ class OrderServiceImplTest {
                     .thenReturn(Optional.of(order));
             when(orderRepository.save(order)).thenReturn(order);
 
-            service.cancel(orderId, customerId, false);
+            service.cancel(orderId, customerId, false, customerId);
 
             assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
         }
@@ -272,7 +281,7 @@ class OrderServiceImplTest {
             when(orderRepository.findByIdAndCustomerIdAndDeletedFalse(orderId, customerId))
                     .thenReturn(Optional.of(order));
 
-            assertThatThrownBy(() -> service.cancel(orderId, customerId, false))
+            assertThatThrownBy(() -> service.cancel(orderId, customerId, false, customerId))
                     .isInstanceOf(OrderException.class)
                     .hasMessageContaining("DELIVERED");
         }
@@ -284,7 +293,7 @@ class OrderServiceImplTest {
             when(orderRepository.findByIdAndDeletedFalse(orderId)).thenReturn(Optional.of(order));
             when(orderRepository.save(order)).thenReturn(order);
 
-            service.cancel(orderId, null, true);
+            service.cancel(orderId, null, true, customerId);
 
             verify(orderRepository).findByIdAndDeletedFalse(orderId);
         }

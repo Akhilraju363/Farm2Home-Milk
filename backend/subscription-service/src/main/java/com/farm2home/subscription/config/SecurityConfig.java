@@ -20,8 +20,7 @@ public class SecurityConfig {
     private final GatewayHeaderAuthFilter gatewayHeaderAuthFilter;
 
     private static final String[] PUBLIC_ENDPOINTS = {
-        "/actuator/health",
-        "/actuator/info",
+        "/actuator/**",
         "/api-docs/**",
         "/swagger-ui/**",
         "/swagger-ui.html"

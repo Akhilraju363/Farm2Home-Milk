@@ -1,9 +1,10 @@
 package com.farm2home.payment.exception;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import com.farm2home.common.web.exception.ConflictException;
 
-@ResponseStatus(HttpStatus.BAD_REQUEST)
-public class InsufficientBalanceException extends RuntimeException {
-    public InsufficientBalanceException(String message) { super(message); }
+public class InsufficientBalanceException extends ConflictException {
+
+    public InsufficientBalanceException(String message) {
+        super(message);
+    }
 }

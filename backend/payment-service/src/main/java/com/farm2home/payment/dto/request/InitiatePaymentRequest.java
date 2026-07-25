@@ -19,11 +19,12 @@ public class InitiatePaymentRequest {
     private UUID orderId;
 
     @NotNull(message = "Amount is required")
-    @DecimalMin(value = "0.01", message = "Amount must be positive")
+    @DecimalMin(value = "0.01", message = "Amount must be greater than zero")
     private BigDecimal amount;
 
     @NotNull(message = "Payment method is required")
     private PaymentMethod paymentMethod;
 
+    @jakarta.validation.constraints.Size(max = 255, message = "Notes must be at most 255 characters")
     private String notes;
 }

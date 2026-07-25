@@ -14,6 +14,8 @@ import com.farm2home.order.exception.ResourceNotFoundException;
 import com.farm2home.order.kafka.OrderEventProducer;
 import com.farm2home.order.mapper.OrderMapper;
 import com.farm2home.order.service.OrderService;
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -33,6 +35,7 @@ public class OrderServiceImpl implements OrderService {
     private final MilkPriceProperties priceProperties;
     private final OrderMapper orderMapper;
     private final OrderEventProducer eventProducer;
+    private final AuditLogService auditLogService;
 
     @Override
     @Transactional
@@ -72,6 +75,8 @@ public class OrderServiceImpl implements OrderService {
         Order saved = orderRepository.save(order);
         eventProducer.publishOrderCreated(saved);
         log.info("Created manual order {} for customer {}", saved.getOrderNumber(), customerId);
+        auditLogService.record(AuditAction.CREATED, "Order", saved.getId().toString(), customerId.toString(),
+                "Order " + saved.getOrderNumber() + " created");
         return orderMapper.toResponse(saved);
     }
 
@@ -101,8 +106,9 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public OrderResponse updateStatus(UUID id, UpdateOrderStatusRequest request,
-                                      UUID customerId, boolean isAdmin) {
+                                      UUID customerId, boolean isAdmin, UUID actorId) {
         Order order = findOrder(id, isAdmin ? null : customerId);
+        OrderStatus previousStatus = order.getStatus();
         OrderStatus newStatus = request.getStatus();
 
         if (!order.getStatus().canTransitionTo(newStatus)) {
@@ -118,13 +124,17 @@ public class OrderServiceImpl implements OrderService {
 
         Order saved = orderRepository.save(order);
         log.info("Order {} transitioned to {}", order.getOrderNumber(), newStatus);
+        auditLogService.record(AuditAction.STATUS_CHANGED, "Order", saved.getId().toString(),
+                actorId != null ? actorId.toString() : null,
+                "Order " + saved.getOrderNumber() + " status: " + previousStatus + " -> " + newStatus);
         return orderMapper.toResponse(saved);
     }
 
     @Override
     @Transactional
-    public void cancel(UUID id, UUID customerId, boolean isAdmin) {
+    public void cancel(UUID id, UUID customerId, boolean isAdmin, UUID actorId) {
         Order order = findOrder(id, isAdmin ? null : customerId);
+        OrderStatus previousStatus = order.getStatus();
 
         if (order.getStatus().isTerminal()) {
             throw new OrderException(
@@ -134,6 +144,9 @@ public class OrderServiceImpl implements OrderService {
         order.setStatus(OrderStatus.CANCELLED);
         orderRepository.save(order);
         log.info("Cancelled order {}", order.getOrderNumber());
+        auditLogService.record(AuditAction.STATUS_CHANGED, "Order", order.getId().toString(),
+                actorId != null ? actorId.toString() : null,
+                "Order " + order.getOrderNumber() + " cancelled (was " + previousStatus + ")");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────

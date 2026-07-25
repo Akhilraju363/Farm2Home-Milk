@@ -43,6 +43,7 @@ public class CreateSubscriptionRequest {
     @Schema(description = "Subscription start date (today or future)", example = "2026-07-01")
     private LocalDate startDate;
 
+    @Future(message = "End date must be in the future")
     @Schema(description = "Optional end date (must be after start date)", example = "2026-12-31")
     private LocalDate endDate;
 }

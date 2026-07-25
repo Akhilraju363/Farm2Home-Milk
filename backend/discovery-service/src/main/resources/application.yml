@@ -7,7 +7,7 @@ spring:
   security:
     user:
       name: ${EUREKA_USERNAME:eureka}
-      password: ${EUREKA_PASSWORD:eureka@secret}
+      password: ${EUREKA_PASSWORD:eurekaSecret}
 
 eureka:
   instance:
@@ -16,7 +16,7 @@ eureka:
     register-with-eureka: false
     fetch-registry: false
     service-url:
-      defaultZone: http://eureka:eureka%40secret@${eureka.instance.hostname}:${server.port}/eureka/
+      defaultZone: http://eureka:eurekaSecret@${eureka.instance.hostname}:${server.port}/eureka/
   server:
     enable-self-preservation: false
     eviction-interval-timer-in-ms: 5000
@@ -25,7 +25,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus,env
   endpoint:
     health:
       show-details: always

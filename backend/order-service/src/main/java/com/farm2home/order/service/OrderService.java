@@ -27,9 +27,13 @@ public interface OrderService {
     /**
      * Transition order status.
      * Validates allowed transitions; DELIVERY_PARTNER can only move to DELIVERED.
+     * actorId identifies who performed the change for audit purposes - customerId is null for
+     * admin calls (it means "don't scope the lookup to one customer"), so actorId is passed
+     * separately rather than reused for that.
      */
-    OrderResponse updateStatus(UUID id, UpdateOrderStatusRequest request, UUID customerId, boolean isAdmin);
+    OrderResponse updateStatus(UUID id, UpdateOrderStatusRequest request, UUID customerId, boolean isAdmin,
+            UUID actorId);
 
-    /** Soft-cancel an order. */
-    void cancel(UUID id, UUID customerId, boolean isAdmin);
+    /** Soft-cancel an order. See updateStatus for why actorId is separate from customerId. */
+    void cancel(UUID id, UUID customerId, boolean isAdmin, UUID actorId);
 }

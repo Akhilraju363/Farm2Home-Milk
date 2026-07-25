@@ -1,5 +1,6 @@
 package com.farm2home.delivery.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.delivery.config.UserPrincipal;
 import com.farm2home.delivery.dto.request.ManualAssignRequest;
 import com.farm2home.delivery.dto.request.UpdateAssignmentStatusRequest;
@@ -34,41 +35,42 @@ public class DeliveryAssignmentController {
     @PostMapping
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Manually assign an order to a delivery partner (admin)")
-    public ResponseEntity<AssignmentResponse> manualAssign(
+    public ResponseEntity<ApiResponse<AssignmentResponse>> manualAssign(
             @Valid @RequestBody ManualAssignRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(assignmentService.manualAssign(request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Assignment created successfully", assignmentService.manualAssign(request)));
     }
 
     @GetMapping
     @Operation(summary = "List assignments (admin sees all, partner sees own)")
-    public ResponseEntity<Page<AssignmentResponse>> findAll(
+    public ResponseEntity<ApiResponse<Page<AssignmentResponse>>> findAll(
             @AuthenticationPrincipal UserPrincipal principal,
             @PageableDefault(size = 20, sort = "assignedAt") Pageable pageable) {
-        return ResponseEntity.ok(assignmentService.findAll(
-                principal.userId(), principal.isAdmin(), pageable));
+        return ResponseEntity.ok(ApiResponse.success("Assignments retrieved successfully", assignmentService.findAll(
+                principal.userId(), principal.isAdmin(), pageable)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get assignment by ID")
-    public ResponseEntity<AssignmentResponse> findById(
+    public ResponseEntity<ApiResponse<AssignmentResponse>> findById(
             @PathVariable UUID id,
             @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(assignmentService.findById(id, principal.userId(), principal.isAdmin()));
+        return ResponseEntity.ok(ApiResponse.success("Assignment retrieved successfully", assignmentService.findById(id, principal.userId(), principal.isAdmin())));
     }
 
     @GetMapping("/order/{orderId}")
     @Operation(summary = "Get all assignments for an order")
-    public ResponseEntity<List<AssignmentResponse>> findByOrder(@PathVariable UUID orderId) {
-        return ResponseEntity.ok(assignmentService.findByOrderId(orderId));
+    public ResponseEntity<ApiResponse<List<AssignmentResponse>>> findByOrder(@PathVariable UUID orderId) {
+        return ResponseEntity.ok(ApiResponse.success("Order assignments retrieved successfully", assignmentService.findByOrderId(orderId)));
     }
 
     @PatchMapping("/{id}/status")
     @Operation(summary = "Update delivery assignment status (partner or admin)")
-    public ResponseEntity<AssignmentResponse> updateStatus(
+    public ResponseEntity<ApiResponse<AssignmentResponse>> updateStatus(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateAssignmentStatusRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(assignmentService.updateStatus(
-                id, request, principal.userId(), principal.isAdmin()));
+        return ResponseEntity.ok(ApiResponse.success("Assignment status updated successfully", assignmentService.updateStatus(
+                id, request, principal.userId(), principal.isAdmin())));
     }
 }

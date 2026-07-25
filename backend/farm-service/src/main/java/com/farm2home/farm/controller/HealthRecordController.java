@@ -1,5 +1,6 @@
 package com.farm2home.farm.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.farm.dto.request.CreateHealthRecordRequest;
 import com.farm2home.farm.dto.response.HealthRecordResponse;
 import com.farm2home.farm.service.impl.HealthRecordServiceImpl;
@@ -30,30 +31,31 @@ public class HealthRecordController {
     @PostMapping
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Add a health record for a cow")
-    public ResponseEntity<HealthRecordResponse> create(@PathVariable UUID cowId,
+    public ResponseEntity<ApiResponse<HealthRecordResponse>> create(@PathVariable UUID cowId,
                                                         @Valid @RequestBody CreateHealthRecordRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(healthRecordService.create(cowId, request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Health record added successfully", healthRecordService.create(cowId, request)));
     }
 
     @GetMapping
     @Operation(summary = "Get full health history for a cow")
-    public ResponseEntity<Page<HealthRecordResponse>> findAll(
+    public ResponseEntity<ApiResponse<Page<HealthRecordResponse>>> findAll(
             @PathVariable UUID cowId,
             @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(healthRecordService.findByCow(cowId, pageable));
+        return ResponseEntity.ok(ApiResponse.success("Health records retrieved successfully", healthRecordService.findByCow(cowId, pageable)));
     }
 
     @GetMapping("/latest")
     @Operation(summary = "Get most recent health record for a cow")
-    public ResponseEntity<HealthRecordResponse> latest(@PathVariable UUID cowId) {
-        return ResponseEntity.ok(healthRecordService.findLatest(cowId));
+    public ResponseEntity<ApiResponse<HealthRecordResponse>> latest(@PathVariable UUID cowId) {
+        return ResponseEntity.ok(ApiResponse.success("Latest health record retrieved successfully", healthRecordService.findLatest(cowId)));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Soft-delete a health record")
-    public ResponseEntity<Void> delete(@PathVariable UUID cowId, @PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable UUID cowId, @PathVariable UUID id) {
         healthRecordService.delete(cowId, id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(ApiResponse.success("Health record deleted successfully", null));
     }
 }

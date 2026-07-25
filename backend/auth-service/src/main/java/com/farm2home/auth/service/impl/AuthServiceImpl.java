@@ -15,6 +15,8 @@ import com.farm2home.auth.mapper.UserMapper;
 import com.farm2home.auth.service.AuthService;
 import com.farm2home.auth.service.JwtService;
 import com.farm2home.auth.service.OtpService;
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,6 +47,7 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final OtpService otpService;
     private final UserMapper userMapper;
+    private final AuditLogService auditLogService;
 
     @Override
     @Transactional
@@ -100,6 +103,8 @@ public class AuthServiceImpl implements AuthService {
         refreshTokenRepository.revokeAllByUser(user);
 
         log.info("User logged in: {}", request.getMobile());
+        auditLogService.record(AuditAction.LOGIN, "User", user.getId().toString(), user.getMobile(),
+                "User logged in");
         return buildAuthResponse(user);
     }
 
@@ -153,6 +158,8 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found."));
         refreshTokenRepository.revokeAllByUser(user);
         log.info("User logged out: {}", mobile);
+        auditLogService.record(AuditAction.LOGOUT, "User", user.getId().toString(), user.getMobile(),
+                "User logged out");
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

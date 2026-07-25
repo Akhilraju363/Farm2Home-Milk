@@ -10,8 +10,9 @@ import java.math.BigDecimal;
 public class TopUpWalletRequest {
 
     @NotNull(message = "Amount is required")
-    @DecimalMin(value = "1.00", message = "Minimum top-up amount is ₹1")
+    @DecimalMin(value = "1.00", message = "Minimum top-up amount is 1")
     private BigDecimal amount;
 
+    @jakarta.validation.constraints.Size(max = 255, message = "Description must be at most 255 characters")
     private String description;
 }

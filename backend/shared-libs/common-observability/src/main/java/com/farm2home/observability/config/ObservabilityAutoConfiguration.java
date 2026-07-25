@@ -1,9 +1,13 @@
 package com.farm2home.observability.config;
 
+import com.farm2home.observability.health.ConfigServerHealthIndicator;
+import com.farm2home.observability.health.ReactiveConfigServerHealthIndicator;
 import com.farm2home.observability.web.ReactiveRequestTraceIdFilter;
 import com.farm2home.observability.web.RequestTraceIdFilter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -53,6 +57,50 @@ public class ObservabilityAutoConfiguration {
         @Bean
         public ReactiveRequestTraceIdFilter reactiveRequestTraceIdFilter() {
             return new ReactiveRequestTraceIdFilter();
+        }
+    }
+
+    // No service actually imports config from Config Server today, so Spring Cloud Config
+    // never auto-registers a health check for it - these two mirror the servlet/reactive split
+    // above for the same NoClassDefFoundError reason. Defaults assume local dev (localhost:8888
+    // with the default local credentials); override configserver.health.url/username/password
+    // (e.g. via CONFIGSERVER_HEALTH_URL) for Docker or any other environment.
+    //
+    // @ConditionalOnMissingClass: config-server itself (the only module with spring-cloud-config-
+    // server on its classpath) already registers its own bean named "configServerHealthIndicator"
+    // (checking its own environment repository, no guard of its own) - a service checking its own
+    // reachability over HTTP would be circular anyway. @ConditionalOnMissingBean was tried first
+    // and doesn't work here: it only stops *this* bean from registering if one already exists,
+    // but Spring Cloud Config's own definition has no such guard, so whichever one processes
+    // second still crashes on the name collision. Excluding this whole nested class by classpath
+    // presence sidesteps registration order entirely.
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+    @ConditionalOnClass(OncePerRequestFilter.class)
+    @ConditionalOnMissingClass("org.springframework.cloud.config.server.config.ConfigServerProperties")
+    static class ServletConfigServerHealthConfiguration {
+
+        @Bean
+        public ConfigServerHealthIndicator configServerHealthIndicator(
+                @Value("${configserver.health.url:http://localhost:8888}") String url,
+                @Value("${configserver.health.username:${CONFIG_USERNAME:configuser}}") String username,
+                @Value("${configserver.health.password:${CONFIG_PASSWORD:config@secret}}") String password) {
+            return new ConfigServerHealthIndicator(url, username, password);
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
+    @ConditionalOnClass(WebFilter.class)
+    static class ReactiveConfigServerHealthConfiguration {
+
+        @Bean
+        public ReactiveConfigServerHealthIndicator configServerHealthIndicator(
+                @Value("${configserver.health.url:http://localhost:8888}") String url,
+                @Value("${configserver.health.username:${CONFIG_USERNAME:configuser}}") String username,
+                @Value("${configserver.health.password:${CONFIG_PASSWORD:config@secret}}") String password) {
+            return new ReactiveConfigServerHealthIndicator(url, username, password);
         }
     }
 }
