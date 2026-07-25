@@ -47,14 +47,11 @@ public class OrderServiceImpl implements OrderService {
         String orderNumber = String.format("ORD-%d-%06d",
                 request.getOrderDate().getYear(), orderRepository.nextOrderNumber());
 
-        Order order = Order.builder()
-                .orderNumber(orderNumber)
-                .customerId(customerId)
-                .orderDate(request.getOrderDate())
-                .orderType(OrderType.ONE_TIME)
-                .status(OrderStatus.PENDING)
-                .notes(request.getNotes())
-                .build();
+        Order order = orderMapper.toEntity(request);
+        order.setOrderNumber(orderNumber);
+        order.setCustomerId(customerId);
+        order.setOrderType(OrderType.ONE_TIME);
+        order.setStatus(OrderStatus.PENDING);
 
         BigDecimal total = BigDecimal.ZERO;
         for (var itemReq : request.getItems()) {
@@ -62,12 +59,9 @@ public class OrderServiceImpl implements OrderService {
             BigDecimal totalPrice = itemReq.getQuantity().multiply(unitPrice);
             total = total.add(totalPrice);
 
-            OrderItem item = OrderItem.builder()
-                    .milkType(itemReq.getMilkType())
-                    .quantity(itemReq.getQuantity())
-                    .unitPrice(unitPrice)
-                    .totalPrice(totalPrice)
-                    .build();
+            OrderItem item = orderMapper.toItemEntity(itemReq);
+            item.setUnitPrice(unitPrice);
+            item.setTotalPrice(totalPrice);
             order.addItem(item);
         }
 

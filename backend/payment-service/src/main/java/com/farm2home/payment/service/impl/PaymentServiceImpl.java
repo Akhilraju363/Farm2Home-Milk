@@ -51,14 +51,10 @@ public class PaymentServiceImpl implements PaymentService {
         String reference = "PAY-" + System.currentTimeMillis() + "-" +
                 UUID.randomUUID().toString().substring(0, 8).toUpperCase();
 
-        Payment payment = Payment.builder()
-                .orderId(request.getOrderId())
-                .customerId(resolvedCustomerId)
-                .paymentReference(reference)
-                .amount(request.getAmount())
-                .paymentMethod(request.getPaymentMethod())
-                .paymentStatus(PaymentStatus.PENDING)
-                .build();
+        Payment payment = mapper.toEntity(request);
+        payment.setCustomerId(resolvedCustomerId);
+        payment.setPaymentReference(reference);
+        payment.setPaymentStatus(PaymentStatus.PENDING);
 
         if (request.getPaymentMethod() == PaymentMethod.WALLET) {
             // Debit wallet immediately — if insufficient balance, exception is thrown before saving

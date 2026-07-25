@@ -29,14 +29,8 @@ public class VaccinationServiceImpl {
     @Transactional
     public VaccinationResponse create(UUID cowId, CreateVaccinationRequest request) {
         Cow cow = getCow(cowId);
-        Vaccination vaccination = Vaccination.builder()
-                .cow(cow)
-                .vaccineName(request.getVaccineName())
-                .administeredAt(request.getAdministeredAt())
-                .nextDueDate(request.getNextDueDate())
-                .administeredBy(request.getAdministeredBy())
-                .notes(request.getNotes())
-                .build();
+        Vaccination vaccination = mapper.toEntity(request);
+        vaccination.setCow(cow);
         return mapper.toVaccinationResponse(vaccinationRepository.save(vaccination));
     }
 

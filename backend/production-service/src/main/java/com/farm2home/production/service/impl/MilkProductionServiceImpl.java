@@ -34,17 +34,7 @@ public class MilkProductionServiceImpl {
                     "Production record already exists for cow " + request.getCowId()
                     + " on " + request.getCollectionDate() + " (" + request.getSession() + ")");
         }
-        MilkProduction entity = MilkProduction.builder()
-                .cowId(request.getCowId())
-                .collectionDate(request.getCollectionDate())
-                .session(request.getSession())
-                .quantityLiters(request.getQuantityLiters())
-                .fatPercentage(request.getFatPercentage())
-                .snfPercentage(request.getSnfPercentage())
-                .qualityGrade(request.getQualityGrade())
-                .collectedBy(request.getCollectedBy())
-                .notes(request.getNotes())
-                .build();
+        MilkProduction entity = mapper.toEntity(request);
         return mapper.toResponse(repository.save(entity));
     }
 
@@ -76,12 +66,7 @@ public class MilkProductionServiceImpl {
     @Transactional
     public MilkProductionResponse update(UUID id, UpdateMilkProductionRequest request) {
         MilkProduction record = getRecord(id);
-        if (request.getQuantityLiters() != null) record.setQuantityLiters(request.getQuantityLiters());
-        if (request.getFatPercentage()  != null) record.setFatPercentage(request.getFatPercentage());
-        if (request.getSnfPercentage()  != null) record.setSnfPercentage(request.getSnfPercentage());
-        if (request.getQualityGrade()   != null) record.setQualityGrade(request.getQualityGrade());
-        if (request.getCollectedBy()    != null) record.setCollectedBy(request.getCollectedBy());
-        if (request.getNotes()          != null) record.setNotes(request.getNotes());
+        mapper.updateEntityFromRequest(request, record);
         return mapper.toResponse(repository.save(record));
     }
 

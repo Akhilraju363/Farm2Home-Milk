@@ -3,11 +3,20 @@ package com.farm2home.farm.mapper;
 import com.farm2home.farm.domain.entity.Cow;
 import com.farm2home.farm.domain.entity.HealthRecord;
 import com.farm2home.farm.domain.entity.Vaccination;
+import com.farm2home.farm.dto.request.CreateCowRequest;
+import com.farm2home.farm.dto.request.CreateHealthRecordRequest;
+import com.farm2home.farm.dto.request.CreateVaccinationRequest;
+import com.farm2home.farm.dto.request.UpdateCowRequest;
 import com.farm2home.farm.dto.response.CowResponse;
 import com.farm2home.farm.dto.response.HealthRecordResponse;
 import com.farm2home.farm.dto.response.VaccinationResponse;
+import org.mapstruct.BeanMapping;
+import org.mapstruct.Condition;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
+import org.mapstruct.MappingTarget;
+import org.mapstruct.NullValuePropertyMappingStrategy;
+import org.springframework.util.StringUtils;
 
 @Mapper(componentModel = "spring")
 public interface FarmMapper {
@@ -23,4 +32,50 @@ public interface FarmMapper {
     @Mapping(target = "tagNumber", expression = "java(record.getCow().getTagNumber())")
     @Mapping(target = "condition", expression = "java(record.getCondition().name())")
     HealthRecordResponse toHealthRecordResponse(HealthRecord record);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "tagNumber", expression = "java(request.getTagNumber().toUpperCase())")
+    @Mapping(target = "status", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    @Mapping(target = "deleted", ignore = true)
+    Cow toEntity(CreateCowRequest request);
+
+    // hasText() below skips blank strings the same way the StringUtils.hasText guards it
+    // replaces did; a plain null-check alone isn't equivalent.
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "tagNumber", ignore = true)
+    @Mapping(target = "status", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    @Mapping(target = "deleted", ignore = true)
+    void updateCowFromRequest(UpdateCowRequest request, @MappingTarget Cow cow);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "cow", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    @Mapping(target = "deleted", ignore = true)
+    Vaccination toEntity(CreateVaccinationRequest request);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "cow", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    @Mapping(target = "deleted", ignore = true)
+    HealthRecord toEntity(CreateHealthRecordRequest request);
+
+    @Condition
+    default boolean hasText(String value) {
+        return StringUtils.hasText(value);
+    }
 }

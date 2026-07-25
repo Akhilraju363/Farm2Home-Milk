@@ -58,7 +58,7 @@ class DailyOrderGenerationServiceTest {
 
     @BeforeEach
     void setupPrices() {
-        when(priceProperties.getPriceFor("FULL_CREAM")).thenReturn(new BigDecimal("80.00"));
+        lenient().when(priceProperties.getPriceFor("FULL_CREAM")).thenReturn(new BigDecimal("80.00"));
     }
 
     // ── isDueOn ──────────────────────────────────────────────────────────────────

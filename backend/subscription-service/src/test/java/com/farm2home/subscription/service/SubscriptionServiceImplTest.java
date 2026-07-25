@@ -32,6 +32,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -89,6 +90,7 @@ class SubscriptionServiceImplTest {
             Subscription saved = buildActive();
             SubscriptionResponse response = buildResponse(SubscriptionStatus.ACTIVE);
 
+            when(mapper.toEntity(req)).thenReturn(new Subscription());
             when(repository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(response);
 
@@ -113,6 +115,7 @@ class SubscriptionServiceImplTest {
                     .build();
 
             Subscription saved = buildActive();
+            when(mapper.toEntity(req)).thenReturn(new Subscription());
             when(repository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(buildResponse(SubscriptionStatus.ACTIVE));
 
@@ -228,6 +231,12 @@ class SubscriptionServiceImplTest {
 
             when(repository.findByIdAndCustomerIdAndDeletedFalse(subId, customerId))
                     .thenReturn(Optional.of(sub));
+            doAnswer(invocation -> {
+                UpdateSubscriptionRequest r = invocation.getArgument(0);
+                Subscription target = invocation.getArgument(1);
+                if (r.getQuantity() != null) target.setQuantity(r.getQuantity());
+                return null;
+            }).when(mapper).updateEntityFromRequest(eq(req), eq(sub));
             when(repository.save(sub)).thenReturn(sub);
             when(mapper.toResponse(sub)).thenReturn(buildResponse(SubscriptionStatus.ACTIVE));
 
@@ -266,7 +275,7 @@ class SubscriptionServiceImplTest {
 
             assertThatThrownBy(() -> service.update(subId, req, customerId))
                     .isInstanceOf(SubscriptionException.class)
-                    .hasMessageContaining("delivery day");
+                    .hasMessageContaining("Delivery days");
         }
     }
 
@@ -414,6 +423,80 @@ class SubscriptionServiceImplTest {
 
             assertThatThrownBy(() -> service.resume(subId, customerId))
                     .isInstanceOf(SubscriptionException.class);
+        }
+    }
+
+    // ── Scheduled jobs ───────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("expireEndedSubscriptions()")
+    class ExpireEndedSubscriptions {
+
+        @Test
+        @DisplayName("delegates to repository's bulk expire query")
+        void delegatesToRepository() {
+            when(repository.expireByEndDate(any())).thenReturn(3);
+
+            service.expireEndedSubscriptions();
+
+            verify(repository).expireByEndDate(LocalDate.now());
+        }
+
+        @Test
+        @DisplayName("zero expired → no error, still calls repository")
+        void zeroExpired_noError() {
+            when(repository.expireByEndDate(any())).thenReturn(0);
+
+            service.expireEndedSubscriptions();
+
+            verify(repository).expireByEndDate(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("autoResumePausedSubscriptions()")
+    class AutoResumePausedSubscriptions {
+
+        @Test
+        @DisplayName("PAUSED subscription whose pauseEnd has arrived → resumes it")
+        void duePause_resumes() {
+            Subscription sub = buildActive();
+            sub.setStatus(SubscriptionStatus.PAUSED);
+            sub.setPauseStart(LocalDate.now().minusDays(3));
+            sub.setPauseEnd(LocalDate.now());
+            when(repository.findAllByDeletedFalse(any())).thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(sub)));
+
+            service.autoResumePausedSubscriptions();
+
+            assertThat(sub.getStatus()).isEqualTo(SubscriptionStatus.ACTIVE);
+            assertThat(sub.getPauseStart()).isNull();
+            assertThat(sub.getPauseEnd()).isNull();
+            verify(repository).save(sub);
+        }
+
+        @Test
+        @DisplayName("PAUSED subscription whose pauseEnd is still in the future → left alone")
+        void notYetDue_untouched() {
+            Subscription sub = buildActive();
+            sub.setStatus(SubscriptionStatus.PAUSED);
+            sub.setPauseEnd(LocalDate.now().plusDays(5));
+            when(repository.findAllByDeletedFalse(any())).thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(sub)));
+
+            service.autoResumePausedSubscriptions();
+
+            assertThat(sub.getStatus()).isEqualTo(SubscriptionStatus.PAUSED);
+            verify(repository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("non-PAUSED subscription → left alone")
+        void activeSubscription_untouched() {
+            Subscription sub = buildActive();
+            when(repository.findAllByDeletedFalse(any())).thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(sub)));
+
+            service.autoResumePausedSubscriptions();
+
+            verify(repository, never()).save(any());
         }
     }
 }

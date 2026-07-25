@@ -14,7 +14,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.util.UUID;
 
@@ -33,13 +32,8 @@ public class DeliveryPartnerServiceImpl {
             route = routeRepository.findByIdAndDeletedFalse(request.getRouteId())
                     .orElseThrow(() -> new ResourceNotFoundException("Route not found: " + request.getRouteId()));
         }
-        DeliveryPartner partner = DeliveryPartner.builder()
-                .userId(request.getUserId())
-                .route(route)
-                .name(request.getName())
-                .mobile(request.getMobile())
-                .vehicleType(request.getVehicleType())
-                .build();
+        DeliveryPartner partner = mapper.toEntity(request);
+        partner.setRoute(route);
         return mapper.toPartnerResponse(partnerRepository.save(partner));
     }
 
@@ -64,10 +58,7 @@ public class DeliveryPartnerServiceImpl {
                     .orElseThrow(() -> new ResourceNotFoundException("Route not found: " + request.getRouteId()));
             partner.setRoute(route);
         }
-        if (StringUtils.hasText(request.getName()))        partner.setName(request.getName());
-        if (StringUtils.hasText(request.getMobile()))      partner.setMobile(request.getMobile());
-        if (StringUtils.hasText(request.getVehicleType())) partner.setVehicleType(request.getVehicleType());
-        if (request.getActive() != null)                   partner.setActive(request.getActive());
+        mapper.updatePartnerFromRequest(request, partner);
 
         return mapper.toPartnerResponse(partnerRepository.save(partner));
     }

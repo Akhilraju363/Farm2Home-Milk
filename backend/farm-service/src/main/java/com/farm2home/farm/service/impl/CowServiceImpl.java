@@ -15,7 +15,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.util.UUID;
 
@@ -31,13 +30,7 @@ public class CowServiceImpl {
         if (cowRepository.existsByTagNumberAndDeletedFalse(request.getTagNumber())) {
             throw new FarmException("Tag number already registered: " + request.getTagNumber());
         }
-        Cow cow = Cow.builder()
-                .tagNumber(request.getTagNumber().toUpperCase())
-                .cowName(request.getCowName())
-                .breed(request.getBreed())
-                .dateOfBirth(request.getDateOfBirth())
-                .purchaseDate(request.getPurchaseDate())
-                .build();
+        Cow cow = mapper.toEntity(request);
         return mapper.toCowResponse(cowRepository.save(cow));
     }
 
@@ -57,10 +50,7 @@ public class CowServiceImpl {
     @Transactional
     public CowResponse update(UUID id, UpdateCowRequest request) {
         Cow cow = getCow(id);
-        if (StringUtils.hasText(request.getCowName()))  cow.setCowName(request.getCowName());
-        if (StringUtils.hasText(request.getBreed()))    cow.setBreed(request.getBreed());
-        if (request.getDateOfBirth() != null)            cow.setDateOfBirth(request.getDateOfBirth());
-        if (request.getPurchaseDate() != null)           cow.setPurchaseDate(request.getPurchaseDate());
+        mapper.updateCowFromRequest(request, cow);
         return mapper.toCowResponse(cowRepository.save(cow));
     }
 

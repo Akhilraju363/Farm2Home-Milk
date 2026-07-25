@@ -36,16 +36,9 @@ public class SubscriptionServiceImpl implements SubscriptionService {
     public SubscriptionResponse create(CreateSubscriptionRequest request, UUID customerId) {
         validateCreateRequest(request);
 
-        Subscription subscription = Subscription.builder()
-                .customerId(customerId)
-                .milkType(request.getMilkType())
-                .quantity(request.getQuantity())
-                .scheduleType(request.getScheduleType())
-                .deliveryDays(request.getDeliveryDays())
-                .startDate(request.getStartDate())
-                .endDate(request.getEndDate())
-                .status(SubscriptionStatus.ACTIVE)
-                .build();
+        Subscription subscription = mapper.toEntity(request);
+        subscription.setCustomerId(customerId);
+        subscription.setStatus(SubscriptionStatus.ACTIVE);
 
         Subscription saved = repository.save(subscription);
         log.info("Created subscription {} for customer {}", saved.getId(), customerId);
@@ -77,24 +70,15 @@ public class SubscriptionServiceImpl implements SubscriptionService {
             throw new SubscriptionException("Cannot modify a " + sub.getStatus().name().toLowerCase() + " subscription.");
         }
 
-        if (request.getMilkType() != null)    sub.setMilkType(request.getMilkType());
-        if (request.getQuantity() != null)    sub.setQuantity(request.getQuantity());
-        if (request.getEndDate() != null) {
-            if (request.getEndDate().isBefore(sub.getStartDate())) {
-                throw new SubscriptionException("End date must be after the subscription start date.");
-            }
-            sub.setEndDate(request.getEndDate());
+        if (request.getEndDate() != null && request.getEndDate().isBefore(sub.getStartDate())) {
+            throw new SubscriptionException("End date must be after the subscription start date.");
+        }
+        if (request.getScheduleType() == ScheduleType.WEEKLY
+                && (request.getDeliveryDays() == null || request.getDeliveryDays().isEmpty())) {
+            throw new SubscriptionException("Delivery days are required for a WEEKLY schedule.");
         }
 
-        if (request.getScheduleType() != null) {
-            sub.setScheduleType(request.getScheduleType());
-            if (request.getScheduleType() == ScheduleType.WEEKLY) {
-                if (request.getDeliveryDays() == null || request.getDeliveryDays().isEmpty()) {
-                    throw new SubscriptionException("Delivery days are required for a WEEKLY schedule.");
-                }
-            }
-        }
-        if (request.getDeliveryDays() != null) sub.setDeliveryDays(request.getDeliveryDays());
+        mapper.updateEntityFromRequest(request, sub);
 
         return mapper.toResponse(repository.save(sub));
     }

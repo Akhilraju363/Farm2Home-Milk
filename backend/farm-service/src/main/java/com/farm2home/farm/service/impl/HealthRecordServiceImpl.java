@@ -27,14 +27,8 @@ public class HealthRecordServiceImpl {
     @Transactional
     public HealthRecordResponse create(UUID cowId, CreateHealthRecordRequest request) {
         Cow cow = getCow(cowId);
-        HealthRecord record = HealthRecord.builder()
-                .cow(cow)
-                .recordDate(request.getRecordDate())
-                .condition(request.getCondition())
-                .symptoms(request.getSymptoms())
-                .treatment(request.getTreatment())
-                .vetName(request.getVetName())
-                .build();
+        HealthRecord record = mapper.toEntity(request);
+        record.setCow(cow);
         return mapper.toHealthRecordResponse(healthRecordRepository.save(record));
     }
 

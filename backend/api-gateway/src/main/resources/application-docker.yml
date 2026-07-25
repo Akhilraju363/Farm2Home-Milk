@@ -1,47 +1,160 @@
 spring:
   cloud:
     gateway:
+      # This routes list fully replaces (not merges with) the one in application.yml,
+      # so every route's resilience filters have to be repeated here too - Spring's
+      # relaxed binding overwrites list-typed properties wholesale, it doesn't merge them.
       routes:
         - id: auth-service
           uri: http://auth-service:8081
           predicates:
             - Path=/api/v1/auth/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authServiceCB
+                fallbackUri: forward:/fallback/auth-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: authServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: authServiceBH
         - id: customer-service
           uri: http://customer-service:8082
           predicates:
             - Path=/api/v1/customers/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: customerServiceCB
+                fallbackUri: forward:/fallback/customer-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: customerServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: customerServiceBH
         - id: subscription-service
           uri: http://subscription-service:8083
           predicates:
             - Path=/api/v1/subscriptions/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: subscriptionServiceCB
+                fallbackUri: forward:/fallback/subscription-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: subscriptionServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: subscriptionServiceBH
         - id: order-service
           uri: http://order-service:8084
           predicates:
             - Path=/api/v1/orders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCB
+                fallbackUri: forward:/fallback/order-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: orderServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: orderServiceBH
         - id: payment-service
           uri: http://payment-service:8085
           predicates:
             - Path=/api/v1/payments/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: paymentServiceCB
+                fallbackUri: forward:/fallback/payment-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: paymentServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: paymentServiceBH
         - id: delivery-service
           uri: http://delivery-service:8086
           predicates:
             - Path=/api/v1/delivery/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: deliveryServiceCB
+                fallbackUri: forward:/fallback/delivery-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: deliveryServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: deliveryServiceBH
         - id: farm-service
           uri: http://farm-service:8087
           predicates:
             - Path=/api/v1/cows/**,/api/v1/farm/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: farmServiceCB
+                fallbackUri: forward:/fallback/farm-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: farmServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: farmServiceBH
         - id: production-service
           uri: http://production-service:8088
           predicates:
             - Path=/api/v1/production/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: productionServiceCB
+                fallbackUri: forward:/fallback/production-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: productionServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: productionServiceBH
         - id: inventory-service
           uri: http://inventory-service:8089
           predicates:
             - Path=/api/v1/inventory/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: inventoryServiceCB
+                fallbackUri: forward:/fallback/inventory-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: inventoryServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: inventoryServiceBH
         - id: notification-service
           uri: http://notification-service:8090
           predicates:
             - Path=/api/v1/notifications/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: notificationServiceCB
+                fallbackUri: forward:/fallback/notification-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: notificationServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: notificationServiceBH
 
 eureka:
   client:

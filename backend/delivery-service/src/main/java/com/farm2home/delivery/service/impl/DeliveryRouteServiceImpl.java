@@ -13,7 +13,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.util.UUID;
 
@@ -29,13 +28,7 @@ public class DeliveryRouteServiceImpl {
         if (routeRepository.existsByRouteCodeAndDeletedFalse(request.getRouteCode())) {
             throw new DeliveryException("Route code already exists: " + request.getRouteCode());
         }
-        DeliveryRoute route = DeliveryRoute.builder()
-                .routeName(request.getRouteName())
-                .routeCode(request.getRouteCode().toUpperCase())
-                .area(request.getArea())
-                .city(request.getCity())
-                .pincode(request.getPincode())
-                .build();
+        DeliveryRoute route = mapper.toEntity(request);
         return mapper.toRouteResponse(routeRepository.save(route));
     }
 
@@ -54,11 +47,7 @@ public class DeliveryRouteServiceImpl {
     public RouteResponse update(UUID id, UpdateRouteRequest request) {
         DeliveryRoute route = routeRepository.findByIdAndDeletedFalse(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Route not found: " + id));
-        if (StringUtils.hasText(request.getRouteName())) route.setRouteName(request.getRouteName());
-        if (StringUtils.hasText(request.getArea()))      route.setArea(request.getArea());
-        if (StringUtils.hasText(request.getCity()))      route.setCity(request.getCity());
-        if (StringUtils.hasText(request.getPincode()))   route.setPincode(request.getPincode());
-        if (request.getActive() != null)                  route.setActive(request.getActive());
+        mapper.updateRouteFromRequest(request, route);
         return mapper.toRouteResponse(routeRepository.save(route));
     }
 

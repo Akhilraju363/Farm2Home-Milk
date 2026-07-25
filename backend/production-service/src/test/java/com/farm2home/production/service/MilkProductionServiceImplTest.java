@@ -27,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -69,6 +70,7 @@ class MilkProductionServiceImplTest {
         void happyPath() {
             when(repository.existsByCowIdAndCollectionDateAndSessionAndDeletedFalse(
                     any(), any(), any())).thenReturn(false);
+            when(mapper.toEntity(any(CreateMilkProductionRequest.class))).thenReturn(new MilkProduction());
             MilkProduction saved = buildRecord();
             when(repository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(buildResponse());
@@ -101,6 +103,68 @@ class MilkProductionServiceImplTest {
                     .isInstanceOf(ProductionException.class)
                     .hasMessageContaining("Production record already exists");
             verify(repository, never()).save(any());
+        }
+    }
+
+    // ── FindAll / FindByCow / Summaries ─────────────────────────────────────────
+
+    @Nested @DisplayName("findAll()")
+    class FindAll {
+
+        @Test
+        @DisplayName("returns mapped page")
+        void returnsMappedPage() {
+            MilkProduction record = buildRecord();
+            when(repository.findAllByDeletedFalse(any())).thenReturn(
+                    new org.springframework.data.domain.PageImpl<>(java.util.List.of(record)));
+            when(mapper.toResponse(record)).thenReturn(buildResponse());
+
+            assertThat(service.findAll(org.springframework.data.domain.Pageable.unpaged()).getTotalElements())
+                    .isEqualTo(1);
+        }
+    }
+
+    @Nested @DisplayName("findByCow()")
+    class FindByCow {
+
+        @Test
+        @DisplayName("returns mapped page for the given cow")
+        void returnsMappedPage() {
+            MilkProduction record = buildRecord();
+            when(repository.findAllByCowIdAndDeletedFalse(eq(cowId), any())).thenReturn(
+                    new org.springframework.data.domain.PageImpl<>(java.util.List.of(record)));
+            when(mapper.toResponse(record)).thenReturn(buildResponse());
+
+            assertThat(service.findByCow(cowId, org.springframework.data.domain.Pageable.unpaged()).getTotalElements())
+                    .isEqualTo(1);
+        }
+    }
+
+    @Nested @DisplayName("getDailySummaryByCow() / getDailySummary()")
+    class Summaries {
+
+        @Test
+        @DisplayName("getDailySummaryByCow delegates to repository with the given range")
+        void byCow_delegates() {
+            LocalDate from = LocalDate.now().minusDays(7);
+            LocalDate to = LocalDate.now();
+            when(repository.findDailySummaryByCow(cowId, from, to)).thenReturn(java.util.List.of());
+
+            service.getDailySummaryByCow(cowId, from, to);
+
+            verify(repository).findDailySummaryByCow(cowId, from, to);
+        }
+
+        @Test
+        @DisplayName("getDailySummary delegates to repository with the given range")
+        void overall_delegates() {
+            LocalDate from = LocalDate.now().minusDays(7);
+            LocalDate to = LocalDate.now();
+            when(repository.findDailySummary(from, to)).thenReturn(java.util.List.of());
+
+            service.getDailySummary(from, to);
+
+            verify(repository).findDailySummary(from, to);
         }
     }
 
@@ -145,6 +209,18 @@ class MilkProductionServiceImplTest {
 
             UpdateMilkProductionRequest req = new UpdateMilkProductionRequest();
             req.setQuantityLiters(new BigDecimal("12.00"));
+
+            doAnswer(inv -> {
+                UpdateMilkProductionRequest r = inv.getArgument(0);
+                MilkProduction target = inv.getArgument(1);
+                if (r.getQuantityLiters() != null) target.setQuantityLiters(r.getQuantityLiters());
+                if (r.getFatPercentage() != null) target.setFatPercentage(r.getFatPercentage());
+                if (r.getSnfPercentage() != null) target.setSnfPercentage(r.getSnfPercentage());
+                if (r.getQualityGrade() != null) target.setQualityGrade(r.getQualityGrade());
+                if (r.getCollectedBy() != null) target.setCollectedBy(r.getCollectedBy());
+                if (r.getNotes() != null) target.setNotes(r.getNotes());
+                return null;
+            }).when(mapper).updateEntityFromRequest(eq(req), eq(record));
 
             service.update(recordId, req);
 

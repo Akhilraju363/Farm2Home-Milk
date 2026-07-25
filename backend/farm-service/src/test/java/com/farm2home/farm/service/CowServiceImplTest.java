@@ -26,6 +26,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -53,6 +54,18 @@ class CowServiceImplTest {
         return CowResponse.builder().id(cowId).tagNumber("TAG001").status(status.name()).build();
     }
 
+    /** Mirrors FarmMapper's real (generated) toEntity() behavior, since mapper is mocked here. */
+    private static Cow realToEntity(org.mockito.invocation.InvocationOnMock inv) {
+        CreateCowRequest r = inv.getArgument(0);
+        Cow c = new Cow();
+        c.setTagNumber(r.getTagNumber().toUpperCase());
+        c.setCowName(r.getCowName());
+        c.setBreed(r.getBreed());
+        c.setDateOfBirth(r.getDateOfBirth());
+        c.setPurchaseDate(r.getPurchaseDate());
+        return c;
+    }
+
     // ── Create ───────────────────────────────────────────────────────────────────
 
     @Nested
@@ -63,6 +76,7 @@ class CowServiceImplTest {
         @DisplayName("new tag number → saves and returns response")
         void happyPath() {
             when(cowRepository.existsByTagNumberAndDeletedFalse("TAG001")).thenReturn(false);
+            when(mapper.toEntity(any(CreateCowRequest.class))).thenAnswer(CowServiceImplTest::realToEntity);
             Cow saved = buildCow(CowStatus.ACTIVE);
             when(cowRepository.save(any())).thenReturn(saved);
             when(mapper.toCowResponse(saved)).thenReturn(buildResponse(CowStatus.ACTIVE));
@@ -95,7 +109,10 @@ class CowServiceImplTest {
         @Test
         @DisplayName("tag number is uppercased before saving")
         void tagNumberUppercased() {
-            when(cowRepository.existsByTagNumberAndDeletedFalse("TAG002")).thenReturn(false);
+            // existsByTagNumberAndDeletedFalse is checked against the raw request value -
+            // only the entity's own tagNumber field gets uppercased.
+            when(cowRepository.existsByTagNumberAndDeletedFalse("tag002")).thenReturn(false);
+            when(mapper.toEntity(any(CreateCowRequest.class))).thenAnswer(CowServiceImplTest::realToEntity);
             when(cowRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(mapper.toCowResponse(any())).thenReturn(buildResponse(CowStatus.ACTIVE));
 
@@ -152,6 +169,16 @@ class CowServiceImplTest {
 
             UpdateCowRequest req = new UpdateCowRequest();
             req.setBreed("Jersey");   // update only breed
+
+            doAnswer(inv -> {
+                UpdateCowRequest r = inv.getArgument(0);
+                Cow target = inv.getArgument(1);
+                if (org.springframework.util.StringUtils.hasText(r.getCowName())) target.setCowName(r.getCowName());
+                if (org.springframework.util.StringUtils.hasText(r.getBreed())) target.setBreed(r.getBreed());
+                if (r.getDateOfBirth() != null) target.setDateOfBirth(r.getDateOfBirth());
+                if (r.getPurchaseDate() != null) target.setPurchaseDate(r.getPurchaseDate());
+                return null;
+            }).when(mapper).updateCowFromRequest(eq(req), eq(cow));
 
             service.update(cowId, req);
 

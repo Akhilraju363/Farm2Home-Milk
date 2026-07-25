@@ -3,6 +3,7 @@ package com.farm2home.payment.mapper;
 import com.farm2home.payment.domain.entity.Payment;
 import com.farm2home.payment.domain.entity.Wallet;
 import com.farm2home.payment.domain.entity.WalletTransaction;
+import com.farm2home.payment.dto.request.InitiatePaymentRequest;
 import com.farm2home.payment.dto.response.PaymentResponse;
 import com.farm2home.payment.dto.response.WalletResponse;
 import com.farm2home.payment.dto.response.WalletTransactionResponse;
@@ -20,4 +21,20 @@ public interface PaymentMapper {
 
     @Mapping(target = "transactionType", expression = "java(tx.getTransactionType().name())")
     WalletTransactionResponse toTransactionResponse(WalletTransaction tx);
+
+    // customerId needs request-vs-principal resolution, paymentReference is generated, and
+    // paymentStatus starts PENDING before the method-specific branch in the service decides
+    // its outcome — all assigned by the service after this runs.
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "customerId", ignore = true)
+    @Mapping(target = "paymentReference", ignore = true)
+    @Mapping(target = "paymentStatus", ignore = true)
+    @Mapping(target = "gatewayResponse", ignore = true)
+    @Mapping(target = "paidAt", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    @Mapping(target = "deleted", ignore = true)
+    Payment toEntity(InitiatePaymentRequest request);
 }
