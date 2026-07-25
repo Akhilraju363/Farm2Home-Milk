@@ -89,6 +89,13 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- SecurityMockMvcRequestPostProcessors etc. for @WebMvcTest controller tests that
+             need to inject a custom (@AuthenticationPrincipal) principal into the request. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -118,6 +125,85 @@
                     </annotationProcessorPaths>
                 </configuration>
             </plugin>
+            <!-- In <build><plugins> (not pluginManagement) so every module is instrumented
+                 automatically - previously this was pluginManagement-only, which meant a
+                 module had to re-declare the plugin itself to get coverage at all, and only
+                 auth-service and customer-service did. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <excludes>
+                        <!-- Entry point only invoked reflectively at startup; not meaningfully
+                             unit-testable, and its JPA/scheduling annotations already moved out
+                             to a separate JpaConfig for @WebMvcTest slice compatibility. -->
+                        <exclude>**/*Application.class</exclude>
+                        <!-- Plain data holders (Lombok-generated accessors, no logic). -->
+                        <exclude>**/dto/**</exclude>
+                        <exclude>**/domain/entity/**</exclude>
+                        <exclude>**/domain/enums/**</exclude>
+                        <!-- Spring Data interfaces - no method bodies to cover. -->
+                        <exclude>**/domain/repository/**</exclude>
+                        <!-- Bean wiring / security filter chains - exercised indirectly through
+                             @WebMvcTest controller slices (which @Import the real SecurityConfig)
+                             rather than tested as units in their own right. -->
+                        <exclude>**/config/**</exclude>
+                        <!-- Thin exception types with no behavior beyond their constructor. -->
+                        <exclude>**/exception/**</exclude>
+                        <!-- Mapper interfaces (hand-written default methods and MapStruct's
+                             generated Impl alike). Service tests always mock the Mapper
+                             dependency, so the real implementation never actually executes
+                             under a service unit test; the mapping logic itself was validated
+                             live against real data during its own implementation, not by
+                             invoking the mocked interface here. -->
+                        <exclude>**/mapper/**</exclude>
+                        <!-- Kafka producers/consumers are thin publish/consume wrappers around
+                             already-tested service logic. -->
+                        <exclude>**/kafka/**</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <!-- Bound to verify (not test) so a plain "mvn test" during development
+                         still runs fast without failing the build; "mvn verify"/"mvn install"
+                         enforces the coverage bar. A bundle left with zero coverable
+                         instructions after the excludes above (e.g. discovery-service,
+                         config-server) trivially satisfies any ratio and never fails this. -->
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
         <pluginManagement>
             <plugins>
@@ -140,25 +226,6 @@
                         <execution>
                             <goals>
                                 <goal>build-info</goal>
-                            </goals>
-                        </execution>
-                    </executions>
-                </plugin>
-                <plugin>
-                    <groupId>org.jacoco</groupId>
-                    <artifactId>jacoco-maven-plugin</artifactId>
-                    <version>${jacoco.version}</version>
-                    <executions>
-                        <execution>
-                            <goals>
-                                <goal>prepare-agent</goal>
-                            </goals>
-                        </execution>
-                        <execution>
-                            <id>report</id>
-                            <phase>test</phase>
-                            <goals>
-                                <goal>report</goal>
                             </goals>
                         </execution>
                     </executions>

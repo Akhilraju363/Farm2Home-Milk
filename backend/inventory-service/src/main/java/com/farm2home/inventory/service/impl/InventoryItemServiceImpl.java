@@ -12,7 +12,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.UUID;
@@ -26,14 +25,7 @@ public class InventoryItemServiceImpl {
 
     @Transactional
     public InventoryItemResponse create(CreateInventoryItemRequest request) {
-        InventoryItem item = InventoryItem.builder()
-                .itemName(request.getItemName())
-                .itemType(request.getItemType())
-                .unit(request.getUnit())
-                .reorderLevel(request.getReorderLevel() != null ? request.getReorderLevel() : java.math.BigDecimal.ZERO)
-                .unitPrice(request.getUnitPrice())
-                .supplier(request.getSupplier())
-                .build();
+        InventoryItem item = mapper.toEntity(request);
         return mapper.toItemResponse(repository.save(item));
     }
 
@@ -58,10 +50,7 @@ public class InventoryItemServiceImpl {
     @Transactional
     public InventoryItemResponse update(UUID id, UpdateInventoryItemRequest request) {
         InventoryItem item = getItem(id);
-        if (StringUtils.hasText(request.getItemName()))  item.setItemName(request.getItemName());
-        if (request.getReorderLevel() != null)            item.setReorderLevel(request.getReorderLevel());
-        if (request.getUnitPrice()    != null)            item.setUnitPrice(request.getUnitPrice());
-        if (StringUtils.hasText(request.getSupplier()))  item.setSupplier(request.getSupplier());
+        mapper.updateItemFromRequest(request, item);
         return mapper.toItemResponse(repository.save(item));
     }
 

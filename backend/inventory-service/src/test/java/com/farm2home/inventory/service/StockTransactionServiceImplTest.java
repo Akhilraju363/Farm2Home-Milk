@@ -28,6 +28,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -58,6 +59,7 @@ class StockTransactionServiceImplTest {
         void stockIn() {
             InventoryItem item = buildItem(new BigDecimal("100.00"));
             when(itemService.getItem(itemId)).thenReturn(item);
+            when(mapper.toEntity(any(StockTransactionRequest.class))).thenReturn(new StockTransaction());
             StockTransaction txn = StockTransaction.builder().id(UUID.randomUUID()).item(item)
                     .txnType(TxnType.IN).quantity(new BigDecimal("25.00")).build();
             when(txnRepository.save(any())).thenReturn(txn);
@@ -79,6 +81,7 @@ class StockTransactionServiceImplTest {
         void stockOut_sufficient() {
             InventoryItem item = buildItem(new BigDecimal("100.00"));
             when(itemService.getItem(itemId)).thenReturn(item);
+            when(mapper.toEntity(any(StockTransactionRequest.class))).thenReturn(new StockTransaction());
             StockTransaction txn = StockTransaction.builder().id(UUID.randomUUID()).item(item)
                     .txnType(TxnType.OUT).quantity(new BigDecimal("30.00")).build();
             when(txnRepository.save(any())).thenReturn(txn);
@@ -108,6 +111,102 @@ class StockTransactionServiceImplTest {
                     .isInstanceOf(InventoryException.class)
                     .hasMessageContaining("Insufficient stock");
             verify(txnRepository, never()).save(any());
+        }
+    }
+
+    @Nested @DisplayName("findByItem()")
+    class FindByItem {
+
+        @Test
+        @DisplayName("verifies item exists and returns mapped page")
+        void returnsMappedPage() {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            when(itemService.getItem(itemId)).thenReturn(item);
+            StockTransaction txn = StockTransaction.builder().id(UUID.randomUUID()).build();
+            when(txnRepository.findAllByItemIdOrderByTransactedAtDesc(eq(itemId), any())).thenReturn(
+                    new org.springframework.data.domain.PageImpl<>(java.util.List.of(txn)));
+            when(mapper.toTxnResponse(txn)).thenReturn(StockTransactionResponse.builder().build());
+
+            var result = service.findByItem(itemId, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            verify(itemService).getItem(itemId);
+        }
+    }
+
+    @Nested @DisplayName("currentUser() (exercised via transact())")
+    class CurrentUser {
+
+        @org.junit.jupiter.api.AfterEach
+        void clearContext() {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+
+        private void stubTransactHappyPath(StockTransaction txnToReturn) {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            when(itemService.getItem(itemId)).thenReturn(item);
+            when(mapper.toEntity(any(StockTransactionRequest.class))).thenReturn(new StockTransaction());
+            when(txnRepository.save(any())).thenReturn(txnToReturn);
+            when(mapper.toTxnResponse(txnToReturn)).thenReturn(StockTransactionResponse.builder().build());
+        }
+
+        @Test
+        @DisplayName("no authentication in context → createdBy is \"system\"")
+        void noAuth_system() {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            org.mockito.ArgumentCaptor<StockTransaction> captor =
+                    org.mockito.ArgumentCaptor.forClass(StockTransaction.class);
+            stubTransactHappyPath(StockTransaction.builder().build());
+
+            StockTransactionRequest req = new StockTransactionRequest();
+            req.setTxnType(TxnType.IN);
+            req.setQuantity(new BigDecimal("10.00"));
+            service.transact(itemId, req);
+
+            verify(txnRepository).save(captor.capture());
+            assertThat(captor.getValue().getCreatedBy()).isEqualTo("system");
+        }
+
+        @Test
+        @DisplayName("authenticated with UserPrincipal → createdBy is the principal's mobile")
+        void userPrincipal_usesMobile() {
+            var principal = new com.farm2home.inventory.config.UserPrincipal(
+                    UUID.randomUUID(), "9876543210", java.util.Set.of("CUSTOMER"));
+            var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    principal, null, java.util.List.of());
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+
+            org.mockito.ArgumentCaptor<StockTransaction> captor =
+                    org.mockito.ArgumentCaptor.forClass(StockTransaction.class);
+            stubTransactHappyPath(StockTransaction.builder().build());
+
+            StockTransactionRequest req = new StockTransactionRequest();
+            req.setTxnType(TxnType.IN);
+            req.setQuantity(new BigDecimal("10.00"));
+            service.transact(itemId, req);
+
+            verify(txnRepository).save(captor.capture());
+            assertThat(captor.getValue().getCreatedBy()).isEqualTo("9876543210");
+        }
+
+        @Test
+        @DisplayName("authenticated with a non-UserPrincipal principal → createdBy falls back to Authentication#getName()")
+        void otherPrincipal_usesAuthName() {
+            var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                    "some-other-name", null, java.util.List.of());
+            org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+
+            org.mockito.ArgumentCaptor<StockTransaction> captor =
+                    org.mockito.ArgumentCaptor.forClass(StockTransaction.class);
+            stubTransactHappyPath(StockTransaction.builder().build());
+
+            StockTransactionRequest req = new StockTransactionRequest();
+            req.setTxnType(TxnType.IN);
+            req.setQuantity(new BigDecimal("10.00"));
+            service.transact(itemId, req);
+
+            verify(txnRepository).save(captor.capture());
+            assertThat(captor.getValue().getCreatedBy()).isEqualTo("some-other-name");
         }
     }
 }

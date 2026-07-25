@@ -43,14 +43,9 @@ public class StockTransactionServiceImpl {
         }
         itemRepository.save(item);
 
-        StockTransaction txn = StockTransaction.builder()
-                .item(item)
-                .txnType(request.getTxnType())
-                .quantity(request.getQuantity())
-                .reason(request.getReason())
-                .referenceId(request.getReferenceId())
-                .createdBy(currentUser())
-                .build();
+        StockTransaction txn = mapper.toEntity(request);
+        txn.setItem(item);
+        txn.setCreatedBy(currentUser());
 
         return mapper.toTxnResponse(txnRepository.save(txn));
     }

@@ -100,6 +100,8 @@ class OrderServiceImplTest {
                     .build();
 
             Order saved = buildPendingOrder();
+            when(orderMapper.toEntity(req)).thenReturn(Order.builder().build());
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
             when(orderRepository.nextOrderNumber()).thenReturn(100001L);
             when(orderRepository.save(any())).thenReturn(saved);
             when(orderMapper.toResponse(saved)).thenReturn(buildResponse(OrderStatus.PENDING));
@@ -123,6 +125,8 @@ class OrderServiceImplTest {
                                     .milkType(MilkType.TONED).quantity(new BigDecimal("2.0")).build()))
                     .build();
 
+            when(orderMapper.toEntity(req)).thenReturn(Order.builder().build());
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
             when(orderRepository.nextOrderNumber()).thenReturn(100002L);
             when(orderRepository.save(any())).thenAnswer(inv -> {
                 Order o = inv.getArgument(0);

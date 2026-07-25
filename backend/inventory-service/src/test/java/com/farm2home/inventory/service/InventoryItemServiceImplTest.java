@@ -30,6 +30,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -71,6 +72,7 @@ class InventoryItemServiceImplTest {
         @Test
         @DisplayName("valid request → saves item with zero quantity")
         void happyPath() {
+            when(mapper.toEntity(any(CreateInventoryItemRequest.class))).thenReturn(new InventoryItem());
             InventoryItem saved = buildItem(BigDecimal.ZERO);
             when(repository.save(any())).thenReturn(saved);
             when(mapper.toItemResponse(saved)).thenReturn(buildResponse(BigDecimal.ZERO));
@@ -85,6 +87,51 @@ class InventoryItemServiceImplTest {
             assertThat(result.getItemType()).isEqualTo("FEED");
             assertThat(result.getQuantity()).isEqualByComparingTo(BigDecimal.ZERO);
             verify(repository).save(any(InventoryItem.class));
+        }
+    }
+
+    // ── FindAll / FindLowStock ──────────────────────────────────────────────────
+
+    @Nested @DisplayName("findAll()")
+    class FindAll {
+
+        @Test
+        @DisplayName("no type filter → queries all")
+        void noFilter_queriesAll() {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            when(repository.findAllByDeletedFalse(any())).thenReturn(
+                    new org.springframework.data.domain.PageImpl<>(java.util.List.of(item)));
+            when(mapper.toItemResponse(item)).thenReturn(buildResponse(new BigDecimal("100.00")));
+
+            assertThat(service.findAll(null, org.springframework.data.domain.Pageable.unpaged()).getTotalElements())
+                    .isEqualTo(1);
+            verify(repository, never()).findAllByItemTypeAndDeletedFalse(any(), any());
+        }
+
+        @Test
+        @DisplayName("type filter set → queries by type")
+        void withFilter_queriesByType() {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            when(repository.findAllByItemTypeAndDeletedFalse(eq(ItemType.FEED), any())).thenReturn(
+                    new org.springframework.data.domain.PageImpl<>(java.util.List.of(item)));
+            when(mapper.toItemResponse(item)).thenReturn(buildResponse(new BigDecimal("100.00")));
+
+            assertThat(service.findAll(ItemType.FEED, org.springframework.data.domain.Pageable.unpaged())
+                    .getTotalElements()).isEqualTo(1);
+        }
+    }
+
+    @Nested @DisplayName("findLowStock()")
+    class FindLowStock {
+
+        @Test
+        @DisplayName("returns mapped list")
+        void returnsMappedList() {
+            InventoryItem item = buildItem(new BigDecimal("10.00"));
+            when(repository.findItemsBelowReorderLevel()).thenReturn(java.util.List.of(item));
+            when(mapper.toItemResponse(item)).thenReturn(buildResponse(new BigDecimal("10.00")));
+
+            assertThat(service.findLowStock()).hasSize(1);
         }
     }
 
@@ -128,6 +175,16 @@ class InventoryItemServiceImplTest {
 
             UpdateInventoryItemRequest req = new UpdateInventoryItemRequest();
             req.setReorderLevel(new BigDecimal("75.00"));
+
+            doAnswer(inv -> {
+                UpdateInventoryItemRequest r = inv.getArgument(0);
+                InventoryItem target = inv.getArgument(1);
+                if (org.springframework.util.StringUtils.hasText(r.getItemName())) target.setItemName(r.getItemName());
+                if (r.getReorderLevel() != null) target.setReorderLevel(r.getReorderLevel());
+                if (r.getUnitPrice() != null) target.setUnitPrice(r.getUnitPrice());
+                if (org.springframework.util.StringUtils.hasText(r.getSupplier())) target.setSupplier(r.getSupplier());
+                return null;
+            }).when(mapper).updateItemFromRequest(eq(req), eq(item));
 
             service.update(itemId, req);
 

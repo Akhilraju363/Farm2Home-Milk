@@ -62,15 +62,12 @@ public class AuthServiceImpl implements AuthService {
         var customerRole = roleRepository.findByNameAndDeletedFalse(RoleType.CUSTOMER)
                 .orElseThrow(() -> new ResourceNotFoundException("Role CUSTOMER not found. Run database seed."));
 
-        User user = User.builder()
-                .username(request.getFirstName().toLowerCase() + "." + request.getLastName().toLowerCase())
-                .mobile(request.getMobile())
-                .email(request.getEmail())
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .active(true)
-                .verified(false)
-                .roles(Set.of(customerRole))
-                .build();
+        User user = userMapper.toEntity(request);
+        user.setUsername(request.getFirstName().toLowerCase() + "." + request.getLastName().toLowerCase());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setActive(true);
+        user.setVerified(false);
+        user.setRoles(Set.of(customerRole));
 
         user = userRepository.save(user);
 

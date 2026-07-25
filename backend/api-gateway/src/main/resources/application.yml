@@ -19,55 +19,172 @@ spring:
             - name: CircuitBreaker
               args:
                 name: authServiceCB
-                fallbackUri: forward:/fallback/auth
+                fallbackUri: forward:/fallback/auth-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: authServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: authServiceBH
 
         - id: customer-service
           uri: lb://customer-service
           predicates:
             - Path=/api/v1/customers/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: customerServiceCB
+                fallbackUri: forward:/fallback/customer-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: customerServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: customerServiceBH
 
         - id: subscription-service
           uri: lb://subscription-service
           predicates:
             - Path=/api/v1/subscriptions/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: subscriptionServiceCB
+                fallbackUri: forward:/fallback/subscription-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: subscriptionServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: subscriptionServiceBH
 
         - id: order-service
           uri: lb://order-service
           predicates:
             - Path=/api/v1/orders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCB
+                fallbackUri: forward:/fallback/order-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: orderServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: orderServiceBH
 
         - id: payment-service
           uri: lb://payment-service
           predicates:
             - Path=/api/v1/payments/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: paymentServiceCB
+                fallbackUri: forward:/fallback/payment-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: paymentServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: paymentServiceBH
 
         - id: delivery-service
           uri: lb://delivery-service
           predicates:
             - Path=/api/v1/delivery/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: deliveryServiceCB
+                fallbackUri: forward:/fallback/delivery-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: deliveryServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: deliveryServiceBH
 
         - id: farm-service
           uri: lb://farm-service
           predicates:
             - Path=/api/v1/cows/**,/api/v1/farm/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: farmServiceCB
+                fallbackUri: forward:/fallback/farm-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: farmServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: farmServiceBH
 
         - id: production-service
           uri: lb://production-service
           predicates:
             - Path=/api/v1/production/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: productionServiceCB
+                fallbackUri: forward:/fallback/production-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: productionServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: productionServiceBH
 
         - id: inventory-service
           uri: lb://inventory-service
           predicates:
             - Path=/api/v1/inventory/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: inventoryServiceCB
+                fallbackUri: forward:/fallback/inventory-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: inventoryServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: inventoryServiceBH
 
         - id: notification-service
           uri: lb://notification-service
           predicates:
             - Path=/api/v1/notifications/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: notificationServiceCB
+                fallbackUri: forward:/fallback/notification-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: notificationServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: notificationServiceBH
 
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+        # Only retries idempotent GETs - retrying a POST (e.g. a payment or order write)
+        # could duplicate a side effect the first attempt actually completed.
+        - name: Retry
+          args:
+            retries: 3
+            series: SERVER_ERROR
+            methods: GET
+            backoff:
+              firstBackoff: 50ms
+              maxBackoff: 500ms
+              factor: 2
+              basedOnPreviousValue: false
 
       globalcors:
         cors-configurations:
@@ -91,6 +208,92 @@ eureka:
 jwt:
   secret: ${JWT_SECRET:ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
 
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 4s
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+    instances:
+      authServiceCB: { base-config: default }
+      customerServiceCB: { base-config: default }
+      subscriptionServiceCB: { base-config: default }
+      orderServiceCB: { base-config: default }
+      paymentServiceCB: { base-config: default }
+      deliveryServiceCB: { base-config: default }
+      farmServiceCB: { base-config: default }
+      productionServiceCB: { base-config: default }
+      inventoryServiceCB: { base-config: default }
+      notificationServiceCB: { base-config: default }
+
+  # Spring Cloud Circuit Breaker's Resilience4j implementation pairs a timelimiter
+  # instance with the circuitbreaker instance of the SAME name, so these names must
+  # match the circuitbreaker instances above.
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 4s
+        cancel-running-future: true
+    instances:
+      authServiceCB: { base-config: default }
+      customerServiceCB: { base-config: default }
+      subscriptionServiceCB: { base-config: default }
+      orderServiceCB: { base-config: default }
+      paymentServiceCB: { base-config: default }
+      deliveryServiceCB: { base-config: default }
+      farmServiceCB: { base-config: default }
+      productionServiceCB: { base-config: default }
+      inventoryServiceCB: { base-config: default }
+      notificationServiceCB: { base-config: default }
+
+  ratelimiter:
+    configs:
+      default:
+        register-health-indicator: true
+        limit-for-period: 50
+        limit-refresh-period: 1s
+        # Reject over-limit requests immediately instead of queuing them - a gateway's
+        # event-loop threads shouldn't block waiting for a rate-limiter permit.
+        timeout-duration: 0s
+    instances:
+      authServiceRL: { base-config: default }
+      customerServiceRL: { base-config: default }
+      subscriptionServiceRL: { base-config: default }
+      orderServiceRL: { base-config: default }
+      paymentServiceRL: { base-config: default }
+      deliveryServiceRL: { base-config: default }
+      farmServiceRL: { base-config: default }
+      productionServiceRL: { base-config: default }
+      inventoryServiceRL: { base-config: default }
+      notificationServiceRL: { base-config: default }
+
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 25
+        # Reject immediately when full rather than queuing, for the same reason as
+        # the rate limiter above.
+        max-wait-duration: 0s
+    instances:
+      authServiceBH: { base-config: default }
+      customerServiceBH: { base-config: default }
+      subscriptionServiceBH: { base-config: default }
+      orderServiceBH: { base-config: default }
+      paymentServiceBH: { base-config: default }
+      deliveryServiceBH: { base-config: default }
+      farmServiceBH: { base-config: default }
+      productionServiceBH: { base-config: default }
+      inventoryServiceBH: { base-config: default }
+      notificationServiceBH: { base-config: default }
+
 management:
   endpoints:
     web:
@@ -100,6 +303,11 @@ management:
     health:
       show-details: always
     gateway:
+      enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+    ratelimiters:
       enabled: true
 
 logging:

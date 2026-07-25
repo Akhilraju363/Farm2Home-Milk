@@ -77,6 +77,7 @@ class PaymentServiceImplTest {
         void upiPayment_createsPendingRecord() {
             when(paymentRepository.existsByOrderIdAndPaymentStatusAndDeletedFalse(orderId, PaymentStatus.SUCCESS))
                     .thenReturn(false);
+            when(mapper.toEntity(any(InitiatePaymentRequest.class))).thenReturn(new Payment());
             Payment saved = buildPayment(PaymentStatus.PENDING, PaymentMethod.UPI);
             when(paymentRepository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(buildResponse(PaymentStatus.PENDING));
@@ -97,6 +98,7 @@ class PaymentServiceImplTest {
         void walletPayment_debitsThenSuccess() {
             when(paymentRepository.existsByOrderIdAndPaymentStatusAndDeletedFalse(orderId, PaymentStatus.SUCCESS))
                     .thenReturn(false);
+            when(mapper.toEntity(any(InitiatePaymentRequest.class))).thenReturn(new Payment());
             Payment saved = buildPayment(PaymentStatus.SUCCESS, PaymentMethod.WALLET);
             when(paymentRepository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(buildResponse(PaymentStatus.SUCCESS));
@@ -136,6 +138,7 @@ class PaymentServiceImplTest {
             UUID targetCustomer = UUID.randomUUID();
             when(paymentRepository.existsByOrderIdAndPaymentStatusAndDeletedFalse(orderId, PaymentStatus.SUCCESS))
                     .thenReturn(false);
+            when(mapper.toEntity(any(InitiatePaymentRequest.class))).thenReturn(new Payment());
             when(paymentRepository.save(any())).thenAnswer(inv -> {
                 Payment p = inv.getArgument(0);
                 p.setId(UUID.randomUUID()); // real repository.save() always assigns an id

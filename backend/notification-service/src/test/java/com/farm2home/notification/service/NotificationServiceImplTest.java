@@ -69,7 +69,9 @@ class NotificationServiceImplTest {
             NotificationTemplate template = buildTemplate("ORDER_CREATED_SMS", NotificationChannel.SMS);
             when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS"))
                     .thenReturn(Optional.of(template));
-            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_EMAIL"))
+            // Only stubbed for tests where buildEvent(...) sets a recipientEmail (the EMAIL
+            // branch is skipped entirely otherwise), so this stub goes unused here.
+            lenient().when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_EMAIL"))
                     .thenReturn(Optional.empty());
             when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -81,6 +83,83 @@ class NotificationServiceImplTest {
             assertThat(saved.getStatus()).isEqualTo(NotificationStatus.SENT);
             assertThat(saved.getChannel()).isEqualTo(NotificationChannel.SMS);
             assertThat(saved.getMessage()).contains("ORD-001");
+        }
+
+        @Test
+        @DisplayName("recipientEmail set, matching EMAIL template, mail sender unconfigured → logs FAILED... " +
+                "actually SENT (dispatch swallows the missing sender) with a warning")
+        void emailBranch_mailSenderNotConfigured() {
+            KafkaEventDto event = buildEvent("ORDER_CREATED");
+            event.setRecipientEmail("customer@example.com");
+            NotificationTemplate smsTemplate = buildTemplate("ORDER_CREATED_SMS", NotificationChannel.SMS);
+            NotificationTemplate emailTemplate = buildTemplate("ORDER_CREATED_EMAIL", NotificationChannel.EMAIL);
+            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS"))
+                    .thenReturn(Optional.of(smsTemplate));
+            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_EMAIL"))
+                    .thenReturn(Optional.of(emailTemplate));
+            when(mailSender.isEmpty()).thenReturn(true);
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+            verify(logRepository, times(2)).save(captor.capture());
+            assertThat(captor.getAllValues())
+                    .anySatisfy(l -> assertThat(l.getChannel()).isEqualTo(NotificationChannel.EMAIL));
+        }
+
+        @Test
+        @DisplayName("recipientEmail set, mail sender configured → actually sends via JavaMailSender")
+        void emailBranch_mailSenderConfigured() {
+            KafkaEventDto event = buildEvent("ORDER_CREATED");
+            event.setRecipientEmail("customer@example.com");
+            NotificationTemplate smsTemplate = buildTemplate("ORDER_CREATED_SMS", NotificationChannel.SMS);
+            NotificationTemplate emailTemplate = buildTemplate("ORDER_CREATED_EMAIL", NotificationChannel.EMAIL);
+            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS"))
+                    .thenReturn(Optional.of(smsTemplate));
+            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_EMAIL"))
+                    .thenReturn(Optional.of(emailTemplate));
+            org.springframework.mail.javamail.JavaMailSender realSender =
+                    mock(org.springframework.mail.javamail.JavaMailSender.class);
+            when(mailSender.isEmpty()).thenReturn(false);
+            when(mailSender.get()).thenReturn(realSender);
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            verify(realSender).send(any(org.springframework.mail.SimpleMailMessage.class));
+        }
+
+        @Test
+        @DisplayName("all optional payload fields set → each is rendered into the payload map")
+        void allPayloadFieldsSet_renderedCorrectly() {
+            KafkaEventDto event = buildEvent("DELIVERY_ASSIGNED");
+            event.setPartnerName("Raj Kumar");
+            event.setExpectedTime("10:00 AM");
+            event.setPaymentReference("PAY-123");
+            event.setCustomerName("Jane Doe");
+            event.setQuantity("2.5L");
+            event.setMilkType("FULL_CREAM");
+            event.setExtra(java.util.Map.of("extraKey", "extraValue"));
+
+            NotificationTemplate template = NotificationTemplate.builder()
+                    .id(UUID.randomUUID()).templateCode("DELIVERY_ASSIGNED_SMS").channel(NotificationChannel.SMS)
+                    .body("{{partner_name}} arriving {{expected_time}} for {{customer_name}}, "
+                            + "{{quantity}} {{milk_type}}, ref {{reference}}, {{extraKey}}")
+                    .active(true).build();
+            when(templateRepository.findByTemplateCodeAndActiveTrue("DELIVERY_ASSIGNED_SMS"))
+                    .thenReturn(Optional.of(template));
+            lenient().when(templateRepository.findByTemplateCodeAndActiveTrue("DELIVERY_ASSIGNED_EMAIL"))
+                    .thenReturn(Optional.empty());
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+            verify(logRepository).save(captor.capture());
+            String message = captor.getValue().getMessage();
+            assertThat(message).contains("Raj Kumar", "10:00 AM", "Jane Doe", "2.5L", "FULL_CREAM",
+                    "PAY-123", "extraValue");
         }
 
         @Test
@@ -114,7 +193,7 @@ class NotificationServiceImplTest {
             NotificationTemplate template = buildTemplate("PAYMENT_SUCCESS_SMS", NotificationChannel.SMS);
             when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_SMS"))
                     .thenReturn(Optional.of(template));
-            when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_EMAIL"))
+            lenient().when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_EMAIL"))
                     .thenReturn(Optional.empty());
             when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -124,6 +203,52 @@ class NotificationServiceImplTest {
             verify(logRepository).save(captor.capture());
             assertThat(captor.getValue().getMessage()).doesNotContain("{{order_number}}");
             assertThat(captor.getValue().getMessage()).contains("ORD-001");
+        }
+    }
+
+    @Nested @DisplayName("findByRecipient()")
+    class FindByRecipient {
+
+        @Test
+        @DisplayName("returns mapped page for the recipient")
+        void returnsMappedPage() {
+            NotificationLog log = NotificationLog.builder().id(UUID.randomUUID()).build();
+            when(logRepository.findAllByRecipientIdOrderByCreatedAtDesc(any(), any())).thenReturn(
+                    new org.springframework.data.domain.PageImpl<>(java.util.List.of(log)));
+            when(mapper.toResponse(log)).thenReturn(
+                    com.farm2home.notification.dto.response.NotificationLogResponse.builder().build());
+
+            var result = service.findByRecipient(customerId, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+    }
+
+    @Nested @DisplayName("findById()")
+    class FindById {
+
+        @Test
+        @DisplayName("existing log → returns mapped response")
+        void found() {
+            UUID logId = UUID.randomUUID();
+            NotificationLog log = NotificationLog.builder().id(logId).build();
+            when(logRepository.findById(logId)).thenReturn(Optional.of(log));
+            when(mapper.toResponse(log)).thenReturn(
+                    com.farm2home.notification.dto.response.NotificationLogResponse.builder().id(logId).build());
+
+            var result = service.findById(logId);
+
+            assertThat(result.getId()).isEqualTo(logId);
+        }
+
+        @Test
+        @DisplayName("missing log → throws ResourceNotFoundException")
+        void notFound() {
+            UUID logId = UUID.randomUUID();
+            when(logRepository.findById(logId)).thenReturn(Optional.empty());
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.findById(logId))
+                    .isInstanceOf(com.farm2home.notification.exception.ResourceNotFoundException.class);
         }
     }
 }
