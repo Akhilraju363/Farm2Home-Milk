@@ -67,7 +67,7 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
         void shouldCreateOrderWithItems() throws Exception {
             var itemRequest = CreateOrderItemRequest.builder()
                     .milkType(MilkType.FULL_CREAM)
-                    .quantity(2)
+                    .quantity(BigDecimal.valueOf(2))
                     .build();
 
             var orderRequest = CreateOrderRequest.builder()
@@ -98,15 +98,15 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
             var items = List.of(
                     CreateOrderItemRequest.builder()
                             .milkType(MilkType.FULL_CREAM)
-                            .quantity(2)
+                            .quantity(BigDecimal.valueOf(2))
                             .build(),
                     CreateOrderItemRequest.builder()
                             .milkType(MilkType.TONED)
-                            .quantity(1)
+                            .quantity(BigDecimal.valueOf(1))
                             .build(),
                     CreateOrderItemRequest.builder()
                             .milkType(MilkType.SKIMMED)
-                            .quantity(3)
+                            .quantity(BigDecimal.valueOf(3))
                             .build()
             );
 
@@ -176,21 +176,21 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
     class OrderStatusUpdateTests {
 
         @Test
-        @DisplayName("Should update order status to CONFIRMED")
-        void shouldUpdateOrderStatusToConfirmed() throws Exception {
+        @DisplayName("Should update order status to ASSIGNED")
+        void shouldUpdateOrderStatusToAssigned() throws Exception {
             var order = createTestOrder();
             var updateRequest = new UpdateOrderStatusRequest();
-            updateRequest.setStatus(OrderStatus.CONFIRMED);
+            updateRequest.setStatus(OrderStatus.ASSIGNED);
 
             mockMvc.perform(patch("/api/v1/orders/" + order.getId() + "/status")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(updateRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(OrderStatus.CONFIRMED.name()));
+                    .andExpect(jsonPath("$.status").value(OrderStatus.ASSIGNED.name()));
 
             var updatedOrder = orderRepository.findById(order.getId()).orElseThrow();
-            assertThat(updatedOrder.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
+            assertThat(updatedOrder.getStatus()).isEqualTo(OrderStatus.ASSIGNED);
         }
 
         @Test
@@ -209,10 +209,10 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
         }
 
         @Test
-        @DisplayName("Should prevent status update for completed order")
-        void shouldPreventStatusUpdateForCompletedOrder() throws Exception {
+        @DisplayName("Should prevent status update for delivered order")
+        void shouldPreventStatusUpdateForDeliveredOrder() throws Exception {
             var order = createTestOrder();
-            order.setStatus(OrderStatus.COMPLETED);
+            order.setStatus(OrderStatus.DELIVERED);
             orderRepository.save(order);
 
             var updateRequest = new UpdateOrderStatusRequest();
