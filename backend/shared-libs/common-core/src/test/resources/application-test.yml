@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: farm2home-integration-tests
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+logging:
+  level:
+    com.farm2home: DEBUG
+    org.springframework.test: DEBUG
+    org.testcontainers: DEBUG
