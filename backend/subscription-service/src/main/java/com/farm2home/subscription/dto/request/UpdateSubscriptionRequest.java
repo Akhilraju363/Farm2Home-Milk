@@ -4,8 +4,10 @@ import com.farm2home.subscription.domain.enums.DeliveryDay;
 import com.farm2home.subscription.domain.enums.MilkType;
 import com.farm2home.subscription.domain.enums.ScheduleType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Size;
 import lombok.Builder;
 import lombok.Data;
 
@@ -29,9 +31,11 @@ public class UpdateSubscriptionRequest {
     @Schema(description = "Change delivery schedule", example = "ALTERNATE_DAY")
     private ScheduleType scheduleType;
 
+    @Size(max = 7, message = "Delivery days must contain at most 7 entries")
     @Schema(description = "Updated delivery days (required if changing to WEEKLY)")
     private List<DeliveryDay> deliveryDays;
 
+    @Future(message = "End date must be in the future")
     @Schema(description = "New end date (must be after current start date)", example = "2027-06-30")
     private LocalDate endDate;
 }

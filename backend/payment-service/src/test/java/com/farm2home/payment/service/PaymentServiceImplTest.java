@@ -12,6 +12,7 @@ import com.farm2home.payment.exception.ResourceNotFoundException;
 import com.farm2home.payment.kafka.PaymentEventProducer;
 import com.farm2home.payment.mapper.PaymentMapper;
 import com.farm2home.payment.service.impl.PaymentServiceImpl;
+import com.farm2home.common.core.audit.AuditLogService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ class PaymentServiceImplTest {
     @Mock private WalletService walletService;
     @Mock private PaymentMapper mapper;
     @Mock private PaymentEventProducer eventProducer;
+    @Mock private AuditLogService auditLogService;
 
     @InjectMocks private PaymentServiceImpl service;
 
@@ -134,7 +136,11 @@ class PaymentServiceImplTest {
             UUID targetCustomer = UUID.randomUUID();
             when(paymentRepository.existsByOrderIdAndPaymentStatusAndDeletedFalse(orderId, PaymentStatus.SUCCESS))
                     .thenReturn(false);
-            when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(paymentRepository.save(any())).thenAnswer(inv -> {
+                Payment p = inv.getArgument(0);
+                p.setId(UUID.randomUUID()); // real repository.save() always assigns an id
+                return p;
+            });
             when(mapper.toResponse(any())).thenReturn(buildResponse(PaymentStatus.PENDING));
 
             InitiatePaymentRequest req = new InitiatePaymentRequest();

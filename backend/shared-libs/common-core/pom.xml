@@ -22,5 +22,19 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
+        <!-- For the AuditLog entity/repository; every consuming service already brings the
+             real JPA/Hibernate runtime via spring-boot-starter-data-jpa. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- So AuditLogService can auto-populate correlationId from MDC without every caller
+             having to pass it explicitly. -->
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>common-observability</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 </project>

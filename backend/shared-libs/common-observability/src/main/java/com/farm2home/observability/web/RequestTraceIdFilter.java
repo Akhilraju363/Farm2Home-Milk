@@ -25,8 +25,8 @@ import java.util.stream.StreamSupport;
  */
 public class RequestTraceIdFilter extends OncePerRequestFilter {
 
-    public static final String TRACE_ID_HEADER = "X-Trace-Id";
-    public static final String MDC_TRACE_ID = "traceId";
+    public static final String CORRELATION_ID_HEADER = "X-Correlation-ID";
+    public static final String MDC_CORRELATION_ID = "correlationId";
     public static final String MDC_HTTP_METHOD = "httpMethod";
     public static final String MDC_HTTP_PATH = "httpPath";
 
@@ -38,13 +38,13 @@ public class RequestTraceIdFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String traceId = request.getHeader(TRACE_ID_HEADER);
-        if (!StringUtils.hasText(traceId)) {
-            traceId = UUID.randomUUID().toString();
+        String correlationId = request.getHeader(CORRELATION_ID_HEADER);
+        if (!StringUtils.hasText(correlationId)) {
+            correlationId = UUID.randomUUID().toString();
         }
-        response.setHeader(TRACE_ID_HEADER, traceId);
+        response.setHeader(CORRELATION_ID_HEADER, correlationId);
 
-        MDC.put(MDC_TRACE_ID, traceId);
+        MDC.put(MDC_CORRELATION_ID, correlationId);
         MDC.put(MDC_HTTP_METHOD, request.getMethod());
         MDC.put(MDC_HTTP_PATH, request.getRequestURI());
 
@@ -57,7 +57,7 @@ public class RequestTraceIdFilter extends OncePerRequestFilter {
             long durationMs = System.currentTimeMillis() - start;
             log.info("Completed request {} {} status={} durationMs={}",
                     request.getMethod(), request.getRequestURI(), response.getStatus(), durationMs);
-            MDC.remove(MDC_TRACE_ID);
+            MDC.remove(MDC_CORRELATION_ID);
             MDC.remove(MDC_HTTP_METHOD);
             MDC.remove(MDC_HTTP_PATH);
         }

@@ -1,5 +1,6 @@
 package com.farm2home.payment.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.payment.config.UserPrincipal;
 import com.farm2home.payment.dto.request.TopUpWalletRequest;
 import com.farm2home.payment.dto.response.WalletResponse;
@@ -28,24 +29,24 @@ public class WalletController {
 
     @GetMapping("/me")
     @Operation(summary = "Get my wallet balance")
-    public ResponseEntity<WalletResponse> getMyWallet(
+    public ResponseEntity<ApiResponse<WalletResponse>> getMyWallet(
             @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(walletService.getWallet(principal.userId()));
+        return ResponseEntity.ok(ApiResponse.success("Wallet balance retrieved successfully", walletService.getWallet(principal.userId())));
     }
 
     @PostMapping("/topup")
     @Operation(summary = "Top up wallet balance")
-    public ResponseEntity<WalletResponse> topUp(
+    public ResponseEntity<ApiResponse<WalletResponse>> topUp(
             @Valid @RequestBody TopUpWalletRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(walletService.topUp(principal.userId(), request));
+        return ResponseEntity.ok(ApiResponse.success("Wallet topped up successfully", walletService.topUp(principal.userId(), request)));
     }
 
     @GetMapping("/transactions")
     @Operation(summary = "Get wallet transaction history")
-    public ResponseEntity<Page<WalletTransactionResponse>> getTransactions(
+    public ResponseEntity<ApiResponse<Page<WalletTransactionResponse>>> getTransactions(
             @AuthenticationPrincipal UserPrincipal principal,
             @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(walletService.getTransactions(principal.userId(), pageable));
+        return ResponseEntity.ok(ApiResponse.success("Wallet transactions retrieved successfully", walletService.getTransactions(principal.userId(), pageable)));
     }
 }

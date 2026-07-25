@@ -1,5 +1,6 @@
 package com.farm2home.farm.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.farm.domain.enums.CowStatus;
 import com.farm2home.farm.dto.request.CreateCowRequest;
 import com.farm2home.farm.dto.request.UpdateCowRequest;
@@ -33,45 +34,46 @@ public class CowController {
     @PostMapping
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Register a new cow")
-    public ResponseEntity<CowResponse> create(@Valid @RequestBody CreateCowRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(cowService.create(request));
+    public ResponseEntity<ApiResponse<CowResponse>> create(@Valid @RequestBody CreateCowRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Cow registered successfully", cowService.create(request)));
     }
 
     @GetMapping
     @Operation(summary = "List all cows (optional status filter)")
-    public ResponseEntity<Page<CowResponse>> findAll(
+    public ResponseEntity<ApiResponse<Page<CowResponse>>> findAll(
             @RequestParam(required = false) CowStatus status,
             @PageableDefault(size = 20, sort = "tagNumber") Pageable pageable) {
-        return ResponseEntity.ok(cowService.findAll(status, pageable));
+        return ResponseEntity.ok(ApiResponse.success("Cows retrieved successfully", cowService.findAll(status, pageable)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get cow by ID")
-    public ResponseEntity<CowResponse> findById(@PathVariable UUID id) {
-        return ResponseEntity.ok(cowService.findById(id));
+    public ResponseEntity<ApiResponse<CowResponse>> findById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success("Cow retrieved successfully", cowService.findById(id)));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Update cow details")
-    public ResponseEntity<CowResponse> update(@PathVariable UUID id,
+    public ResponseEntity<ApiResponse<CowResponse>> update(@PathVariable UUID id,
                                                @RequestBody UpdateCowRequest request) {
-        return ResponseEntity.ok(cowService.update(id, request));
+        return ResponseEntity.ok(ApiResponse.success("Cow updated successfully", cowService.update(id, request)));
     }
 
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Update cow status (ACTIVE/SICK/SOLD/DECEASED)")
-    public ResponseEntity<CowResponse> updateStatus(@PathVariable UUID id,
+    public ResponseEntity<ApiResponse<CowResponse>> updateStatus(@PathVariable UUID id,
                                                      @Valid @RequestBody UpdateCowStatusRequest request) {
-        return ResponseEntity.ok(cowService.updateStatus(id, request));
+        return ResponseEntity.ok(ApiResponse.success("Cow status updated successfully", cowService.updateStatus(id, request)));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Soft-delete a cow record")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable UUID id) {
         cowService.delete(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(ApiResponse.success("Cow deleted successfully", null));
     }
 }

@@ -1,5 +1,6 @@
 package com.farm2home.delivery.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.delivery.dto.request.CreateRouteRequest;
 import com.farm2home.delivery.dto.request.UpdateRouteRequest;
 import com.farm2home.delivery.dto.response.RouteResponse;
@@ -31,36 +32,37 @@ public class DeliveryRouteController {
     @PostMapping
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Create a delivery route (admin)")
-    public ResponseEntity<RouteResponse> create(@Valid @RequestBody CreateRouteRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(routeService.create(request));
+    public ResponseEntity<ApiResponse<RouteResponse>> create(@Valid @RequestBody CreateRouteRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Route created successfully", routeService.create(request)));
     }
 
     @GetMapping
     @Operation(summary = "List all active routes")
-    public ResponseEntity<Page<RouteResponse>> findAll(
+    public ResponseEntity<ApiResponse<Page<RouteResponse>>> findAll(
             @PageableDefault(size = 20, sort = "routeCode") Pageable pageable) {
-        return ResponseEntity.ok(routeService.findAll(pageable));
+        return ResponseEntity.ok(ApiResponse.success("Routes retrieved successfully", routeService.findAll(pageable)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get route by ID")
-    public ResponseEntity<RouteResponse> findById(@PathVariable UUID id) {
-        return ResponseEntity.ok(routeService.findById(id));
+    public ResponseEntity<ApiResponse<RouteResponse>> findById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success("Route retrieved successfully", routeService.findById(id)));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Update route (admin)")
-    public ResponseEntity<RouteResponse> update(@PathVariable UUID id,
+    public ResponseEntity<ApiResponse<RouteResponse>> update(@PathVariable UUID id,
                                                 @RequestBody UpdateRouteRequest request) {
-        return ResponseEntity.ok(routeService.update(id, request));
+        return ResponseEntity.ok(ApiResponse.success("Route updated successfully", routeService.update(id, request)));
     }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Deactivate and soft-delete route (admin)")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable UUID id) {
         routeService.delete(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(ApiResponse.success("Route deleted successfully", null));
     }
 }

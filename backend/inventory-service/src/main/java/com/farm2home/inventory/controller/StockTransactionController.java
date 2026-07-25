@@ -1,5 +1,6 @@
 package com.farm2home.inventory.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.inventory.dto.request.StockTransactionRequest;
 import com.farm2home.inventory.dto.response.StockTransactionResponse;
 import com.farm2home.inventory.service.impl.StockTransactionServiceImpl;
@@ -23,16 +24,17 @@ public class StockTransactionController {
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<StockTransactionResponse> transact(
+    public ResponseEntity<ApiResponse<StockTransactionResponse>> transact(
             @PathVariable UUID itemId,
             @Valid @RequestBody StockTransactionRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.transact(itemId, request));
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Stock transaction recorded successfully", service.transact(itemId, request)));
     }
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Page<StockTransactionResponse>> history(
+    public ResponseEntity<ApiResponse<Page<StockTransactionResponse>>> history(
             @PathVariable UUID itemId, Pageable pageable) {
-        return ResponseEntity.ok(service.findByItem(itemId, pageable));
+        return ResponseEntity.ok(ApiResponse.success("Stock transaction history retrieved successfully", service.findByItem(itemId, pageable)));
     }
 }

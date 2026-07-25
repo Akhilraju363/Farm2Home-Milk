@@ -1,5 +1,6 @@
 package com.farm2home.delivery.controller;
 
+import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.delivery.dto.request.CreatePartnerRequest;
 import com.farm2home.delivery.dto.request.UpdatePartnerRequest;
 import com.farm2home.delivery.dto.response.PartnerResponse;
@@ -31,29 +32,30 @@ public class DeliveryPartnerController {
     @PostMapping
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Register a delivery partner (admin)")
-    public ResponseEntity<PartnerResponse> create(@Valid @RequestBody CreatePartnerRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(partnerService.create(request));
+    public ResponseEntity<ApiResponse<PartnerResponse>> create(@Valid @RequestBody CreatePartnerRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Delivery partner created successfully", partnerService.create(request)));
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "List all delivery partners (admin)")
-    public ResponseEntity<Page<PartnerResponse>> findAll(
+    public ResponseEntity<ApiResponse<Page<PartnerResponse>>> findAll(
             @PageableDefault(size = 20, sort = "name") Pageable pageable) {
-        return ResponseEntity.ok(partnerService.findAll(pageable));
+        return ResponseEntity.ok(ApiResponse.success("Delivery partners retrieved successfully", partnerService.findAll(pageable)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Get partner by ID")
-    public ResponseEntity<PartnerResponse> findById(@PathVariable UUID id) {
-        return ResponseEntity.ok(partnerService.findById(id));
+    public ResponseEntity<ApiResponse<PartnerResponse>> findById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.success("Delivery partner retrieved successfully", partnerService.findById(id)));
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('FARM_MANAGER', 'SUPER_ADMIN')")
     @Operation(summary = "Update partner (admin)")
-    public ResponseEntity<PartnerResponse> update(@PathVariable UUID id,
+    public ResponseEntity<ApiResponse<PartnerResponse>> update(@PathVariable UUID id,
                                                    @RequestBody UpdatePartnerRequest request) {
-        return ResponseEntity.ok(partnerService.update(id, request));
+        return ResponseEntity.ok(ApiResponse.success("Delivery partner updated successfully", partnerService.update(id, request)));
     }
 }

@@ -9,7 +9,7 @@ spring:
 eureka:
   client:
     service-url:
-      defaultZone: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      defaultZone: http://eureka:eurekaSecret@discovery-service:8761/eureka
 
 jwt:
   secret: ${JWT_SECRET}
@@ -18,7 +18,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,env
 
 logging:
   level:

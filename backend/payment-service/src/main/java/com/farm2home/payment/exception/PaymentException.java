@@ -1,9 +1,10 @@
 package com.farm2home.payment.exception;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import com.farm2home.common.web.exception.BadRequestException;
 
-@ResponseStatus(HttpStatus.BAD_REQUEST)
-public class PaymentException extends RuntimeException {
-    public PaymentException(String message) { super(message); }
+public class PaymentException extends BadRequestException {
+
+    public PaymentException(String message) {
+        super(message);
+    }
 }

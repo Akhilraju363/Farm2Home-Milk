@@ -17,12 +17,19 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import static com.farm2home.observability.web.RequestTraceIdFilter.TRACE_ID_HEADER;
+import static com.farm2home.observability.web.RequestTraceIdFilter.CORRELATION_ID_HEADER;
 
 /**
  * WebFlux equivalent of {@link RequestTraceIdFilter} for reactive services (the API gateway).
  * MDC is not reliably propagated across the reactive pipeline's thread hops, so the
  * correlation id is logged explicitly on each line instead of relying on MDC.
+ *
+ * Unlike the servlet filter, this one also has to make sure the ID actually reaches every
+ * downstream microservice: the gateway is the single entry point for all synchronous traffic,
+ * so if a client didn't send X-Correlation-ID, the freshly generated ID must be injected onto
+ * the proxied request here - otherwise Spring Cloud Gateway would forward the request exactly
+ * as received (with no such header) and each downstream service would mint its own, breaking
+ * correlation across the whole call chain.
  */
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ReactiveRequestTraceIdFilter implements WebFilter {
@@ -35,25 +42,34 @@ public class ReactiveRequestTraceIdFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
-        String traceId = request.getHeaders().getFirst(TRACE_ID_HEADER);
-        if (!StringUtils.hasText(traceId)) {
-            traceId = UUID.randomUUID().toString();
+        String incoming = request.getHeaders().getFirst(CORRELATION_ID_HEADER);
+        final String correlationId = StringUtils.hasText(incoming) ? incoming : UUID.randomUUID().toString();
+
+        ServerWebExchange effectiveExchange = exchange;
+        if (!StringUtils.hasText(incoming)) {
+            // Only mutate when we had to generate one - if the client already sent the header,
+            // it's already present on the request being forwarded and re-adding it would just
+            // duplicate the value.
+            ServerHttpRequest mutatedRequest = request.mutate()
+                    .header(CORRELATION_ID_HEADER, correlationId)
+                    .build();
+            effectiveExchange = exchange.mutate().request(mutatedRequest).build();
         }
-        final String finalTraceId = traceId;
-        exchange.getResponse().getHeaders().set(TRACE_ID_HEADER, finalTraceId);
+        effectiveExchange.getResponse().getHeaders().set(CORRELATION_ID_HEADER, correlationId);
 
         long start = System.currentTimeMillis();
-        log.info("[{}] Incoming request {} {} clientIp={} headers={{}}", finalTraceId,
+        log.info("[{}] Incoming request {} {} clientIp={} headers={{}}", correlationId,
                 request.getMethod(), request.getURI().getPath(), clientIp(request), headers(request.getHeaders()));
 
-        return chain.filter(exchange)
+        ServerWebExchange finalExchange = effectiveExchange;
+        return chain.filter(effectiveExchange)
                 .doOnError(ex -> log.error("[{}] Unhandled error on {} {}: {}",
-                        finalTraceId, request.getMethod(), request.getURI().getPath(), ex.getMessage(), ex))
+                        correlationId, request.getMethod(), request.getURI().getPath(), ex.getMessage(), ex))
                 .doFinally(signal -> {
                     long durationMs = System.currentTimeMillis() - start;
                     log.info("[{}] Completed request {} {} status={} durationMs={}",
-                            finalTraceId, request.getMethod(), request.getURI().getPath(),
-                            exchange.getResponse().getStatusCode(), durationMs);
+                            correlationId, request.getMethod(), request.getURI().getPath(),
+                            finalExchange.getResponse().getStatusCode(), durationMs);
                 });
     }
 

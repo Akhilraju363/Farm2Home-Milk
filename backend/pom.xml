@@ -132,6 +132,17 @@
                             </exclude>
                         </excludes>
                     </configuration>
+                    <executions>
+                        <!-- Writes META-INF/build-info.properties into the jar so the /info
+                             actuator endpoint reports real name/version/build-time instead of
+                             an empty {} - every child inherits this execution automatically
+                             since they all reference this plugin without their own executions. -->
+                        <execution>
+                            <goals>
+                                <goal>build-info</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
                 <plugin>
                     <groupId>org.jacoco</groupId>

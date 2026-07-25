@@ -3,4 +3,4 @@ eureka:
     hostname: discovery-service
   client:
     service-url:
-      defaultZone: http://eureka:eureka%40secret@discovery-service:8761/eureka/
+      defaultZone: http://eureka:eurekaSecret@discovery-service:8761/eureka/

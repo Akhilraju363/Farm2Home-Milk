@@ -13,6 +13,8 @@ import com.farm2home.payment.kafka.PaymentEventProducer;
 import com.farm2home.payment.mapper.PaymentMapper;
 import com.farm2home.payment.service.PaymentService;
 import com.farm2home.payment.service.WalletService;
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.AuditLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -33,6 +35,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final WalletService walletService;
     private final PaymentMapper mapper;
     private final PaymentEventProducer eventProducer;
+    private final AuditLogService auditLogService;
 
     @Override
     @Transactional
@@ -66,6 +69,9 @@ public class PaymentServiceImpl implements PaymentService {
             // Update wallet transaction with the actual payment ID
             log.debug("Wallet payment processed for order {}", request.getOrderId());
             eventProducer.publishPaymentEvent(saved, "PAYMENT_SUCCESS");
+            auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(),
+                    resolvedCustomerId.toString(),
+                    "Wallet payment " + reference + " succeeded for order " + request.getOrderId());
             return mapper.toResponse(saved);
         }
 
@@ -73,12 +79,18 @@ public class PaymentServiceImpl implements PaymentService {
             // Cash on delivery — stays PENDING until delivery staff marks it paid
             Payment saved = paymentRepository.save(payment);
             log.debug("COD payment initiated for order {}", request.getOrderId());
+            auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(),
+                    resolvedCustomerId.toString(),
+                    "Cash-on-delivery payment " + reference + " initiated for order " + request.getOrderId());
             return mapper.toResponse(saved);
         }
 
         // UPI / RAZORPAY — stays PENDING, gateway will call back
         Payment saved = paymentRepository.save(payment);
         log.debug("Gateway payment {} initiated for order {}", reference, request.getOrderId());
+        auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(),
+                resolvedCustomerId.toString(),
+                "Gateway payment " + reference + " initiated for order " + request.getOrderId());
         return mapper.toResponse(saved);
     }
 
@@ -101,11 +113,17 @@ public class PaymentServiceImpl implements PaymentService {
             payment.setPaidAt(LocalDateTime.now());
             Payment saved = paymentRepository.save(payment);
             eventProducer.publishPaymentEvent(saved, "PAYMENT_SUCCESS");
+            auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(),
+                    saved.getCustomerId().toString(),
+                    "Gateway callback: payment " + request.getPaymentReference() + " succeeded");
             return mapper.toResponse(saved);
         } else {
             payment.setPaymentStatus(PaymentStatus.FAILED);
             Payment saved = paymentRepository.save(payment);
             eventProducer.publishPaymentEvent(saved, "PAYMENT_FAILED");
+            auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(),
+                    saved.getCustomerId().toString(),
+                    "Gateway callback: payment " + request.getPaymentReference() + " failed");
             return mapper.toResponse(saved);
         }
     }
@@ -131,6 +149,8 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         eventProducer.publishPaymentEvent(saved, "PAYMENT_REFUNDED");
+        auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), customerId.toString(),
+                "Payment " + saved.getPaymentReference() + " refunded" + (isAdmin ? " (admin action)" : ""));
         return mapper.toResponse(saved);
     }
 

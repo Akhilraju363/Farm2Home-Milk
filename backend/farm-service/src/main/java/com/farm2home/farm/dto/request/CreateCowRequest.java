@@ -11,14 +11,14 @@ import java.time.LocalDate;
 public class CreateCowRequest {
 
     @NotBlank(message = "Tag number is required")
-    @Size(max = 20)
+    @Size(max = 20, message = "Tag number must be at most 20 characters")
     private String tagNumber;
 
-    @Size(max = 100)
+    @Size(max = 100, message = "Cow name must be at most 100 characters")
     private String cowName;
 
     @NotBlank(message = "Breed is required")
-    @Size(max = 100)
+    @Size(max = 100, message = "Breed must be at most 100 characters")
     private String breed;
 
     @PastOrPresent(message = "Date of birth cannot be in the future")

@@ -1,9 +1,8 @@
 package com.farm2home.payment.exception;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+public class ResourceNotFoundException extends com.farm2home.common.web.exception.ResourceNotFoundException {
 
-@ResponseStatus(HttpStatus.NOT_FOUND)
-public class ResourceNotFoundException extends RuntimeException {
-    public ResourceNotFoundException(String message) { super(message); }
+    public ResourceNotFoundException(String message) {
+        super(message);
+    }
 }

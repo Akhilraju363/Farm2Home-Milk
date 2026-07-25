@@ -66,7 +66,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       EUREKA_USERNAME: ${EUREKA_USERNAME:-eureka}
-      EUREKA_PASSWORD: ${EUREKA_PASSWORD:-eureka@secret}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:-eurekaSecret}
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -87,7 +87,7 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       CONFIG_USERNAME: ${CONFIG_USERNAME:-configuser}
       CONFIG_PASSWORD: ${CONFIG_PASSWORD:-config@secret}
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -106,7 +106,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       JWT_SECRET: ${JWT_SECRET:-ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -127,7 +127,7 @@ services:
       SPRING_DATASOURCE_USERNAME: farm2home
       SPRING_DATASOURCE_PASSWORD: farm2home@123
       JWT_SECRET: ${JWT_SECRET:-ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -168,7 +168,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=subscription
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -190,7 +190,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=order
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -215,7 +215,7 @@ services:
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -240,7 +240,7 @@ services:
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -264,7 +264,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=farm
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -286,7 +286,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=production
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -308,7 +308,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=inventory
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
@@ -331,7 +331,7 @@ services:
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eureka%40secret@discovery-service:8761/eureka
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home

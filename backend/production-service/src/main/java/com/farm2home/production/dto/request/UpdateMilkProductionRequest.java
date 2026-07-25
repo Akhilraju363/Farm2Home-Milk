@@ -9,25 +9,25 @@ import java.math.BigDecimal;
 @Data
 public class UpdateMilkProductionRequest {
 
-    @DecimalMin(value = "0.01")
-    @Digits(integer = 4, fraction = 2)
+    @DecimalMin(value = "0.01", message = "Quantity must be greater than zero")
+    @Digits(integer = 4, fraction = 2, message = "Quantity must have up to 4 digits before and 2 digits after the decimal point")
     private BigDecimal quantityLiters;
 
-    @DecimalMin(value = "0.0")
-    @DecimalMax(value = "99.99")
-    @Digits(integer = 2, fraction = 2)
+    @DecimalMin(value = "0.0", message = "Fat percentage cannot be negative")
+    @DecimalMax(value = "99.99", message = "Fat percentage cannot exceed 99.99")
+    @Digits(integer = 2, fraction = 2, message = "Fat percentage must have up to 2 digits before and 2 digits after the decimal point")
     private BigDecimal fatPercentage;
 
-    @DecimalMin(value = "0.0")
-    @DecimalMax(value = "99.99")
-    @Digits(integer = 2, fraction = 2)
+    @DecimalMin(value = "0.0", message = "SNF percentage cannot be negative")
+    @DecimalMax(value = "99.99", message = "SNF percentage cannot exceed 99.99")
+    @Digits(integer = 2, fraction = 2, message = "SNF percentage must have up to 2 digits before and 2 digits after the decimal point")
     private BigDecimal snfPercentage;
 
     private QualityGrade qualityGrade;
 
-    @Size(max = 100)
+    @Size(max = 100, message = "Collected by must be at most 100 characters")
     private String collectedBy;
 
-    @Size(max = 255)
+    @Size(max = 255, message = "Notes must be at most 255 characters")
     private String notes;
 }
