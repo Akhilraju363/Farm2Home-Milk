@@ -70,12 +70,10 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         @Test
         @DisplayName("Should initiate payment via UPI")
         void shouldInitiatePaymentViaUPI() throws Exception {
-            var paymentRequest = InitiatePaymentRequest.builder()
-                    .orderId(orderId)
-                    .amount(BigDecimal.valueOf(500.00))
-                    .paymentMethod(PaymentMethod.UPI)
-                    .upiId("customer@upi")
-                    .build();
+            var paymentRequest = new InitiatePaymentRequest();
+            paymentRequest.setOrderId(orderId);
+            paymentRequest.setAmount(BigDecimal.valueOf(500.00));
+            paymentRequest.setPaymentMethod(PaymentMethod.UPI);
 
             mockMvc.perform(post("/api/v1/payments/initiate")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -83,7 +81,7 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
                     .with(authBuilder.build()))
                     .andExpect(status().isCreated())
                     .andExpect(jsonPath("$.id", notNullValue()))
-                    .andExpect(jsonPath("$.status").value(PaymentStatus.PENDING.name()))
+                    .andExpect(jsonPath("$.paymentStatus").value(PaymentStatus.PENDING.name()))
                     .andExpect(jsonPath("$.paymentMethod").value(PaymentMethod.UPI.name()))
                     .andExpect(jsonPath("$.amount").value(500.00));
 
@@ -95,30 +93,26 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         @Test
         @DisplayName("Should initiate payment via Card")
         void shouldInitiatePaymentViaCard() throws Exception {
-            var paymentRequest = InitiatePaymentRequest.builder()
-                    .orderId(orderId)
-                    .amount(BigDecimal.valueOf(750.00))
-                    .paymentMethod(PaymentMethod.CARD)
-                    .cardTokenId("card_token_123")
-                    .build();
+            var paymentRequest = new InitiatePaymentRequest();
+            paymentRequest.setOrderId(orderId);
+            paymentRequest.setAmount(BigDecimal.valueOf(750.00));
+            paymentRequest.setPaymentMethod(PaymentMethod.RAZORPAY);
 
             mockMvc.perform(post("/api/v1/payments/initiate")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(paymentRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.paymentMethod").value(PaymentMethod.CARD.name()));
+                    .andExpect(jsonPath("$.paymentMethod").value(PaymentMethod.RAZORPAY.name()));
         }
 
         @Test
         @DisplayName("Should reject invalid payment amount")
         void shouldRejectInvalidPaymentAmount() throws Exception {
-            var paymentRequest = InitiatePaymentRequest.builder()
-                    .orderId(orderId)
-                    .amount(BigDecimal.valueOf(-100))
-                    .paymentMethod(PaymentMethod.UPI)
-                    .upiId("customer@upi")
-                    .build();
+            var paymentRequest = new InitiatePaymentRequest();
+            paymentRequest.setOrderId(orderId);
+            paymentRequest.setAmount(BigDecimal.valueOf(-100));
+            paymentRequest.setPaymentMethod(PaymentMethod.UPI);
 
             mockMvc.perform(post("/api/v1/payments/initiate")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -137,20 +131,19 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         void shouldProcessSuccessfulPaymentCallback() throws Exception {
             var payment = createTestPayment(PaymentStatus.PENDING);
 
-            var callbackRequest = PaymentCallbackRequest.builder()
-                    .paymentId(payment.getId())
-                    .status(PaymentStatus.COMPLETED)
-                    .referenceId("TXN-12345")
-                    .build();
+            var callbackRequest = new PaymentCallbackRequest();
+            callbackRequest.setPaymentReference(payment.getPaymentReference());
+            callbackRequest.setSuccess(true);
+            callbackRequest.setGatewayResponse("Payment approved");
 
             mockMvc.perform(post("/api/v1/payments/" + payment.getId() + "/callback")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(callbackRequest)))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(PaymentStatus.COMPLETED.name()));
+                    .andExpect(jsonPath("$.paymentStatus").value(PaymentStatus.SUCCESS.name()));
 
             var updatedPayment = paymentRepository.findById(payment.getId()).orElseThrow();
-            assertThat(updatedPayment.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+            assertThat(updatedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
         }
 
         @Test
@@ -158,29 +151,28 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         void shouldProcessFailedPaymentCallback() throws Exception {
             var payment = createTestPayment(PaymentStatus.PENDING);
 
-            var callbackRequest = PaymentCallbackRequest.builder()
-                    .paymentId(payment.getId())
-                    .status(PaymentStatus.FAILED)
-                    .failureReason("Insufficient funds")
-                    .build();
+            var callbackRequest = new PaymentCallbackRequest();
+            callbackRequest.setPaymentReference(payment.getPaymentReference());
+            callbackRequest.setSuccess(false);
+            callbackRequest.setErrorMessage("Insufficient funds");
 
             mockMvc.perform(post("/api/v1/payments/" + payment.getId() + "/callback")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(callbackRequest)))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(PaymentStatus.FAILED.name()));
+                    .andExpect(jsonPath("$.paymentStatus").value(PaymentStatus.FAILED.name()));
         }
 
         @Test
         @DisplayName("Should retrieve payment by ID")
         void shouldRetrievePaymentById() throws Exception {
-            var payment = createTestPayment(PaymentStatus.COMPLETED);
+            var payment = createTestPayment(PaymentStatus.SUCCESS);
 
             mockMvc.perform(get("/api/v1/payments/" + payment.getId())
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.id").value(payment.getId().toString()))
-                    .andExpect(jsonPath("$.status").value(PaymentStatus.COMPLETED.name()));
+                    .andExpect(jsonPath("$.paymentStatus").value(PaymentStatus.SUCCESS.name()));
         }
     }
 
@@ -206,11 +198,9 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         void shouldTopUpWallet() throws Exception {
             createTestWallet(BigDecimal.ZERO);
 
-            var topUpRequest = TopUpWalletRequest.builder()
-                    .amount(BigDecimal.valueOf(1000.00))
-                    .paymentMethod(PaymentMethod.CARD)
-                    .cardTokenId("card_token_123")
-                    .build();
+            var topUpRequest = new TopUpWalletRequest();
+            topUpRequest.setAmount(BigDecimal.valueOf(1000.00));
+            topUpRequest.setDescription("Top-up via UPI");
 
             mockMvc.perform(post("/api/v1/wallet/topup")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -240,11 +230,9 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         void shouldNotAllowNegativeBalance() throws Exception {
             createTestWallet(BigDecimal.valueOf(100.00));
 
-            var topUpRequest = TopUpWalletRequest.builder()
-                    .amount(BigDecimal.valueOf(-500.00))
-                    .paymentMethod(PaymentMethod.CARD)
-                    .cardTokenId("card_token_123")
-                    .build();
+            var topUpRequest = new TopUpWalletRequest();
+            topUpRequest.setAmount(BigDecimal.valueOf(-500.00));
+            topUpRequest.setDescription("Negative top-up");
 
             mockMvc.perform(post("/api/v1/wallet/topup")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -260,7 +248,7 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
                 .customerId(customerId)
                 .orderId(orderId)
                 .amount(BigDecimal.valueOf(500.00))
-                .status(status)
+                .paymentStatus(status)
                 .paymentMethod(PaymentMethod.UPI)
                 .paymentReference("REF-" + System.currentTimeMillis())
                 .build();

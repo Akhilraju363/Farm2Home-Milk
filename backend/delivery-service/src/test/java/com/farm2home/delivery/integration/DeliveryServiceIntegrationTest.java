@@ -4,10 +4,10 @@ import com.farm2home.core.test.BaseIntegrationTest;
 import com.farm2home.core.test.AuthenticationTestBuilder;
 import com.farm2home.delivery.domain.entity.DeliveryAssignment;
 import com.farm2home.delivery.domain.entity.DeliveryPartner;
-import com.farm2home.delivery.domain.enums.DeliveryStatus;
+import com.farm2home.delivery.domain.enums.AssignmentStatus;
 import com.farm2home.delivery.domain.repository.DeliveryAssignmentRepository;
 import com.farm2home.delivery.domain.repository.DeliveryPartnerRepository;
-import com.farm2home.delivery.dto.request.CreateDeliveryPartnerRequest;
+import com.farm2home.delivery.dto.request.CreatePartnerRequest;
 import com.farm2home.delivery.dto.request.UpdateAssignmentStatusRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,13 +68,12 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
         @Test
         @DisplayName("Should register a new delivery partner")
         void shouldRegisterNewDeliveryPartner() throws Exception {
-            var partnerRequest = CreateDeliveryPartnerRequest.builder()
-                    .name("John Delivery")
-                    .phone("+919876543210")
-                    .email("john@delivery.com")
-                    .vehicle("2-Wheeler")
-                    .licenseNumber("LIC123456")
-                    .build();
+            var partnerId = UUID.randomUUID();
+            var partnerRequest = new CreatePartnerRequest();
+            partnerRequest.setUserId(partnerId);
+            partnerRequest.setName("John Delivery");
+            partnerRequest.setMobile("+919876543210");
+            partnerRequest.setVehicleType("2-Wheeler");
 
             mockMvc.perform(post("/api/v1/delivery-partners")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -83,7 +82,7 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
                     .andExpect(status().isCreated())
                     .andExpect(jsonPath("$.id", notNullValue()))
                     .andExpect(jsonPath("$.name").value("John Delivery"))
-                    .andExpect(jsonPath("$.phone").value("+919876543210"))
+                    .andExpect(jsonPath("$.mobile").value("+919876543210"))
                     .andExpect(jsonPath("$.active").value(true));
 
             var savedPartners = partnerRepository.findAll();
@@ -123,13 +122,11 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
         void shouldUpdateDeliveryPartnerDetails() throws Exception {
             var partner = createTestPartner("Original Name");
 
-            var updateRequest = CreateDeliveryPartnerRequest.builder()
-                    .name("Updated Name")
-                    .phone("+919876543210")
-                    .email("updated@delivery.com")
-                    .vehicle("3-Wheeler")
-                    .licenseNumber("LIC999999")
-                    .build();
+            var updateRequest = new CreatePartnerRequest();
+            updateRequest.setUserId(partner.getUserId());
+            updateRequest.setName("Updated Name");
+            updateRequest.setMobile("+919876543210");
+            updateRequest.setVehicleType("3-Wheeler");
 
             mockMvc.perform(put("/api/v1/delivery-partners/" + partner.getId())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -148,9 +145,10 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
         @DisplayName("Should create delivery assignment for order")
         void shouldCreateDeliveryAssignment() throws Exception {
             var partner = createTestPartner("Delivery Partner");
+            var currentOrderId = orderId;
 
             var assignmentRequest = new Object() {
-                public String orderId = orderId.toString();
+                public String orderId = currentOrderId.toString();
                 public String deliveryPartnerId = partner.getId().toString();
                 public String address = "123 Main St, City";
             };
@@ -161,49 +159,48 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
                     .with(authBuilder.build()))
                     .andExpect(status().isCreated())
                     .andExpect(jsonPath("$.id", notNullValue()))
-                    .andExpect(jsonPath("$.status").value(DeliveryStatus.ASSIGNED.name()));
+                    .andExpect(jsonPath("$.status").value(AssignmentStatus.ASSIGNED.name()));
 
             var savedAssignments = assignmentRepository.findAll();
             assertThat(savedAssignments).hasSize(1);
         }
 
         @Test
-        @DisplayName("Should update assignment status to PICKED_UP")
-        void shouldUpdateAssignmentStatusToPickedUp() throws Exception {
+        @DisplayName("Should update assignment status to OUT_FOR_DELIVERY")
+        void shouldUpdateAssignmentStatusToOutForDelivery() throws Exception {
             var assignment = createTestAssignment();
 
-            var updateRequest = UpdateAssignmentStatusRequest.builder()
-                    .status(DeliveryStatus.PICKED_UP)
-                    .build();
+            var updateRequest = new UpdateAssignmentStatusRequest();
+            updateRequest.setStatus(AssignmentStatus.OUT_FOR_DELIVERY);
 
             mockMvc.perform(patch("/api/v1/delivery-assignments/" + assignment.getId() + "/status")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(updateRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(DeliveryStatus.PICKED_UP.name()));
+                    .andExpect(jsonPath("$.status").value(AssignmentStatus.OUT_FOR_DELIVERY.name()));
 
             var updatedAssignment = assignmentRepository.findById(assignment.getId()).orElseThrow();
-            assertThat(updatedAssignment.getStatus()).isEqualTo(DeliveryStatus.PICKED_UP);
+            assertThat(updatedAssignment.getStatus()).isEqualTo(AssignmentStatus.OUT_FOR_DELIVERY);
         }
 
         @Test
         @DisplayName("Should update assignment status to DELIVERED")
         void shouldUpdateAssignmentStatusToDelivered() throws Exception {
             var assignment = createTestAssignment();
-            assignment.setStatus(DeliveryStatus.IN_TRANSIT);
+            assignment.setStatus(AssignmentStatus.OUT_FOR_DELIVERY);
             assignmentRepository.save(assignment);
 
-            var updateRequest = UpdateAssignmentStatusRequest.builder()
-                    .status(DeliveryStatus.DELIVERED)
-                    .build();
+            var updateRequest = new UpdateAssignmentStatusRequest();
+            updateRequest.setStatus(AssignmentStatus.DELIVERED);
+            updateRequest.setDeliveryProof("Delivery photo URL");
 
             mockMvc.perform(patch("/api/v1/delivery-assignments/" + assignment.getId() + "/status")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(updateRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(DeliveryStatus.DELIVERED.name()));
+                    .andExpect(jsonPath("$.status").value(AssignmentStatus.DELIVERED.name()));
         }
 
         @Test
@@ -227,20 +224,19 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
         void shouldMarkAssignmentAsFailed() throws Exception {
             var assignment = createTestAssignment();
 
-            var updateRequest = UpdateAssignmentStatusRequest.builder()
-                    .status(DeliveryStatus.FAILED)
-                    .failureReason("Customer not available")
-                    .build();
+            var updateRequest = new UpdateAssignmentStatusRequest();
+            updateRequest.setStatus(AssignmentStatus.FAILED);
+            updateRequest.setFailureReason("Customer not available");
 
             mockMvc.perform(patch("/api/v1/delivery-assignments/" + assignment.getId() + "/status")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(updateRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(DeliveryStatus.FAILED.name()));
+                    .andExpect(jsonPath("$.status").value(AssignmentStatus.FAILED.name()));
 
             var updatedAssignment = assignmentRepository.findById(assignment.getId()).orElseThrow();
-            assertThat(updatedAssignment.getStatus()).isEqualTo(DeliveryStatus.FAILED);
+            assertThat(updatedAssignment.getStatus()).isEqualTo(AssignmentStatus.FAILED);
             assertThat(updatedAssignment.getFailureReason()).isEqualTo("Customer not available");
         }
     }
@@ -248,11 +244,10 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
     // Helper methods
     private DeliveryPartner createTestPartner(String name) {
         var partner = DeliveryPartner.builder()
+                .userId(UUID.randomUUID())
                 .name(name)
-                .phone("+91" + System.currentTimeMillis() % 10000000000L)
-                .email(name.toLowerCase().replace(" ", ".") + "@delivery.com")
-                .vehicle("2-Wheeler")
-                .licenseNumber("LIC" + System.currentTimeMillis())
+                .mobile("+91" + (System.currentTimeMillis() % 10000000000L))
+                .vehicleType("2-Wheeler")
                 .active(true)
                 .build();
         return partnerRepository.save(partner);
@@ -267,8 +262,8 @@ class DeliveryServiceIntegrationTest extends BaseIntegrationTest {
         var assignment = DeliveryAssignment.builder()
                 .orderId(UUID.randomUUID())
                 .deliveryPartner(partner)
-                .status(DeliveryStatus.ASSIGNED)
-                .deliveryAddress("123 Test St")
+                .route(partner.getRoute())
+                .status(AssignmentStatus.ASSIGNED)
                 .build();
         return assignmentRepository.save(assignment);
     }
