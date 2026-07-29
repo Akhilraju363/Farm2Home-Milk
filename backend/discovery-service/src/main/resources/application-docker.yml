@@ -4,3 +4,7 @@ eureka:
   client:
     service-url:
       defaultZone: http://eureka:eurekaSecret@discovery-service:8761/eureka/
+
+configserver:
+  health:
+    url: http://config-server:8888

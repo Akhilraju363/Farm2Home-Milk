@@ -84,7 +84,7 @@ services:
     ports:
       - "8888:8888"
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+      SPRING_PROFILES_ACTIVE: docker,native
       CONFIG_USERNAME: ${CONFIG_USERNAME:-configuser}
       CONFIG_PASSWORD: ${CONFIG_PASSWORD:-config@secret}
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
@@ -93,7 +93,7 @@ services:
       - ./logs:/var/log/farm2home
     depends_on:
       discovery-service:
-        condition: service_healthy
+        condition: service_started
     networks:
       - farm2home-network
 
@@ -120,7 +120,7 @@ services:
     build: ./backend/auth-service
     container_name: farm2home-auth-service
     ports:
-      - "8081:8081"
+      - "8091:8081"
     environment:
       SPRING_PROFILES_ACTIVE: docker
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=auth
@@ -214,7 +214,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=payment
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
@@ -239,7 +239,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=delivery
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
