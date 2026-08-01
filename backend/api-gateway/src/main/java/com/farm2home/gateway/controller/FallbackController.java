@@ -1,5 +1,7 @@
 package com.farm2home.gateway.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -19,11 +21,18 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/fallback")
+@Tag(name = "Internal Fallback", description = "Internal circuit-breaker fallback target - not part of the "
+        + "public API surface.")
 public class FallbackController {
 
     private static final Logger log = LoggerFactory.getLogger(FallbackController.class);
 
     @RequestMapping("/{service}")
+    @Operation(summary = "Circuit-breaker fallback (internal)",
+            description = "Invoked automatically by the gateway's own Resilience4j circuit breakers when a "
+                    + "downstream service's route is open/unavailable (forward:/fallback/{service}). Not meant "
+                    + "to be called directly by API clients - it carries no authentication/authorization of "
+                    + "its own and always responds 503 with a generic \"temporarily unavailable\" body.")
     public Mono<ResponseEntity<Map<String, Object>>> fallback(@PathVariable String service) {
         log.warn("Circuit breaker fallback triggered for '{}'", service);
         Map<String, Object> body = Map.of(

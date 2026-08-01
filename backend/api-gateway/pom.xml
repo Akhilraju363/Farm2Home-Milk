@@ -60,6 +60,23 @@
             <artifactId>common-observability</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>common-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- api-gateway is WebFlux-based (spring-cloud-starter-gateway) and does not bring
+             springdoc-openapi like the other (WebMVC) services do, but FallbackController still
+             carries @Operation/@Tag for inline documentation of its one internal endpoint - just
+             the annotation classes are needed here, not a full OpenAPI runtime/UI, so this pulls
+             in swagger-annotations-jakarta directly rather than springdoc-openapi-starter-*.
+             Version pinned to match what springdoc-openapi-starter-webmvc-ui:2.3.0 resolves to
+             in the other services, for consistency. -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations-jakarta</artifactId>
+            <version>2.2.19</version>
+        </dependency>
     </dependencies>
 
     <build>

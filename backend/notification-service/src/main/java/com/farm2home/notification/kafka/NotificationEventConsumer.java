@@ -1,5 +1,6 @@
 package com.farm2home.notification.kafka;
 
+import com.farm2home.common.core.constants.KafkaTopics;
 import com.farm2home.notification.dto.KafkaEventDto;
 import com.farm2home.notification.service.impl.NotificationServiceImpl;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +16,8 @@ public class NotificationEventConsumer {
     private final NotificationServiceImpl notificationService;
 
     @KafkaListener(
-        topics = {"order.events", "delivery.events", "payment.events", "subscription.events"},
+        topics = {KafkaTopics.ORDER_EVENTS, KafkaTopics.DELIVERY_EVENTS, KafkaTopics.PAYMENT_EVENTS, KafkaTopics.SUBSCRIPTION_EVENTS,
+                KafkaTopics.CUSTOMER_EVENTS, KafkaTopics.INVENTORY_EVENTS, KafkaTopics.OTP_EVENTS},
         groupId = "${spring.kafka.consumer.group-id:notification-service}",
         containerFactory = "kafkaListenerContainerFactory"
     )

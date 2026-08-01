@@ -18,5 +18,7 @@
         <module>common-core</module>
         <module>common-web</module>
         <module>common-observability</module>
+        <module>common-events</module>
+        <module>common-export</module>
     </modules>
 </project>

@@ -4,6 +4,7 @@ import com.farm2home.delivery.domain.entity.DeliveryAssignment;
 import com.farm2home.delivery.domain.entity.DeliveryPartner;
 import com.farm2home.delivery.domain.repository.DeliveryAssignmentRepository;
 import com.farm2home.delivery.domain.repository.DeliveryPartnerRepository;
+import com.farm2home.events.order.OrderEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;

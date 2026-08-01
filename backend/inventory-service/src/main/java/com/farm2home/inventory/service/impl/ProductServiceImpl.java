@@ -1,0 +1,144 @@
+package com.farm2home.inventory.service.impl;
+
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.Audited;
+import com.farm2home.common.core.constants.FileConstants;
+import com.farm2home.common.export.BatchSupplier;
+import com.farm2home.common.export.ExportColumn;
+import com.farm2home.common.export.ExportFormat;
+import com.farm2home.common.export.TabularExporterFactory;
+import com.farm2home.common.web.storage.FileStorageService;
+import com.farm2home.inventory.domain.entity.Product;
+import com.farm2home.inventory.domain.repository.ProductRepository;
+import com.farm2home.inventory.domain.repository.ProductSpecifications;
+import com.farm2home.inventory.dto.request.CreateProductRequest;
+import com.farm2home.inventory.dto.request.UpdateProductRequest;
+import com.farm2home.inventory.dto.response.ProductResponse;
+import com.farm2home.inventory.exception.ResourceNotFoundException;
+import com.farm2home.inventory.mapper.ProductMapper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.io.OutputStream;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class ProductServiceImpl {
+
+    private static final String UPLOAD_CATEGORY = FileConstants.CATEGORY_PRODUCTS;
+
+    private final ProductRepository repository;
+    private final ProductMapper mapper;
+    private final FileStorageService fileStorageService;
+
+    @Transactional
+    @Audited(action = AuditAction.CREATE, entityType = "Product")
+    public ProductResponse create(CreateProductRequest request) {
+        Product product = mapper.toEntity(request);
+        return mapper.toResponse(repository.save(product));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> findAll(boolean activeOnly, Pageable pageable) {
+        Page<Product> page = activeOnly
+                ? repository.findAllByActiveTrueAndDeletedFalse(pageable)
+                : repository.findAllByDeletedFalse(pageable);
+        return page.map(mapper::toResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public ProductResponse findById(UUID id) {
+        return mapper.toResponse(getProduct(id));
+    }
+
+    @Transactional
+    @Audited(action = AuditAction.UPDATE, entityType = "Product")
+    public ProductResponse update(UUID id, UpdateProductRequest request) {
+        Product product = getProduct(id);
+        mapper.updateEntityFromRequest(request, product);
+        return mapper.toResponse(repository.save(product));
+    }
+
+    @Transactional
+    @Audited(action = AuditAction.DELETE, entityType = "Product")
+    public void delete(UUID id) {
+        Product product = getProduct(id);
+        product.setDeleted(true);
+        repository.save(product);
+    }
+
+    @Transactional
+    @Audited(action = AuditAction.UPLOAD, entityType = "Product")
+    public ProductResponse uploadImage(UUID id, MultipartFile file) {
+        Product product = getProduct(id);
+        String relativePath = fileStorageService.store(file, UPLOAD_CATEGORY);
+        product.setImageUrl("/uploads/" + relativePath);
+        return mapper.toResponse(repository.save(product));
+    }
+
+    private Product getProduct(UUID id) {
+        return repository.findByIdAndDeletedFalse(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Product not found: " + id));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> search(String keyword, LocalDate dateFrom, LocalDate dateTo,
+            Boolean active, Pageable pageable) {
+        Specification<Product> spec = buildSearchSpecification(keyword, dateFrom, dateTo, active);
+        return repository.findAll(spec, pageable).map(mapper::toResponse);
+    }
+
+    /** Shared by both {@link #search} and {@link #export} so the two always see the exact same
+     *  filtered result set. */
+    private Specification<Product> buildSearchSpecification(String keyword, LocalDate dateFrom, LocalDate dateTo,
+            Boolean active) {
+        Specification<Product> spec = Specification.where(ProductSpecifications.notDeleted());
+        if (StringUtils.hasText(keyword)) {
+            spec = spec.and(ProductSpecifications.hasKeyword(keyword));
+        }
+        if (dateFrom != null || dateTo != null) {
+            spec = spec.and(ProductSpecifications.createdBetween(dateFrom, dateTo));
+        }
+        if (active != null) {
+            spec = spec.and(ProductSpecifications.isActive(active));
+        }
+        return spec;
+    }
+
+    /** Streams matching products straight to {@code out} in the requested file format, one
+     *  bounded page at a time, so exporting a very large product catalog never requires holding
+     *  the full result set in memory. Each batch fetch runs in its own short-lived Spring Data
+     *  transaction (this method is deliberately NOT wrapped in a single @Transactional so a
+     *  slow export doesn't pin one DB connection for its entire duration). Runs on the async
+     *  StreamingResponseBody dispatch thread, not the original request thread. */
+    public void export(ExportFormat format, OutputStream out, String keyword, LocalDate dateFrom, LocalDate dateTo,
+            Boolean active, String sortBy, boolean ascending) throws IOException {
+        Specification<Product> spec = buildSearchSpecification(keyword, dateFrom, dateTo, active);
+        Sort sort = ascending ? Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
+
+        List<ExportColumn<Product>> columns = List.of(
+                new ExportColumn<>("Name", Product::getName),
+                new ExportColumn<>("Category", p -> p.getCategory() == null ? "" : p.getCategory()),
+                new ExportColumn<>("Price", p -> p.getPrice().toString()),
+                new ExportColumn<>("Active", p -> String.valueOf(p.isActive())),
+                new ExportColumn<>("Created At", p -> p.getCreatedAt() == null ? "" : p.getCreatedAt().toString()));
+
+        BatchSupplier<Product> supplier = (page, size) ->
+                repository.findAll(spec, PageRequest.of(page, size, sort)).getContent();
+
+        TabularExporterFactory.<Product>forFormat(format)
+                .write(out, columns.stream().map(ExportColumn::header).toList(), columns, supplier);
+    }
+}

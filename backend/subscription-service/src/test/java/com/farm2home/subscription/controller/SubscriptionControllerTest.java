@@ -1,5 +1,14 @@
 package com.farm2home.subscription.controller;
 
+import com.farm2home.common.core.analytics.Granularity;
+import com.farm2home.common.core.analytics.SubscriptionTrendPoint;
+import com.farm2home.common.core.analytics.TrendSeries;
+import com.farm2home.common.core.constants.SecurityConstants;
+import com.farm2home.common.core.dashboard.SubscriptionSummaryResponse;
+import com.farm2home.common.core.reports.ReportPage;
+import com.farm2home.common.core.reports.SubscriptionReportRow;
+import com.farm2home.common.core.reports.SubscriptionReportSummary;
+import com.farm2home.common.export.ExportFormat;
 import com.farm2home.subscription.config.GatewayHeaderAuthFilter;
 import com.farm2home.subscription.config.SecurityConfig;
 import com.farm2home.subscription.config.UserPrincipal;
@@ -20,9 +29,12 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -33,11 +45,14 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(SubscriptionController.class)
@@ -70,6 +85,19 @@ class SubscriptionControllerTest {
 
     private SubscriptionResponse buildResponse(String status) {
         return SubscriptionResponse.builder().id(subId).customerId(customerId).status(status).build();
+    }
+
+    // getSummary() is gated with hasAnyAuthority(...) (unprefixed role names), unlike the other
+    // endpoints in this controller which rely on manual principal.isAdmin() checks - so the
+    // granted authority here must match exactly (no "ROLE_" prefix, unlike authFor() above).
+    private UsernamePasswordAuthenticationToken admin() {
+        return new UsernamePasswordAuthenticationToken(
+                "9876543210", null, List.of(new SimpleGrantedAuthority(SecurityConstants.ROLE_FARM_MANAGER)));
+    }
+
+    private UsernamePasswordAuthenticationToken customer() {
+        return new UsernamePasswordAuthenticationToken(
+                "9876543210", null, List.of(new SimpleGrantedAuthority("CUSTOMER")));
     }
 
     @Nested
@@ -197,6 +225,180 @@ class SubscriptionControllerTest {
                             .with(authentication(authFor(customerId, false))))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/subscriptions/summary")
+    class GetSummary {
+
+        @Test
+        @DisplayName("FARM_MANAGER → 200")
+        void admin_ok() throws Exception {
+            when(service.getSummary()).thenReturn(
+                    SubscriptionSummaryResponse.builder().activeSubscriptions(7L).build());
+
+            mockMvc.perform(get("/api/v1/subscriptions/summary").with(authentication(admin())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.activeSubscriptions").value(7));
+        }
+
+        @Test
+        @DisplayName("CUSTOMER → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/subscriptions/summary").with(authentication(customer())))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/subscriptions/reports")
+    class GetReport {
+
+        @Test
+        @DisplayName("FARM_MANAGER → 200")
+        void admin_ok() throws Exception {
+            when(service.getReport(any(), any(), any(), any(), any(), any())).thenReturn(
+                    ReportPage.<SubscriptionReportRow, SubscriptionReportSummary>builder()
+                            .content(List.of())
+                            .pageNumber(0).pageSize(20).totalElements(0).totalPages(0)
+                            .summary(SubscriptionReportSummary.builder()
+                                    .totalSubscriptions(0).activeSubscriptions(0).totalQuantity(BigDecimal.ZERO).build())
+                            .build());
+
+            mockMvc.perform(get("/api/v1/subscriptions/reports").with(authentication(admin())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.summary.totalSubscriptions").value(0));
+        }
+
+        @Test
+        @DisplayName("CUSTOMER → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/subscriptions/reports").with(authentication(customer())))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/subscriptions/search")
+    class Search {
+
+        @Test
+        @DisplayName("customer → filtered to own userId regardless of customerId param")
+        void customer_filteredToOwnId() throws Exception {
+            when(service.search(eq(customerId), any(), any(), any(), any(), any(), any()))
+                    .thenReturn(new PageImpl<>(new java.util.ArrayList<>(List.of(buildResponse("ACTIVE"))),
+                            PageRequest.of(0, 20), 1));
+
+            mockMvc.perform(get("/api/v1/subscriptions/search")
+                            .param("customerId", UUID.randomUUID().toString())
+                            .param("keyword", "DAILY")
+                            .with(authentication(authFor(customerId, false))))
+                    .andExpect(status().isOk());
+
+            verify(service).search(eq(customerId), any(), any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("admin with no customerId param → unfiltered (null)")
+        void admin_noFilter() throws Exception {
+            when(service.search(isNull(), any(), any(), any(), any(), any(), any()))
+                    .thenReturn(new PageImpl<>(new java.util.ArrayList<>(), PageRequest.of(0, 20), 0));
+
+            mockMvc.perform(get("/api/v1/subscriptions/search").with(authentication(authFor(UUID.randomUUID(), true))))
+                    .andExpect(status().isOk());
+
+            verify(service).search(isNull(), any(), any(), any(), any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/subscriptions/export")
+    class Export {
+
+        @Test
+        @DisplayName("authenticated, CSV format → 200 with attachment headers")
+        void authenticated_csv_ok() throws Exception {
+            doNothing().when(service).export(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+
+            MvcResult started = mockMvc.perform(get("/api/v1/subscriptions/export")
+                            .param("format", "CSV")
+                            .with(authentication(authFor(customerId, false))))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+
+            mockMvc.perform(asyncDispatch(started))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Content-Type", "text/csv"))
+                    .andExpect(header().exists("Content-Disposition"));
+        }
+
+        @Test
+        @DisplayName("customer → filtered to own userId regardless of customerId param")
+        void customer_filteredToOwnId() throws Exception {
+            doNothing().when(service).export(any(), any(), eq(customerId), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+
+            MvcResult started = mockMvc.perform(get("/api/v1/subscriptions/export")
+                            .param("format", "CSV")
+                            .param("customerId", UUID.randomUUID().toString())
+                            .with(authentication(authFor(customerId, false))))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+
+            mockMvc.perform(asyncDispatch(started))
+                    .andExpect(status().isOk());
+
+            verify(service).export(any(), any(), eq(customerId), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+        }
+
+        @Test
+        @DisplayName("admin with no customerId param → unfiltered (null)")
+        void admin_noFilter() throws Exception {
+            doNothing().when(service).export(any(), any(), isNull(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+
+            MvcResult started = mockMvc.perform(get("/api/v1/subscriptions/export")
+                            .param("format", "EXCEL")
+                            .with(authentication(authFor(UUID.randomUUID(), true))))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+
+            mockMvc.perform(asyncDispatch(started))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Content-Type",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+
+            verify(service).export(any(), any(), isNull(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/subscriptions/analytics/subscription-trend")
+    class GetSubscriptionTrend {
+
+        @Test
+        @DisplayName("FARM_MANAGER → 200")
+        void authorized_ok() throws Exception {
+            when(service.getSubscriptionTrend(eq(Granularity.DAILY), any(), any())).thenReturn(
+                    TrendSeries.<SubscriptionTrendPoint>builder().granularity(Granularity.DAILY).points(List.of()).build());
+
+            mockMvc.perform(get("/api/v1/subscriptions/analytics/subscription-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(admin())))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("CUSTOMER → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/subscriptions/analytics/subscription-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(customer())))
+                    .andExpect(status().isForbidden());
         }
     }
 }

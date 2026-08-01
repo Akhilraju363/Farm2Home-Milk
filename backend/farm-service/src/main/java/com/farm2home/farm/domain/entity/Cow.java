@@ -39,6 +39,9 @@ public class Cow {
     @Column(name = "purchase_date")
     private LocalDate purchaseDate;
 
+    @Column(name = "farm_id")
+    private UUID farmId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     @Builder.Default

@@ -1,6 +1,7 @@
 package com.farm2home.delivery.kafka;
 
 import com.farm2home.delivery.domain.entity.DeliveryAssignment;
+import com.farm2home.events.delivery.DeliveryEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;

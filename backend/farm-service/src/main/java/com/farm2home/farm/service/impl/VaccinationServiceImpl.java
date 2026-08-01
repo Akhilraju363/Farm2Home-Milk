@@ -1,10 +1,15 @@
 package com.farm2home.farm.service.impl;
 
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.AuditEntry;
+import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.common.core.audit.Audited;
 import com.farm2home.farm.domain.entity.Cow;
 import com.farm2home.farm.domain.entity.Vaccination;
 import com.farm2home.farm.domain.repository.CowRepository;
 import com.farm2home.farm.domain.repository.VaccinationRepository;
 import com.farm2home.farm.dto.request.CreateVaccinationRequest;
+import com.farm2home.farm.dto.request.UpdateVaccinationRequest;
 import com.farm2home.farm.dto.response.VaccinationResponse;
 import com.farm2home.farm.exception.ResourceNotFoundException;
 import com.farm2home.farm.mapper.FarmMapper;
@@ -25,13 +30,24 @@ public class VaccinationServiceImpl {
     private final VaccinationRepository vaccinationRepository;
     private final CowRepository cowRepository;
     private final FarmMapper mapper;
+    private final AuditLogService auditLogService;
 
     @Transactional
+    @Audited(action = AuditAction.CREATE, entityType = "Vaccination")
     public VaccinationResponse create(UUID cowId, CreateVaccinationRequest request) {
         Cow cow = getCow(cowId);
         Vaccination vaccination = mapper.toEntity(request);
         vaccination.setCow(cow);
         return mapper.toVaccinationResponse(vaccinationRepository.save(vaccination));
+    }
+
+    @Transactional
+    @Audited(action = AuditAction.UPDATE, entityType = "Vaccination")
+    public VaccinationResponse update(UUID cowId, UUID vaccinationId, UpdateVaccinationRequest request) {
+        Vaccination v = vaccinationRepository.findByIdAndCowIdAndDeletedFalse(vaccinationId, cowId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vaccination not found: " + vaccinationId));
+        mapper.updateVaccinationFromRequest(request, v);
+        return mapper.toVaccinationResponse(vaccinationRepository.save(v));
     }
 
     @Transactional(readOnly = true)
@@ -55,6 +71,12 @@ public class VaccinationServiceImpl {
                 .orElseThrow(() -> new ResourceNotFoundException("Vaccination not found: " + vaccinationId));
         v.setDeleted(true);
         vaccinationRepository.save(v);
+        auditLogService.record(AuditEntry.builder()
+                .action(AuditAction.DELETE)
+                .entityType("Vaccination")
+                .entityId(vaccinationId.toString())
+                .details("Vaccination record deleted for cow " + cowId)
+                .build());
     }
 
     private Cow getCow(UUID cowId) {

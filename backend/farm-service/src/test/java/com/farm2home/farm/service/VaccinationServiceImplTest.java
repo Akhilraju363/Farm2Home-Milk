@@ -5,8 +5,10 @@ import com.farm2home.farm.domain.entity.Vaccination;
 import com.farm2home.farm.domain.repository.CowRepository;
 import com.farm2home.farm.domain.repository.VaccinationRepository;
 import com.farm2home.farm.dto.request.CreateVaccinationRequest;
+import com.farm2home.farm.dto.request.UpdateVaccinationRequest;
 import com.farm2home.farm.dto.response.VaccinationResponse;
 import com.farm2home.farm.exception.ResourceNotFoundException;
+import com.farm2home.common.core.audit.AuditLogService;
 import com.farm2home.farm.mapper.FarmMapper;
 import com.farm2home.farm.service.impl.VaccinationServiceImpl;
 import org.junit.jupiter.api.DisplayName;
@@ -37,6 +39,7 @@ class VaccinationServiceImplTest {
     @Mock private VaccinationRepository vaccinationRepository;
     @Mock private CowRepository cowRepository;
     @Mock private FarmMapper mapper;
+    @Mock private AuditLogService auditLogService;
 
     @InjectMocks private VaccinationServiceImpl service;
 
@@ -79,6 +82,41 @@ class VaccinationServiceImplTest {
             when(cowRepository.findByIdAndDeletedFalse(cowId)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.create(cowId, new CreateVaccinationRequest()))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(vaccinationRepository, never()).save(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("update()")
+    class Update {
+
+        @Test
+        @DisplayName("existing vaccination → applies changes and saves")
+        void happyPath() {
+            Vaccination entity = Vaccination.builder().id(vaccinationId).vaccineName("FMD").build();
+            UpdateVaccinationRequest req = new UpdateVaccinationRequest();
+            req.setNotes("Booster due next month");
+            when(vaccinationRepository.findByIdAndCowIdAndDeletedFalse(vaccinationId, cowId))
+                    .thenReturn(Optional.of(entity));
+            when(vaccinationRepository.save(entity)).thenReturn(entity);
+            when(mapper.toVaccinationResponse(entity)).thenReturn(
+                    VaccinationResponse.builder().id(vaccinationId).build());
+
+            VaccinationResponse result = service.update(cowId, vaccinationId, req);
+
+            verify(mapper).updateVaccinationFromRequest(req, entity);
+            verify(vaccinationRepository).save(entity);
+            assertThat(result.getId()).isEqualTo(vaccinationId);
+        }
+
+        @Test
+        @DisplayName("missing vaccination → throws ResourceNotFoundException")
+        void notFound_throws() {
+            when(vaccinationRepository.findByIdAndCowIdAndDeletedFalse(vaccinationId, cowId))
+                    .thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.update(cowId, vaccinationId, new UpdateVaccinationRequest()))
                     .isInstanceOf(ResourceNotFoundException.class);
             verify(vaccinationRepository, never()).save(any());
         }

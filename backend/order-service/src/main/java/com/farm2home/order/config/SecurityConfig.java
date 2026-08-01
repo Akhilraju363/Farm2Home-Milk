@@ -1,5 +1,6 @@
 package com.farm2home.order.config;
 
+import com.farm2home.common.core.constants.ApiConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,12 +20,7 @@ public class SecurityConfig {
 
     private final GatewayHeaderAuthFilter gatewayHeaderAuthFilter;
 
-    private static final String[] PUBLIC_ENDPOINTS = {
-        "/actuator/**",
-        "/api-docs/**",
-        "/swagger-ui/**",
-        "/swagger-ui.html"
-    };
+    private static final String[] PUBLIC_ENDPOINTS = ApiConstants.PUBLIC_ENDPOINTS_BASE;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {

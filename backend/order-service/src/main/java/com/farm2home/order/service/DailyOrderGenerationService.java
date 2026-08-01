@@ -38,12 +38,14 @@ public class DailyOrderGenerationService {
     private final MilkPriceProperties priceProperties;
     private final OrderEventProducer eventProducer;
 
-    /** Runs every day at 06:00. Generates orders for today. */
-    @Scheduled(cron = "0 0 6 * * *")
-    public void generateForToday() {
-        log.info("Starting scheduled daily order generation for {}", LocalDate.now());
-        GenerationResultResponse result = generateOrdersForDate(LocalDate.now());
-        log.info("Daily generation complete: {} orders created, {} skipped",
+    /** Runs nightly at 23:00. Generates tomorrow's orders, so delivery-service has a full
+     *  night's lead time to assign partners/plan routes before the morning. */
+    @Scheduled(cron = "0 0 23 * * *")
+    public void generateForTomorrow() {
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        log.info("Starting scheduled order generation for {}", tomorrow);
+        GenerationResultResponse result = generateOrdersForDate(tomorrow);
+        log.info("Order generation complete: {} orders created, {} skipped",
                 result.getOrdersCreated(), result.getSkipped());
     }
 

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -80,5 +81,21 @@ class NotificationLogControllerTest {
 
         mockMvc.perform(get("/api/v1/notifications/logs/{id}", logId).with(authentication(authFor(true))))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/notifications/summary - admin authority → 200")
+    void summary_admin_ok() throws Exception {
+        when(service.getRecent(anyInt())).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/notifications/summary").with(authentication(authFor(true))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/notifications/summary - non-admin authority → 403")
+    void summary_nonAdmin_forbidden() throws Exception {
+        mockMvc.perform(get("/api/v1/notifications/summary").with(authentication(authFor(false))))
+                .andExpect(status().isForbidden());
     }
 }

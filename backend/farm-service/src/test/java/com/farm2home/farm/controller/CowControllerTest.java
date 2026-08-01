@@ -94,6 +94,33 @@ class CowControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/v1/farm/cows?farmId= → 200")
+    void findAll_byFarmId_ok() throws Exception {
+        when(cowService.findAll(any(), any(), any())).thenReturn(
+                new org.springframework.data.domain.PageImpl<>(
+                        List.of(CowResponse.builder().id(cowId).build()),
+                        org.springframework.data.domain.PageRequest.of(0, 20), 1));
+
+        mockMvc.perform(get("/api/v1/farm/cows")
+                        .param("farmId", UUID.randomUUID().toString())
+                        .with(authentication(authFor(false))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/farm/cows/ids?farmId= → 200")
+    void findIdsByFarm_ok() throws Exception {
+        UUID farmId = UUID.randomUUID();
+        when(cowService.findIdsByFarm(farmId)).thenReturn(List.of(cowId));
+
+        mockMvc.perform(get("/api/v1/farm/cows/ids")
+                        .param("farmId", farmId.toString())
+                        .with(authentication(authFor(false))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0]").value(cowId.toString()));
+    }
+
+    @Test
     @DisplayName("GET /api/v1/farm/cows/{id} → 200")
     void findById_ok() throws Exception {
         when(cowService.findById(cowId)).thenReturn(CowResponse.builder().id(cowId).build());

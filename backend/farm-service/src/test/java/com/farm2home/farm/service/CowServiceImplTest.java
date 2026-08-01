@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -153,6 +154,74 @@ class CowServiceImplTest {
         }
     }
 
+    // ── FindAll ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("findAll()")
+    class FindAll {
+
+        @Test
+        @DisplayName("farmId + status both provided → uses the combined query")
+        void farmIdAndStatus() {
+            UUID farmId = UUID.randomUUID();
+            Cow cow = buildCow(CowStatus.ACTIVE);
+            var page = new org.springframework.data.domain.PageImpl<>(List.of(cow));
+            when(cowRepository.findAllByFarmIdAndStatusAndDeletedFalse(eq(farmId), eq(CowStatus.ACTIVE), any()))
+                    .thenReturn(page);
+            when(mapper.toCowResponse(cow)).thenReturn(buildResponse(CowStatus.ACTIVE));
+
+            var result = service.findAll(CowStatus.ACTIVE, farmId, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            verify(cowRepository, never()).findAllByDeletedFalse(any());
+        }
+
+        @Test
+        @DisplayName("only farmId provided → filters by farm")
+        void farmIdOnly() {
+            UUID farmId = UUID.randomUUID();
+            Cow cow = buildCow(CowStatus.ACTIVE);
+            var page = new org.springframework.data.domain.PageImpl<>(List.of(cow));
+            when(cowRepository.findAllByFarmIdAndDeletedFalse(eq(farmId), any())).thenReturn(page);
+            when(mapper.toCowResponse(cow)).thenReturn(buildResponse(CowStatus.ACTIVE));
+
+            var result = service.findAll(null, farmId, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("no filters → returns all non-deleted cows")
+        void noFilters() {
+            Cow cow = buildCow(CowStatus.ACTIVE);
+            var page = new org.springframework.data.domain.PageImpl<>(List.of(cow));
+            when(cowRepository.findAllByDeletedFalse(any())).thenReturn(page);
+            when(mapper.toCowResponse(cow)).thenReturn(buildResponse(CowStatus.ACTIVE));
+
+            var result = service.findAll(null, null, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+    }
+
+    // ── FindIdsByFarm ────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("findIdsByFarm()")
+    class FindIdsByFarm {
+
+        @Test
+        @DisplayName("delegates to the id-only repository projection")
+        void delegates() {
+            UUID farmId = UUID.randomUUID();
+            when(cowRepository.findIdsByFarmIdAndDeletedFalse(farmId)).thenReturn(List.of(cowId));
+
+            List<UUID> result = service.findIdsByFarm(farmId);
+
+            assertThat(result).containsExactly(cowId);
+        }
+    }
+
     // ── Update ───────────────────────────────────────────────────────────────────
 
     @Nested
@@ -207,6 +276,36 @@ class CowServiceImplTest {
             service.updateStatus(cowId, req);
 
             assertThat(cow.getStatus()).isEqualTo(CowStatus.SICK);
+        }
+
+        @Test
+        @DisplayName("SOLD → ACTIVE throws FarmException")
+        void soldToActive_throws() {
+            Cow cow = buildCow(CowStatus.SOLD);
+            when(cowRepository.findByIdAndDeletedFalse(cowId)).thenReturn(Optional.of(cow));
+
+            UpdateCowStatusRequest req = new UpdateCowStatusRequest();
+            req.setStatus(CowStatus.ACTIVE);
+
+            assertThatThrownBy(() -> service.updateStatus(cowId, req))
+                    .isInstanceOf(FarmException.class)
+                    .hasMessageContaining("Cannot transition cow from SOLD to ACTIVE");
+            verify(cowRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("DECEASED → SICK throws FarmException")
+        void deceasedToSick_throws() {
+            Cow cow = buildCow(CowStatus.DECEASED);
+            when(cowRepository.findByIdAndDeletedFalse(cowId)).thenReturn(Optional.of(cow));
+
+            UpdateCowStatusRequest req = new UpdateCowStatusRequest();
+            req.setStatus(CowStatus.SICK);
+
+            assertThatThrownBy(() -> service.updateStatus(cowId, req))
+                    .isInstanceOf(FarmException.class)
+                    .hasMessageContaining("Cannot transition cow from DECEASED to SICK");
+            verify(cowRepository, never()).save(any());
         }
     }
 

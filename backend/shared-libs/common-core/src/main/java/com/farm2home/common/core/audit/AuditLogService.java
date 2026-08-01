@@ -1,55 +1,70 @@
 package com.farm2home.common.core.audit;
 
 import com.farm2home.observability.web.RequestTraceIdFilter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.MDC;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 
 /**
- * Thin wrapper over AuditLogRepository so callers write one line instead of hand-building an
- * AuditLog every time, and so the correlation id (already flowing through every request via
- * MDC) ends up on the audit row without every call site having to know where it comes from.
- *
- * REQUIRES_NEW so an audit entry is still written even if the surrounding business transaction
- * later rolls back for an unrelated reason; failures writing the audit row itself are caught
- * and logged rather than propagated, since losing an audit entry should never take down the
- * business operation it's describing.
+ * Single entry point every service uses to write an audit row. Enrichment (correlation id from
+ * MDC, service name, and HTTP-derived fields) happens here, synchronously, on the caller's
+ * thread - RequestContextHolder/MDC are thread-local and would read as empty if deferred onto
+ * the async persistence thread. The actual write is handed off to AuditPersister, which runs
+ * asynchronously in its own transaction and never lets a persistence failure escape.
  */
 public class AuditLogService {
 
-    private static final Logger log = LoggerFactory.getLogger(AuditLogService.class);
+    private final AuditPersister persister;
+    private final String serviceName;
 
-    private final AuditLogRepository repository;
-
-    public AuditLogService(AuditLogRepository repository) {
-        this.repository = repository;
+    public AuditLogService(AuditLogRepository repository, String serviceName) {
+        this.persister = new AuditPersister(repository);
+        this.serviceName = serviceName;
     }
 
-    public void record(String action, String entityType, String entityId, String performedBy, String details) {
-        try {
-            saveInNewTransaction(action, entityType, entityId, performedBy, details);
-        } catch (Exception ex) {
-            log.error("Failed to write audit log entry: action={} entityType={} entityId={}",
-                    action, entityType, entityId, ex);
-        }
-    }
+    /** Primary entry point: full control over every audit field. */
+    public void record(AuditEntry entry) {
+        HttpServletRequest request = AuditHttpContext.currentRequest();
+        String userId = entry.getUserId() != null ? entry.getUserId() : AuditHttpContext.userId(request);
+        String username = entry.getUsername() != null ? entry.getUsername() : AuditHttpContext.username(request);
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    protected void saveInNewTransaction(String action, String entityType, String entityId,
-            String performedBy, String details) {
-        AuditLog entry = AuditLog.builder()
+        AuditLog log = AuditLog.builder()
                 .occurredAt(OffsetDateTime.now())
+                .action(entry.getAction())
+                .entityType(entry.getEntityType())
+                .entityId(entry.getEntityId())
+                .userId(userId)
+                .username(username)
+                .performedBy(username != null ? username : "system")
+                .serviceName(serviceName)
+                .correlationId(MDC.get(RequestTraceIdFilter.MDC_CORRELATION_ID))
+                .oldValue(entry.getOldValue())
+                .newValue(entry.getNewValue())
+                .details(entry.getDetails())
+                .ipAddress(AuditHttpContext.ipAddress(request))
+                .requestUri(request != null ? request.getRequestURI() : null)
+                .httpMethod(request != null ? request.getMethod() : null)
+                .success(entry.isSuccess())
+                .failureReason(entry.getFailureReason())
+                .build();
+
+        persister.persist(log);
+    }
+
+    /**
+     * Legacy convenience signature kept for simple fire-and-forget events (e.g. LOGIN, where the
+     * acting user is known explicitly and isn't yet resolvable from gateway headers). Delegates
+     * to {@link #record(AuditEntry)} - there is exactly one write path.
+     */
+    public void record(String action, String entityType, String entityId, String performedBy, String details) {
+        record(AuditEntry.builder()
                 .action(action)
                 .entityType(entityType)
                 .entityId(entityId)
-                .performedBy(performedBy != null ? performedBy : "system")
-                .correlationId(MDC.get(RequestTraceIdFilter.MDC_CORRELATION_ID))
+                .username(performedBy)
                 .details(details)
-                .build();
-        repository.save(entry);
+                .success(true)
+                .build());
     }
 }

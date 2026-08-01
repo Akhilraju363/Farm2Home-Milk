@@ -15,6 +15,9 @@ public interface PaymentMapper {
 
     @Mapping(target = "paymentMethod", expression = "java(payment.getPaymentMethod().name())")
     @Mapping(target = "paymentStatus", expression = "java(payment.getPaymentStatus().name())")
+    // Only ever set right after initiate() creates a gateway order — the service layer fills it
+    // in manually on that one response, never derived from the persisted entity.
+    @Mapping(target = "gatewayCheckoutKeyId", ignore = true)
     PaymentResponse toResponse(Payment payment);
 
     WalletResponse toWalletResponse(Wallet wallet);
@@ -30,6 +33,9 @@ public interface PaymentMapper {
     @Mapping(target = "paymentReference", ignore = true)
     @Mapping(target = "paymentStatus", ignore = true)
     @Mapping(target = "gatewayResponse", ignore = true)
+    @Mapping(target = "gatewayOrderId", ignore = true)
+    @Mapping(target = "gatewayPaymentId", ignore = true)
+    @Mapping(target = "gatewayRefundId", ignore = true)
     @Mapping(target = "paidAt", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "createdBy", ignore = true)

@@ -83,6 +83,12 @@ desktop.ini
 logs/
 
 # ========================
+# Uploaded files (keep the directory structure, not the content)
+# ========================
+uploads/*/*
+!uploads/*/.gitkeep
+
+# ========================
 # Test / Coverage
 # ========================
 .jacoco/

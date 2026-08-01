@@ -1,5 +1,6 @@
 package com.farm2home.inventory.config;
 
+import com.farm2home.common.core.constants.HeaderConstants;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,9 +25,9 @@ public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String userId   = request.getHeader("X-User-Id");
-        String mobile   = request.getHeader("X-User-Mobile");
-        String rolesHdr = request.getHeader("X-User-Roles");
+        String userId   = request.getHeader(HeaderConstants.X_USER_ID);
+        String mobile   = request.getHeader(HeaderConstants.X_USER_MOBILE);
+        String rolesHdr = request.getHeader(HeaderConstants.X_USER_ROLES);
 
         if (StringUtils.hasText(userId) && StringUtils.hasText(mobile)) {
             Set<String> roles = StringUtils.hasText(rolesHdr)

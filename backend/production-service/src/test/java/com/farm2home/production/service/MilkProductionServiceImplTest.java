@@ -11,16 +11,29 @@ import com.farm2home.production.exception.ProductionException;
 import com.farm2home.production.exception.ResourceNotFoundException;
 import com.farm2home.production.mapper.ProductionMapper;
 import com.farm2home.production.service.impl.MilkProductionServiceImpl;
+import com.farm2home.common.core.analytics.Granularity;
+import com.farm2home.common.core.analytics.ProductionTrendPoint;
+import com.farm2home.common.core.analytics.TrendSeries;
+import com.farm2home.common.core.reports.ProductionReportRow;
+import com.farm2home.common.core.reports.ProductionReportSummary;
+import com.farm2home.common.core.reports.ReportPage;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.criteria.CriteriaQuery;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Answers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,6 +48,7 @@ class MilkProductionServiceImplTest {
 
     @Mock private MilkProductionRepository repository;
     @Mock private ProductionMapper mapper;
+    @Mock(answer = Answers.RETURNS_DEEP_STUBS) private EntityManager entityManager;
 
     @InjectMocks private MilkProductionServiceImpl service;
 
@@ -168,6 +182,30 @@ class MilkProductionServiceImplTest {
         }
     }
 
+    @Nested @DisplayName("getSummary()")
+    class GetSummary {
+
+        @Test
+        @DisplayName("repository returns a total → wraps it in the response")
+        void returnsTotal() {
+            when(repository.sumQuantityByCollectionDate(LocalDate.now())).thenReturn(new BigDecimal("42.50"));
+
+            var result = service.getSummary();
+
+            assertThat(result.getTotalLitersToday()).isEqualByComparingTo("42.50");
+        }
+
+        @Test
+        @DisplayName("repository returns null → falls back to zero")
+        void nullTotal_fallsBackToZero() {
+            when(repository.sumQuantityByCollectionDate(LocalDate.now())).thenReturn(null);
+
+            var result = service.getSummary();
+
+            assertThat(result.getTotalLitersToday()).isEqualByComparingTo(BigDecimal.ZERO);
+        }
+    }
+
     // ── FindById ─────────────────────────────────────────────────────────────────
 
     @Nested @DisplayName("findById()")
@@ -253,6 +291,83 @@ class MilkProductionServiceImplTest {
 
             assertThatThrownBy(() -> service.delete(recordId))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+    }
+
+    // ── GetReport (Production Report) ───────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getReport()")
+    class GetReport {
+
+        @Test
+        @DisplayName("maps the repository page into report rows and totals")
+        void happyPath() {
+            MilkProduction record = buildRecord();
+            var page = new PageImpl<>(List.of(record), PageRequest.of(0, 20), 1);
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(entityManager.createQuery(any(CriteriaQuery.class)).getSingleResult())
+                    .thenReturn(new BigDecimal("10.50"));
+
+            ReportPage<ProductionReportRow, ProductionReportSummary> result = service.getReport(
+                    null, null, QualityGrade.A, List.of(cowId), PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).hasSize(1);
+            assertThat(result.getContent().get(0).getCowId()).isEqualTo(cowId);
+            assertThat(result.getContent().get(0).getSession()).isEqualTo("MORNING");
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            assertThat(result.getSummary().getTotalRecords()).isEqualTo(1);
+            assertThat(result.getSummary().getTotalLiters()).isEqualByComparingTo("10.50");
+        }
+
+        @Test
+        @DisplayName("no matching records → empty content with zeroed summary")
+        void noResults() {
+            var page = new PageImpl<MilkProduction>(List.of(), PageRequest.of(0, 20), 0);
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(entityManager.createQuery(any(CriteriaQuery.class)).getSingleResult())
+                    .thenReturn(BigDecimal.ZERO);
+
+            ReportPage<ProductionReportRow, ProductionReportSummary> result = service.getReport(
+                    LocalDate.now().minusDays(7), LocalDate.now(), QualityGrade.B, null, PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).isEmpty();
+            assertThat(result.getSummary().getTotalRecords()).isZero();
+            assertThat(result.getSummary().getTotalLiters()).isEqualByComparingTo(BigDecimal.ZERO);
+        }
+    }
+
+    // ── GetProductionTrend (Milk Production Trend analytics) ───────────────────
+
+    @Nested
+    @DisplayName("getProductionTrend()")
+    class GetProductionTrend {
+
+        @Test
+        @DisplayName("maps already-aggregated repository rows into trend points")
+        void mapsRows() {
+            MilkProductionRepository.ProductionTrendRow row = mock(MilkProductionRepository.ProductionTrendRow.class);
+            when(row.getPeriod()).thenReturn(LocalDate.of(2026, 1, 1));
+            when(row.getTotalLiters()).thenReturn(new BigDecimal("500.00"));
+            when(repository.findProductionTrend(eq("day"), any(), any())).thenReturn(List.of(row));
+
+            TrendSeries<ProductionTrendPoint> result = service.getProductionTrend(
+                    Granularity.DAILY, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31));
+
+            assertThat(result.getGranularity()).isEqualTo(Granularity.DAILY);
+            assertThat(result.getPoints()).hasSize(1);
+            assertThat(result.getPoints().get(0).getPeriod()).isEqualTo(LocalDate.of(2026, 1, 1));
+            assertThat(result.getPoints().get(0).getTotalLiters()).isEqualByComparingTo("500.00");
+        }
+
+        @Test
+        @DisplayName("no rows → empty points list")
+        void noRows_emptyPoints() {
+            when(repository.findProductionTrend(eq("month"), any(), any())).thenReturn(List.of());
+
+            TrendSeries<ProductionTrendPoint> result = service.getProductionTrend(Granularity.MONTHLY, null, null);
+
+            assertThat(result.getPoints()).isEmpty();
         }
     }
 }

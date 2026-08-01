@@ -1,5 +1,7 @@
 package com.farm2home.payment.service.impl;
 
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.Audited;
 import com.farm2home.payment.domain.entity.Wallet;
 import com.farm2home.payment.domain.entity.WalletTransaction;
 import com.farm2home.payment.domain.enums.TransactionType;
@@ -36,6 +38,7 @@ public class WalletServiceImpl implements WalletService {
 
     @Override
     @Transactional
+    @Audited(action = AuditAction.PAYMENT, entityType = "Wallet")
     public WalletResponse topUp(UUID customerId, TopUpWalletRequest request) {
         Wallet wallet = walletRepository.findByCustomerIdForUpdate(customerId)
                 .orElseGet(() -> walletRepository.save(Wallet.builder().customerId(customerId).build()));
@@ -55,6 +58,7 @@ public class WalletServiceImpl implements WalletService {
 
     @Override
     @Transactional
+    @Audited(action = AuditAction.PAYMENT, entityType = "Wallet")
     public void debitForPayment(UUID customerId, BigDecimal amount, UUID paymentId) {
         Wallet wallet = walletRepository.findByCustomerIdForUpdate(customerId)
                 .orElseThrow(() -> new InsufficientBalanceException("Wallet not found for customer"));
@@ -78,6 +82,7 @@ public class WalletServiceImpl implements WalletService {
 
     @Override
     @Transactional
+    @Audited(action = AuditAction.PAYMENT, entityType = "Wallet")
     public void creditRefund(UUID customerId, BigDecimal amount, UUID paymentId) {
         Wallet wallet = walletRepository.findByCustomerIdForUpdate(customerId)
                 .orElseGet(() -> walletRepository.save(Wallet.builder().customerId(customerId).build()));

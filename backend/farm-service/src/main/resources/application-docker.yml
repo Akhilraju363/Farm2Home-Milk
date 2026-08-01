@@ -15,6 +15,10 @@ configserver:
   health:
     url: http://config-server:8888
 
+app:
+  upload:
+    base-dir: /app/uploads
+
 management:
   endpoints:
     web:

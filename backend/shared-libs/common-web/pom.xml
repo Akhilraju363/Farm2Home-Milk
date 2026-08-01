@@ -23,6 +23,12 @@
             <artifactId>common-observability</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- RequestHeaderForwarder needs HeaderConstants (gateway identity header names). -->
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>common-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

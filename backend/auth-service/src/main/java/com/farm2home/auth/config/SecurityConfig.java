@@ -1,6 +1,7 @@
 package com.farm2home.auth.config;
 
 import com.farm2home.auth.service.UserDetailsServiceImpl;
+import com.farm2home.common.core.constants.ApiConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +23,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 @Configuration
 @EnableWebSecurity
@@ -32,17 +34,17 @@ public class SecurityConfig {
     private final UserDetailsServiceImpl userDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    private static final String[] PUBLIC_ENDPOINTS = {
-        "/api/v1/auth/register",
-        "/api/v1/auth/login",
-        "/api/v1/auth/send-otp",
-        "/api/v1/auth/verify-otp",
-        "/api/v1/auth/refresh-token",
-        "/swagger-ui/**",
-        "/swagger-ui.html",
-        "/api-docs/**",
-        "/actuator/**"
-    };
+    // Auth-specific public business endpoints, on top of the shared actuator/docs base.
+    private static final String[] PUBLIC_ENDPOINTS = Stream.concat(
+            Stream.of(ApiConstants.PUBLIC_ENDPOINTS_BASE),
+            Stream.of(
+                    ApiConstants.API_V1 + "/auth/register",
+                    ApiConstants.API_V1 + "/auth/login",
+                    ApiConstants.API_V1 + "/auth/send-otp",
+                    ApiConstants.API_V1 + "/auth/verify-otp",
+                    ApiConstants.API_V1 + "/auth/refresh-token"
+            )
+    ).toArray(String[]::new);
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {

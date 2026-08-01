@@ -1,5 +1,6 @@
 package com.farm2home.subscription.dto.request;
 
+import com.farm2home.common.core.constants.ValidationConstants;
 import com.farm2home.subscription.domain.enums.DeliveryDay;
 import com.farm2home.subscription.domain.enums.MilkType;
 import com.farm2home.subscription.domain.enums.ScheduleType;
@@ -26,7 +27,7 @@ public class CreateSubscriptionRequest {
     private MilkType milkType;
 
     @NotNull(message = "Quantity is required")
-    @DecimalMin(value = "0.5", message = "Minimum quantity is 0.5 litres")
+    @DecimalMin(value = ValidationConstants.MIN_SUBSCRIPTION_QUANTITY, message = "Minimum quantity is 0.5 litres")
     @DecimalMax(value = "10.0", message = "Maximum quantity is 10 litres")
     @Schema(description = "Daily quantity in litres", example = "1.5")
     private BigDecimal quantity;

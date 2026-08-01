@@ -5,6 +5,8 @@ spring:
     password: ${DB_PASSWORD:farm2home@123}
   flyway:
     schemas: auth
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:29092}
 
 eureka:
   client:
@@ -17,6 +19,11 @@ configserver:
 
 jwt:
   secret: ${JWT_SECRET}
+
+sms:
+  provider: ${SMS_PROVIDER:logging}
+  max-attempts: ${SMS_MAX_ATTEMPTS:3}
+  retry-backoff-millis: ${SMS_RETRY_BACKOFF_MILLIS:150}
 
 management:
   endpoints:

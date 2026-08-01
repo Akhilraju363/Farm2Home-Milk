@@ -22,6 +22,10 @@ spring:
     create-schemas: true
     locations: classpath:db/migration
 
+app:
+  upload:
+    base-dir: uploads
+
 eureka:
   client:
     service-url:

@@ -55,4 +55,35 @@ public class AuditLog {
 
     @Column(columnDefinition = "TEXT", updatable = false)
     private String details;
+
+    @Column(length = 64, updatable = false)
+    private String userId;
+
+    @Column(length = 150, updatable = false)
+    private String username;
+
+    @Column(length = 60, updatable = false)
+    private String serviceName;
+
+    @Column(columnDefinition = "TEXT", updatable = false)
+    private String oldValue;
+
+    @Column(columnDefinition = "TEXT", updatable = false)
+    private String newValue;
+
+    @Column(length = 64, updatable = false)
+    private String ipAddress;
+
+    @Column(length = 255, updatable = false)
+    private String requestUri;
+
+    @Column(length = 10, updatable = false)
+    private String httpMethod;
+
+    @Column(nullable = false, updatable = false)
+    @Builder.Default
+    private boolean success = true;
+
+    @Column(columnDefinition = "TEXT", updatable = false)
+    private String failureReason;
 }

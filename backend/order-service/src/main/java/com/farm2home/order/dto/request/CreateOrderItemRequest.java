@@ -1,5 +1,6 @@
 package com.farm2home.order.dto.request;
 
+import com.farm2home.common.core.constants.ValidationConstants;
 import com.farm2home.order.domain.enums.MilkType;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMax;
@@ -20,7 +21,7 @@ public class CreateOrderItemRequest {
     private MilkType milkType;
 
     @NotNull(message = "Quantity is required")
-    @DecimalMin(value = "0.5", message = "Minimum quantity is 0.5 litres")
+    @DecimalMin(value = ValidationConstants.MIN_SUBSCRIPTION_QUANTITY, message = "Minimum quantity is 0.5 litres")
     @DecimalMax(value = "10.0", message = "Maximum quantity is 10 litres")
     @Schema(example = "1.5")
     private BigDecimal quantity;

@@ -1,5 +1,7 @@
 package com.farm2home.subscription.config;
 
+import com.farm2home.common.core.constants.HeaderConstants;
+import com.farm2home.common.core.constants.SecurityConstants;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,9 +29,9 @@ import java.util.stream.Collectors;
 @Slf4j
 public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
 
-    private static final String HEADER_USER_ID     = "X-User-Id";
-    private static final String HEADER_USER_MOBILE = "X-User-Mobile";
-    private static final String HEADER_USER_ROLES  = "X-User-Roles";
+    private static final String HEADER_USER_ID     = HeaderConstants.X_USER_ID;
+    private static final String HEADER_USER_MOBILE = HeaderConstants.X_USER_MOBILE;
+    private static final String HEADER_USER_ROLES  = HeaderConstants.X_USER_ROLES;
 
     @Override
     protected void doFilterInternal(
@@ -50,7 +52,7 @@ public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
                         .collect(Collectors.toSet());
 
                 List<SimpleGrantedAuthority> authorities = roles.stream()
-                        .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+                        .map(r -> new SimpleGrantedAuthority(SecurityConstants.ROLE_PREFIX + r))
                         .toList();
 
                 UserPrincipal principal = new UserPrincipal(UUID.fromString(userId), mobile, roles);

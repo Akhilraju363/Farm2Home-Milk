@@ -1,5 +1,7 @@
 package com.farm2home.order.service;
 
+import com.farm2home.order.client.DailyProductionResponse;
+import com.farm2home.order.client.ProductionServiceClient;
 import com.farm2home.order.config.MilkPriceProperties;
 import com.farm2home.order.domain.entity.Order;
 import com.farm2home.order.domain.entity.OrderItem;
@@ -17,15 +19,30 @@ import com.farm2home.order.kafka.OrderEventProducer;
 import com.farm2home.order.mapper.OrderMapper;
 import com.farm2home.order.service.impl.OrderServiceImpl;
 import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.common.core.dashboard.OrderSummaryResponse;
+import com.farm2home.common.core.reports.ReportPage;
+import com.farm2home.common.core.reports.SalesReportRow;
+import com.farm2home.common.core.reports.SalesReportSummary;
+import com.farm2home.common.export.ExportFormat;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.TypedQuery;
+import jakarta.persistence.criteria.CriteriaQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Answers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
+import reactor.core.publisher.Mono;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -46,6 +63,8 @@ class OrderServiceImplTest {
     @Mock private OrderMapper orderMapper;
     @Mock private OrderEventProducer eventProducer;
     @Mock private AuditLogService auditLogService;
+    @Mock(answer = Answers.RETURNS_DEEP_STUBS) private EntityManager entityManager;
+    @Mock private ProductionServiceClient productionServiceClient;
 
     @InjectMocks private OrderServiceImpl service;
 
@@ -83,6 +102,18 @@ class OrderServiceImplTest {
                 .build();
     }
 
+    /** Same-day orders (the only ones the production-capacity check applies to) need
+     *  production-service and the already-ordered-today total stubbed, or the check NPEs on a
+     *  null Mono. Stubs a generously large produced total so the check always passes. */
+    private void stubSufficientProduction() {
+        DailyProductionResponse summary = new DailyProductionResponse();
+        summary.setDate(LocalDate.now());
+        summary.setTotalLiters(new BigDecimal("1000.00"));
+        lenient().when(productionServiceClient.getDailySummary(LocalDate.now(), LocalDate.now()))
+                .thenReturn(Mono.just(List.of(summary)));
+        lenient().when(orderRepository.sumOrderedQuantityByDate(LocalDate.now())).thenReturn(BigDecimal.ZERO);
+    }
+
     // ── Create ───────────────────────────────────────────────────────────────────
 
     @Nested
@@ -92,6 +123,7 @@ class OrderServiceImplTest {
         @Test
         @DisplayName("valid request → creates order with correct total amount")
         void happyPath() {
+            stubSufficientProduction();
             CreateOrderRequest req = CreateOrderRequest.builder()
                     .orderDate(LocalDate.now())
                     .items(List.of(
@@ -116,6 +148,7 @@ class OrderServiceImplTest {
         @Test
         @DisplayName("two items → total is sum of both")
         void multipleItems_totalsCorrect() {
+            stubSufficientProduction();
             CreateOrderRequest req = CreateOrderRequest.builder()
                     .orderDate(LocalDate.now())
                     .items(List.of(
@@ -156,6 +189,75 @@ class OrderServiceImplTest {
                     .isInstanceOf(OrderException.class)
                     .hasMessageContaining("at least one item");
             verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("same-day order exceeding today's recorded production → throws OrderException")
+        void sameDayOrder_exceedsProduction_throws() {
+            DailyProductionResponse summary = new DailyProductionResponse();
+            summary.setDate(LocalDate.now());
+            summary.setTotalLiters(new BigDecimal("2.00"));
+            when(productionServiceClient.getDailySummary(LocalDate.now(), LocalDate.now()))
+                    .thenReturn(Mono.just(List.of(summary)));
+            when(orderRepository.sumOrderedQuantityByDate(LocalDate.now())).thenReturn(new BigDecimal("1.00"));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder()
+                            .milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("2.00")).build()))
+                    .build();
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("Insufficient milk production");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("future-dated order → skips the production check entirely")
+        void futureDatedOrder_skipsProductionCheck() {
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now().plusDays(3))
+                    .items(List.of(CreateOrderItemRequest.builder()
+                            .milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("50.00")).build()))
+                    .build();
+
+            when(orderMapper.toEntity(req)).thenReturn(Order.builder().build());
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100003L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verifyNoInteractions(productionServiceClient);
+            verify(orderRepository, never()).sumOrderedQuantityByDate(any());
+        }
+
+        @Test
+        @DisplayName("production-service unreachable for a same-day order → throws OrderException")
+        void productionServiceUnreachable_throws() {
+            when(productionServiceClient.getDailySummary(LocalDate.now(), LocalDate.now())).thenReturn(Mono.error(
+                    new org.springframework.web.reactive.function.client.WebClientRequestException(
+                            new java.net.ConnectException("connection refused"),
+                            org.springframework.http.HttpMethod.GET,
+                            java.net.URI.create("http://production-service/api/v1/productions/summary"),
+                            new org.springframework.http.HttpHeaders())));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder()
+                            .milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1.0")).build()))
+                    .build();
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("Could not verify milk production capacity");
+            verify(orderRepository, never()).save(any());
         }
     }
 
@@ -300,6 +402,141 @@ class OrderServiceImplTest {
             service.cancel(orderId, null, true, customerId);
 
             verify(orderRepository).findByIdAndDeletedFalse(orderId);
+        }
+    }
+
+    // ── GetSummary ───────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getSummary()")
+    class GetSummary {
+
+        @Test
+        @DisplayName("returns today's order count and pending order count from repository")
+        void happyPath() {
+            when(orderRepository.countByOrderDateAndDeletedFalse(LocalDate.now())).thenReturn(5L);
+            when(orderRepository.countByStatusAndDeletedFalse(OrderStatus.PENDING)).thenReturn(3L);
+
+            OrderSummaryResponse result = service.getSummary();
+
+            assertThat(result.getTodaysOrders()).isEqualTo(5L);
+            assertThat(result.getPendingOrders()).isEqualTo(3L);
+        }
+    }
+
+    // ── GetReport (Sales Report) ────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getReport()")
+    class GetReport {
+
+        @Test
+        @DisplayName("maps the repository page into report rows and totals")
+        void happyPath() {
+            Order order = buildPendingOrder();
+            var page = new PageImpl<>(List.of(order), PageRequest.of(0, 20), 1);
+            when(orderRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(entityManager.createQuery(any(CriteriaQuery.class)).getSingleResult())
+                    .thenReturn(new BigDecimal("120.00"));
+
+            ReportPage<SalesReportRow, SalesReportSummary> result = service.getReport(
+                    null, null, null, null, null, PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).hasSize(1);
+            assertThat(result.getContent().get(0).getOrderId()).isEqualTo(orderId);
+            assertThat(result.getContent().get(0).getOrderNumber()).isEqualTo("ORD-2026-100001");
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            assertThat(result.getSummary().getTotalOrders()).isEqualTo(1);
+            assertThat(result.getSummary().getTotalRevenue()).isEqualByComparingTo("120.00");
+        }
+
+        @Test
+        @DisplayName("no matching orders → empty content with zeroed summary")
+        void noResults() {
+            var page = new PageImpl<Order>(List.of(), PageRequest.of(0, 20), 0);
+            when(orderRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(entityManager.createQuery(any(CriteriaQuery.class)).getSingleResult())
+                    .thenReturn(BigDecimal.ZERO);
+
+            ReportPage<SalesReportRow, SalesReportSummary> result = service.getReport(
+                    LocalDate.now().minusDays(7), LocalDate.now(), OrderStatus.CANCELLED, customerId, MilkType.TONED,
+                    PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).isEmpty();
+            assertThat(result.getSummary().getTotalOrders()).isZero();
+            assertThat(result.getSummary().getTotalRevenue()).isEqualByComparingTo(BigDecimal.ZERO);
+        }
+    }
+
+    // ── Search ───────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("search()")
+    class Search {
+
+        @Test
+        @DisplayName("keyword + customer + status + date range all combine into one query")
+        void allFiltersCombine() {
+            Order order = buildPendingOrder();
+            var page = new PageImpl<>(List.of(order), PageRequest.of(0, 20), 1);
+            when(orderRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(orderMapper.toResponse(order)).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            Page<OrderResponse> result = service.search(customerId, "ORD-2026", LocalDate.now().minusDays(7),
+                    LocalDate.now(), OrderStatus.PENDING, MilkType.FULL_CREAM, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            assertThat(result.getContent().get(0).getOrderNumber()).isEqualTo("ORD-2026-100001");
+        }
+
+        @Test
+        @DisplayName("blank keyword and null customerId → no keyword/customer predicate applied")
+        void noOptionalFilters() {
+            var page = new PageImpl<Order>(List.of(), PageRequest.of(0, 20), 0);
+            when(orderRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+
+            Page<OrderResponse> result = service.search(null, "  ", null, null, null, null, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isZero();
+        }
+    }
+
+    // ── Export ───────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("export()")
+    class Export {
+
+        @Test
+        @DisplayName("CSV format → streams matching orders as CSV rows")
+        void csv_streamsMatchingRows() throws Exception {
+            Order order = buildPendingOrder();
+            var firstPage = new PageImpl<>(List.of(order),
+                    PageRequest.of(0, 500, org.springframework.data.domain.Sort.by("orderDate").ascending()), 1);
+            var emptyPage = new PageImpl<Order>(List.of());
+            when(orderRepository.findAll(any(Specification.class), any(PageRequest.class)))
+                    .thenReturn(firstPage, emptyPage);
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            service.export(ExportFormat.CSV, out, customerId, "ORD-2026", null, null,
+                    OrderStatus.PENDING, MilkType.FULL_CREAM, "orderDate", true);
+
+            String content = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(content).contains("Order Number").contains("ORD-2026-100001").contains("PENDING");
+        }
+
+        @Test
+        @DisplayName("no matching orders → writes header only, no rows")
+        void noMatches_writesHeaderOnly() throws Exception {
+            when(orderRepository.findAll(any(Specification.class), any(PageRequest.class)))
+                    .thenReturn(new PageImpl<Order>(List.of()));
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            service.export(ExportFormat.CSV, out, null, null, null, null, null, null, "orderDate", false);
+
+            String content = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(content.trim()).isEqualTo(
+                    "Order Number,Customer ID,Order Date,Type,Status,Total Amount,Created At");
         }
     }
 }

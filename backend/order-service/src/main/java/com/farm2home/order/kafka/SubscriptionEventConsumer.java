@@ -1,6 +1,7 @@
 package com.farm2home.order.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.farm2home.common.core.constants.KafkaTopics;
 import com.farm2home.order.domain.entity.SubscriptionSnapshot;
 import com.farm2home.order.domain.enums.DeliveryDay;
 import com.farm2home.order.domain.enums.MilkType;
@@ -28,7 +29,7 @@ public class SubscriptionEventConsumer {
     private final SubscriptionSnapshotRepository snapshotRepository;
     private final ObjectMapper objectMapper;
 
-    @KafkaListener(topics = "subscription.events", groupId = "${spring.kafka.consumer.group-id}")
+    @KafkaListener(topics = KafkaTopics.SUBSCRIPTION_EVENTS, groupId = "${spring.kafka.consumer.group-id}")
     public void consume(String message) {
         try {
             SubscriptionEvent event = objectMapper.readValue(message, SubscriptionEvent.class);

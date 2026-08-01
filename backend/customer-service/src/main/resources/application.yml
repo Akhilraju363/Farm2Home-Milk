@@ -20,9 +20,24 @@ spring:
     enabled: true
     schemas: customer
     locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: localhost:9092
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eurekaSecret@localhost:8761/eureka
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true
 
 jwt:
   secret: ${JWT_SECRET:farm2home-secret-key-change-in-production-min-256-bits}
+
+app:
+  upload:
+    base-dir: uploads
 
 management:
   endpoints:

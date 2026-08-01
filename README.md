@@ -183,7 +183,7 @@ Backend logs rotate daily or at 50MB, whichever comes first, are gzip-compressed
 | A microservice fails health check but its window shows no obvious error | Give it a bit longer on a cold machine (first-run JIT/class loading is slow) via `-HealthTimeoutSeconds 180`, or check its schema-specific log for a Postgres/Flyway migration issue. |
 | `start-all.bat` says a jar wasn't found | The build didn't produce output for that module - check `logs/build.log`. |
 | Browser opens to a blank page / connection refused on `:3000` | Check `logs/frontend.log`; usually `npm install` needs to finish or a dependency failed to install. |
-| `order-service` / `payment-service` / `delivery-service` / `notification-service` hangs or times out on its health check | These 4 need a running Kafka broker. The script warns at startup if it can't reach `localhost:9092` but doesn't block on it - start Kafka first (`docker-compose up -d zookeeper kafka`), then re-run. |
+| `order-service` / `payment-service` / `delivery-service` / `notification-service` / `subscription-service` hangs or times out on its health check | These 5 need a running Kafka broker. The script warns at startup if it can't reach `localhost:9092` but doesn't block on it - start Kafka first (`docker-compose up -d zookeeper kafka`), then re-run. |
 | Port already in use | Run `stop-all.bat` first - it stops only processes this tooling started, so a truly orphaned process (e.g. after a crashed run) may need `taskkill /PID <pid> /T /F` manually. Also check nothing else on your machine already owns one of this project's ports (`8080` in particular is a common default for other local software) via `Get-NetTCPConnection -LocalPort 8080`. |
 | Script blocked by PowerShell execution policy | `start-all.bat`/`stop-all.bat` already invoke PowerShell with `-ExecutionPolicy Bypass` for just that process, so this shouldn't happen via the `.bat` files; if running the `.ps1` directly, use the same flag or `Set-ExecutionPolicy -Scope Process Bypass`. |
 
@@ -221,6 +221,9 @@ Backend logs rotate daily or at 50MB, whichever comes first, are gzip-compressed
 ## Documentation
 
 - [Product Requirements Document](docs/FARM2HOME_MILK_PRD.md)
+- [Payment Gateway Integration](docs/PAYMENT_GATEWAY_INTEGRATION.md) — provider abstraction, Razorpay setup, webhook/reconciliation design
+- [SMS Provider Integration](docs/SMS_PROVIDER_INTEGRATION.md) — provider abstraction, retry/audit design, adding a real provider
+- [Push Notification Support](docs/PUSH_NOTIFICATION_INTEGRATION.md) — provider abstraction, the four supported categories, notification history API
 - API docs available at `http://localhost:8080/swagger-ui.html` (when running locally)
 
 ---

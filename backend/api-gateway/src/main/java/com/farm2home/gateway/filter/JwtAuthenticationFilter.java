@@ -1,5 +1,8 @@
 package com.farm2home.gateway.filter;
 
+import com.farm2home.common.core.constants.ApiConstants;
+import com.farm2home.common.core.constants.HeaderConstants;
+import com.farm2home.common.core.constants.SecurityConstants;
 import com.farm2home.gateway.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -25,18 +28,20 @@ import java.util.List;
 @Slf4j
 public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
-    private static final String AUTHORIZATION_HEADER = "Authorization";
-    private static final String BEARER_PREFIX = "Bearer ";
-
+    // Gateway matches these by startsWith (not Ant-pattern like the services' own
+    // SecurityConfigs), so this list intentionally isn't built from
+    // ApiConstants.PUBLIC_ENDPOINTS_BASE - "/actuator/**" as a literal prefix would never
+    // match "/actuator/health" under startsWith semantics.
     private static final List<String> PUBLIC_PATHS = List.of(
-        "/api/v1/auth/register",
-        "/api/v1/auth/login",
-        "/api/v1/auth/send-otp",
-        "/api/v1/auth/verify-otp",
-        "/api/v1/auth/refresh-token",
+        ApiConstants.API_V1 + "/auth/register",
+        ApiConstants.API_V1 + "/auth/login",
+        ApiConstants.API_V1 + "/auth/send-otp",
+        ApiConstants.API_V1 + "/auth/verify-otp",
+        ApiConstants.API_V1 + "/auth/refresh-token",
         "/swagger-ui",
         "/api-docs",
-        "/actuator/health"
+        "/actuator/health",
+        "/uploads"
     );
 
     private final JwtUtil jwtUtil;
@@ -49,28 +54,28 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        String authHeader = exchange.getRequest().getHeaders().getFirst(AUTHORIZATION_HEADER);
+        String authHeader = exchange.getRequest().getHeaders().getFirst(HeaderConstants.AUTHORIZATION);
 
-        if (authHeader == null || !authHeader.startsWith(BEARER_PREFIX)) {
+        if (authHeader == null || !authHeader.startsWith(SecurityConstants.BEARER_PREFIX)) {
             return unauthorizedResponse(exchange, "Missing or invalid Authorization header");
         }
 
-        String token = authHeader.substring(BEARER_PREFIX.length());
+        String token = authHeader.substring(SecurityConstants.BEARER_PREFIX.length());
 
         try {
             Claims claims = jwtUtil.validateAndExtractClaims(token);
 
-            String userId = claims.get("userId", String.class);
+            String userId = claims.get(SecurityConstants.CLAIM_USER_ID, String.class);
             String mobile = claims.getSubject();
 
             @SuppressWarnings("unchecked")
-            List<String> roles = claims.get("roles", List.class);
+            List<String> roles = claims.get(SecurityConstants.CLAIM_ROLES, List.class);
             String rolesHeader = roles != null ? String.join(",", roles) : "";
 
             ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
-                    .header("X-User-Id", userId != null ? userId : "")
-                    .header("X-User-Mobile", mobile != null ? mobile : "")
-                    .header("X-User-Roles", rolesHeader)
+                    .header(HeaderConstants.X_USER_ID, userId != null ? userId : "")
+                    .header(HeaderConstants.X_USER_MOBILE, mobile != null ? mobile : "")
+                    .header(HeaderConstants.X_USER_ROLES, rolesHeader)
                     .build();
 
             return chain.filter(exchange.mutate().request(mutatedRequest).build());

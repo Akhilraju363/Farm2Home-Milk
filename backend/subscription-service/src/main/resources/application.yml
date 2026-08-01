@@ -28,6 +28,8 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     create-schemas: true
+  kafka:
+    bootstrap-servers: localhost:9092
 
 eureka:
   client:

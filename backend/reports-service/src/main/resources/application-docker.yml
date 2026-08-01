@@ -1,0 +1,18 @@
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE:http://eureka:eurekaSecret@discovery-service:8761/eureka}
+
+configserver:
+  health:
+    url: http://config-server:8888
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env
+
+logging:
+  level:
+    com.farm2home: INFO

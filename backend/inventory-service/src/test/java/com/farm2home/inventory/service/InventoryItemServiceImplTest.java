@@ -1,5 +1,6 @@
 package com.farm2home.inventory.service;
 
+import com.farm2home.common.export.ExportFormat;
 import com.farm2home.inventory.domain.entity.InventoryItem;
 import com.farm2home.inventory.domain.enums.ItemType;
 import com.farm2home.inventory.domain.enums.TxnType;
@@ -12,6 +13,8 @@ import com.farm2home.inventory.dto.request.UpdateInventoryItemRequest;
 import com.farm2home.inventory.dto.response.InventoryItemResponse;
 import com.farm2home.inventory.exception.InventoryException;
 import com.farm2home.inventory.exception.ResourceNotFoundException;
+import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.inventory.kafka.InventoryEventProducer;
 import com.farm2home.inventory.mapper.InventoryMapper;
 import com.farm2home.inventory.service.impl.InventoryItemServiceImpl;
 import com.farm2home.inventory.service.impl.StockTransactionServiceImpl;
@@ -22,8 +25,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,6 +48,8 @@ class InventoryItemServiceImplTest {
 
     @Mock private InventoryItemRepository repository;
     @Mock private InventoryMapper mapper;
+    @Mock private InventoryEventProducer eventProducer;
+    @Mock private AuditLogService auditLogService;
 
     @InjectMocks private InventoryItemServiceImpl service;
 
@@ -216,6 +228,145 @@ class InventoryItemServiceImplTest {
             when(repository.findByIdAndDeletedFalse(itemId)).thenReturn(Optional.empty());
             assertThatThrownBy(() -> service.delete(itemId))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+    }
+
+    @Nested @DisplayName("getSummary()")
+    class GetSummary {
+
+        @Test
+        @DisplayName("returns count and top items mapped from repository")
+        void returnsSummary() {
+            InventoryItem item = buildItem(new BigDecimal("10.00"));
+            when(repository.countItemsBelowReorderLevel()).thenReturn(3L);
+            when(repository.findItemsBelowReorderLevel()).thenReturn(java.util.List.of(item));
+
+            var result = service.getSummary(5);
+
+            assertThat(result.getLowStockCount()).isEqualTo(3L);
+            assertThat(result.getTopItems()).hasSize(1);
+            assertThat(result.getTopItems().get(0).getId()).isEqualTo(itemId);
+            assertThat(result.getTopItems().get(0).getName()).isEqualTo("Rice Straw");
+            assertThat(result.getTopItems().get(0).getQuantity()).isEqualByComparingTo("10.00");
+            assertThat(result.getTopItems().get(0).getReorderLevel()).isEqualByComparingTo("50.00");
+        }
+
+        @Test
+        @DisplayName("limit smaller than result set → truncates top items")
+        void limitTruncates() {
+            InventoryItem item1 = buildItem(new BigDecimal("10.00"));
+            InventoryItem item2 = buildItem(new BigDecimal("5.00"));
+            when(repository.countItemsBelowReorderLevel()).thenReturn(2L);
+            when(repository.findItemsBelowReorderLevel()).thenReturn(java.util.List.of(item1, item2));
+
+            var result = service.getSummary(1);
+
+            assertThat(result.getLowStockCount()).isEqualTo(2L);
+            assertThat(result.getTopItems()).hasSize(1);
+        }
+    }
+
+    @Nested @DisplayName("alertLowStockItems()")
+    class AlertLowStockItems {
+
+        @Test
+        @DisplayName("items below reorder level → publishes an alert for each")
+        void lowStockItems_published() {
+            InventoryItem item = buildItem(new BigDecimal("10.00"));
+            when(repository.findItemsBelowReorderLevel()).thenReturn(java.util.List.of(item));
+
+            service.alertLowStockItems();
+
+            verify(eventProducer).publishLowStockAlert(item);
+        }
+
+        @Test
+        @DisplayName("nothing below reorder level → no alert published")
+        void noLowStock_noAlert() {
+            when(repository.findItemsBelowReorderLevel()).thenReturn(java.util.List.of());
+
+            service.alertLowStockItems();
+
+            verify(eventProducer, never()).publishLowStockAlert(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("search()")
+    class Search {
+
+        @Test
+        @DisplayName("keyword + itemType + date range all combine into one query")
+        void allFiltersCombine() {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            var page = new PageImpl<>(List.of(item), PageRequest.of(0, 20), 1);
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(mapper.toItemResponse(item)).thenReturn(buildResponse(new BigDecimal("100.00")));
+
+            Page<InventoryItemResponse> result = service.search(
+                    "rice", LocalDate.now().minusDays(7), LocalDate.now(), ItemType.FEED, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            assertThat(result.getContent().get(0).getId()).isEqualTo(itemId);
+        }
+
+        @Test
+        @DisplayName("blank keyword → keyword predicate is not applied")
+        void blankKeyword_notApplied() {
+            var page = new PageImpl<InventoryItem>(List.of(), PageRequest.of(0, 20), 0);
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+
+            Page<InventoryItemResponse> result = service.search("   ", null, null, null, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isZero();
+        }
+
+        @Test
+        @DisplayName("no filters → returns all non-deleted items")
+        void noFilters() {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            var page = new PageImpl<>(List.of(item), PageRequest.of(0, 20), 1);
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(mapper.toItemResponse(item)).thenReturn(buildResponse(new BigDecimal("100.00")));
+
+            Page<InventoryItemResponse> result = service.search(null, null, null, null, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("export()")
+    class Export {
+
+        @Test
+        @DisplayName("CSV format → streams matching items as CSV rows")
+        void csv_streamsMatchingRows() throws Exception {
+            InventoryItem item = buildItem(new BigDecimal("100.00"));
+            var firstPage = new PageImpl<>(List.of(item),
+                    PageRequest.of(0, 500, org.springframework.data.domain.Sort.by("itemName").ascending()), 1);
+            var emptyPage = new PageImpl<InventoryItem>(List.of());
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(firstPage, emptyPage);
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            service.export(ExportFormat.CSV, out, "rice", null, null, ItemType.FEED, "itemName", true);
+
+            String content = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(content).contains("Item Name").contains("Rice Straw");
+        }
+
+        @Test
+        @DisplayName("no matching items → writes header only, no rows")
+        void noMatches_writesHeaderOnly() throws Exception {
+            when(repository.findAll(any(Specification.class), any(PageRequest.class)))
+                    .thenReturn(new PageImpl<InventoryItem>(List.of()));
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            service.export(ExportFormat.CSV, out, null, null, null, null, "itemName", false);
+
+            String content = out.toString(java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(content.trim()).isEqualTo(
+                    "Item Name,Item Type,Quantity,Unit,Reorder Level,Unit Price,Supplier,Created At");
         }
     }
 }

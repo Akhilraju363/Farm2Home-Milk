@@ -131,6 +131,43 @@ class DeliveryRouteControllerTest {
     }
 
     @Nested
+    @DisplayName("PUT /api/v1/delivery/routes/{id}")
+    class Update {
+
+        @Test
+        @DisplayName("admin role → 200")
+        void admin_ok() throws Exception {
+            when(routeService.update(any(), any())).thenReturn(RouteResponse.builder().id(routeId).build());
+
+            mockMvc.perform(put("/api/v1/delivery/routes/{id}", routeId)
+                            .with(authentication(authFor(true)))
+                            .contentType("application/json")
+                            .content("{}"))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("pincode too short → 400 (validation now enforced)")
+        void invalidPincode_badRequest() throws Exception {
+            mockMvc.perform(put("/api/v1/delivery/routes/{id}", routeId)
+                            .with(authentication(authFor(true)))
+                            .contentType("application/json")
+                            .content("{\"pincode\":\"123\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("non-admin role → 403")
+        void nonAdmin_forbidden() throws Exception {
+            mockMvc.perform(put("/api/v1/delivery/routes/{id}", routeId)
+                            .with(authentication(authFor(false)))
+                            .contentType("application/json")
+                            .content("{}"))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
     @DisplayName("DELETE /api/v1/delivery/routes/{id}")
     class Delete {
 

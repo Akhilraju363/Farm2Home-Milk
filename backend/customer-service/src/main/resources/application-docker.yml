@@ -5,6 +5,13 @@ spring:
     password: ${DB_PASSWORD:farm2home@123}
   flyway:
     schemas: customer
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:29092}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE:http://eureka:eurekaSecret@discovery-service:8761/eureka}
 
 configserver:
   health:
@@ -12,6 +19,10 @@ configserver:
 
 jwt:
   secret: ${JWT_SECRET}
+
+app:
+  upload:
+    base-dir: /app/uploads
 
 management:
   endpoints:

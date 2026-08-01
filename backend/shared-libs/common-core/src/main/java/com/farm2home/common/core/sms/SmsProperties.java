@@ -1,0 +1,24 @@
+package com.farm2home.common.core.sms;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/** Bound from {@code sms.*}, itself sourced from environment variables in every consuming
+ *  service's {@code application*.yml} (see {@code SMS_PROVIDER} in {@code .env.example}) - no
+ *  provider credentials live in this class itself; a real provider implementation defines its
+ *  own {@code @ConfigurationProperties} for whatever API keys it needs, following the same
+ *  pattern as payment-service's {@code RazorpayProperties}. */
+@Data
+@ConfigurationProperties(prefix = "sms")
+public class SmsProperties {
+
+    /** {@code logging} (default) or a future real provider's own property value. */
+    private String provider = "logging";
+
+    /** Total send attempts (including the first) before giving up. */
+    private int maxAttempts = 3;
+
+    /** Base backoff between attempts, in milliseconds - multiplied by the attempt number
+     *  (linear backoff), so retry N waits {@code retryBackoffMillis * N} before the next try. */
+    private long retryBackoffMillis = 150;
+}
