@@ -2,6 +2,8 @@ package com.farm2home.auth.config;
 
 import com.farm2home.auth.service.JwtService;
 import com.farm2home.auth.service.UserDetailsServiceImpl;
+import com.farm2home.common.core.constants.HeaderConstants;
+import com.farm2home.common.core.constants.SecurityConstants;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -33,14 +35,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             @NonNull HttpServletResponse response,
             @NonNull FilterChain filterChain) throws ServletException, IOException {
 
-        String authHeader = request.getHeader("Authorization");
+        String authHeader = request.getHeader(HeaderConstants.AUTHORIZATION);
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        if (authHeader == null || !authHeader.startsWith(SecurityConstants.BEARER_PREFIX)) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        String jwt = authHeader.substring(7);
+        String jwt = authHeader.substring(SecurityConstants.BEARER_PREFIX.length());
 
         try {
             String mobile = jwtService.extractMobile(jwt);

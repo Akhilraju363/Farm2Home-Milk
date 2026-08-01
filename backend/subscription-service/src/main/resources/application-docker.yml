@@ -6,6 +6,8 @@ spring:
   flyway:
     schemas: subscription
     create-schemas: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:29092}
 
 eureka:
   client:

@@ -5,15 +5,18 @@ import com.farm2home.production.dto.response.DailySummaryResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface MilkProductionRepository extends JpaRepository<MilkProduction, UUID> {
+public interface MilkProductionRepository extends JpaRepository<MilkProduction, UUID>,
+        JpaSpecificationExecutor<MilkProduction> {
 
     Page<MilkProduction> findAllByDeletedFalse(Pageable pageable);
 
@@ -52,4 +55,26 @@ public interface MilkProductionRepository extends JpaRepository<MilkProduction, 
     List<DailySummaryResponse> findDailySummary(
             @Param("from") LocalDate from,
             @Param("to") LocalDate to);
+
+    @Query("SELECT COALESCE(SUM(m.quantityLiters), 0) FROM MilkProduction m WHERE m.collectionDate = :date AND m.deleted = false")
+    BigDecimal sumQuantityByCollectionDate(@Param("date") LocalDate date);
+
+    @Query(value = """
+            SELECT date_trunc(:unit, m.collection_date::timestamp)::date AS period,
+                   COALESCE(SUM(m.quantity_liters), 0) AS totalLiters
+            FROM production.milk_production m
+            WHERE m.is_deleted = false
+              AND (CAST(:start AS date) IS NULL OR m.collection_date >= :start)
+              AND (CAST(:end AS date) IS NULL OR m.collection_date <= :end)
+            GROUP BY period
+            ORDER BY period
+            """, nativeQuery = true)
+    List<ProductionTrendRow> findProductionTrend(@Param("unit") String unit,
+                                                  @Param("start") LocalDate start,
+                                                  @Param("end") LocalDate end);
+
+    interface ProductionTrendRow {
+        LocalDate getPeriod();
+        BigDecimal getTotalLiters();
+    }
 }

@@ -23,7 +23,7 @@ spring:
         - id: customer-service
           uri: http://customer-service:8082
           predicates:
-            - Path=/api/v1/customers/**
+            - Path=/api/v1/customers/**,/uploads/customers/**
           filters:
             - name: CircuitBreaker
               args:
@@ -98,7 +98,7 @@ spring:
         - id: farm-service
           uri: http://farm-service:8087
           predicates:
-            - Path=/api/v1/cows/**,/api/v1/farm/**
+            - Path=/api/v1/cows/**,/api/v1/farm/**,/uploads/farms/**
           filters:
             - name: CircuitBreaker
               args:
@@ -128,7 +128,7 @@ spring:
         - id: inventory-service
           uri: http://inventory-service:8089
           predicates:
-            - Path=/api/v1/inventory/**
+            - Path=/api/v1/inventory/**,/uploads/products/**
           filters:
             - name: CircuitBreaker
               args:

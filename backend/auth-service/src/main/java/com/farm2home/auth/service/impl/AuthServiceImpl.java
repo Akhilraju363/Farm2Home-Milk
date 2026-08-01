@@ -11,12 +11,15 @@ import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
 import com.farm2home.auth.exception.AuthException;
 import com.farm2home.auth.exception.ResourceNotFoundException;
+import com.farm2home.auth.kafka.CustomerEventProducer;
 import com.farm2home.auth.mapper.UserMapper;
 import com.farm2home.auth.service.AuthService;
 import com.farm2home.auth.service.JwtService;
 import com.farm2home.auth.service.OtpService;
 import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.AuditEntry;
 import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.common.core.constants.SecurityConstants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,6 +51,7 @@ public class AuthServiceImpl implements AuthService {
     private final OtpService otpService;
     private final UserMapper userMapper;
     private final AuditLogService auditLogService;
+    private final CustomerEventProducer customerEventProducer;
 
     @Override
     @Transactional
@@ -71,10 +75,20 @@ public class AuthServiceImpl implements AuthService {
 
         user = userRepository.save(user);
 
+        customerEventProducer.publishCustomerCreated(user,
+                request.getFirstName() + " " + request.getLastName());
+
         // Send OTP for mobile verification
         otpService.generateAndSend(request.getMobile(), OtpType.REGISTRATION);
 
         log.info("User registered: {} — OTP sent for verification", request.getMobile());
+        auditLogService.record(AuditEntry.builder()
+                .action(AuditAction.CREATE)
+                .entityType("User")
+                .entityId(user.getId().toString())
+                .username(user.getMobile())
+                .details("User registered: " + user.getMobile())
+                .build());
 
         // Return tokens but user.isEnabled() is false until verified
         return buildAuthResponse(user);
@@ -150,7 +164,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void logout(String accessToken) {
-        String mobile = jwtService.extractMobile(accessToken.replace("Bearer ", ""));
+        String mobile = jwtService.extractMobile(accessToken.replace(SecurityConstants.BEARER_PREFIX, ""));
         User user = userRepository.findByMobileAndDeletedFalse(mobile)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found."));
         refreshTokenRepository.revokeAllByUser(user);

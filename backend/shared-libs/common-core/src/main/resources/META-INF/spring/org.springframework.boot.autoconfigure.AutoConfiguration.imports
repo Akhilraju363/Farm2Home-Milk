@@ -1,1 +1,3 @@
 com.farm2home.common.core.audit.AuditAutoConfiguration
+com.farm2home.common.core.sms.SmsAutoConfiguration
+com.farm2home.common.core.push.PushAutoConfiguration

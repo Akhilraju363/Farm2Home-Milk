@@ -12,6 +12,7 @@ import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
 import com.farm2home.auth.exception.AuthException;
 import com.farm2home.auth.exception.ResourceNotFoundException;
+import com.farm2home.auth.kafka.CustomerEventProducer;
 import com.farm2home.auth.mapper.UserMapper;
 import com.farm2home.auth.service.impl.AuthServiceImpl;
 import com.farm2home.common.core.audit.AuditAction;
@@ -54,6 +55,7 @@ class AuthServiceImplTest {
     @Mock private OtpService otpService;
     @Mock private UserMapper userMapper;
     @Mock private AuditLogService auditLogService;
+    @Mock private CustomerEventProducer customerEventProducer;
 
     @InjectMocks private AuthServiceImpl service;
 

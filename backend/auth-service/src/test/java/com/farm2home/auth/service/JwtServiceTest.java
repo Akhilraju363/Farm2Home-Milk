@@ -3,6 +3,7 @@ package com.farm2home.auth.service;
 import com.farm2home.auth.domain.entity.Role;
 import com.farm2home.auth.domain.entity.User;
 import com.farm2home.auth.domain.enums.RoleType;
+import com.farm2home.common.core.constants.SecurityConstants;
 import io.jsonwebtoken.ExpiredJwtException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -59,14 +60,14 @@ class JwtServiceTest {
             assertThat(jwtService.isTokenExpired(token)).isFalse();
 
             @SuppressWarnings("unchecked")
-            List<String> roles = jwtService.extractClaim(token, c -> c.get("roles", List.class));
-            assertThat(roles).containsExactly("CUSTOMER");
+            List<String> roles = jwtService.extractClaim(token, c -> c.get(SecurityConstants.CLAIM_ROLES, List.class));
+            assertThat(roles).containsExactly(SecurityConstants.ROLE_CUSTOMER);
 
-            String userId = jwtService.extractClaim(token, c -> c.get("userId", String.class));
+            String userId = jwtService.extractClaim(token, c -> c.get(SecurityConstants.CLAIM_USER_ID, String.class));
             assertThat(userId).isEqualTo(user.getId().toString());
 
-            String type = jwtService.extractClaim(token, c -> c.get("type", String.class));
-            assertThat(type).isEqualTo("ACCESS");
+            String type = jwtService.extractClaim(token, c -> c.get(SecurityConstants.CLAIM_TYPE, String.class));
+            assertThat(type).isEqualTo(SecurityConstants.TOKEN_TYPE_ACCESS);
         }
     }
 
@@ -80,8 +81,8 @@ class JwtServiceTest {
             String token = jwtService.generateRefreshToken(user);
 
             assertThat(jwtService.extractMobile(token)).isEqualTo(user.getMobile());
-            String type = jwtService.extractClaim(token, c -> c.get("type", String.class));
-            assertThat(type).isEqualTo("REFRESH");
+            String type = jwtService.extractClaim(token, c -> c.get(SecurityConstants.CLAIM_TYPE, String.class));
+            assertThat(type).isEqualTo(SecurityConstants.TOKEN_TYPE_REFRESH);
         }
     }
 

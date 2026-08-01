@@ -1,5 +1,7 @@
 package com.farm2home.order.controller;
 
+import com.farm2home.common.core.constants.SecurityConstants;
+import com.farm2home.common.core.dashboard.OrderSummaryResponse;
 import com.farm2home.order.config.GatewayHeaderAuthFilter;
 import com.farm2home.order.config.SecurityConfig;
 import com.farm2home.order.config.UserPrincipal;
@@ -26,6 +28,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -35,11 +38,14 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // addFilters stays at its default (true): SecurityMockMvcRequestPostProcessors.authentication()
@@ -80,6 +86,19 @@ class OrderControllerTest {
     private OrderResponse buildResponse() {
         return OrderResponse.builder().id(orderId).orderNumber("ORD-2026-000001")
                 .status(OrderStatus.PENDING.name()).totalAmount(new BigDecimal("80.00")).build();
+    }
+
+    // getSummary() is gated with hasAnyAuthority(...) (unprefixed role names), unlike the other
+    // endpoints in this controller which rely on manual principal.isAdmin() checks - so the
+    // granted authority here must match exactly (no "ROLE_" prefix, unlike authFor() above).
+    private UsernamePasswordAuthenticationToken admin() {
+        return new UsernamePasswordAuthenticationToken(
+                "9876543210", null, List.of(new SimpleGrantedAuthority(SecurityConstants.ROLE_FARM_MANAGER)));
+    }
+
+    private UsernamePasswordAuthenticationToken customer() {
+        return new UsernamePasswordAuthenticationToken(
+                "9876543210", null, List.of(new SimpleGrantedAuthority("CUSTOMER")));
     }
 
     @Nested
@@ -244,6 +263,139 @@ class OrderControllerTest {
                             .param("date", "2026-06-24"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.ordersCreated").value(5));
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/orders/summary")
+    class GetSummary {
+
+        @Test
+        @DisplayName("FARM_MANAGER → 200")
+        void admin_ok() throws Exception {
+            when(orderService.getSummary()).thenReturn(
+                    OrderSummaryResponse.builder().todaysOrders(5L).pendingOrders(3L).build());
+
+            mockMvc.perform(get("/api/v1/orders/summary").with(authentication(admin())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.todaysOrders").value(5))
+                    .andExpect(jsonPath("$.data.pendingOrders").value(3));
+        }
+
+        @Test
+        @DisplayName("CUSTOMER → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/orders/summary").with(authentication(customer())))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/orders/reports")
+    class GetReport {
+
+        @Test
+        @DisplayName("FARM_MANAGER → 200")
+        void admin_ok() throws Exception {
+            when(orderService.getReport(any(), any(), any(), any(), any(), any())).thenReturn(
+                    com.farm2home.common.core.reports.ReportPage.<com.farm2home.common.core.reports.SalesReportRow,
+                            com.farm2home.common.core.reports.SalesReportSummary>builder()
+                            .content(java.util.List.of())
+                            .pageNumber(0).pageSize(20).totalElements(0).totalPages(0)
+                            .summary(com.farm2home.common.core.reports.SalesReportSummary.builder()
+                                    .totalOrders(0).totalRevenue(java.math.BigDecimal.ZERO).build())
+                            .build());
+
+            mockMvc.perform(get("/api/v1/orders/reports").with(authentication(admin())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.summary.totalOrders").value(0));
+        }
+
+        @Test
+        @DisplayName("CUSTOMER → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/orders/reports").with(authentication(customer())))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/orders/search")
+    class Search {
+
+        @Test
+        @DisplayName("customer → filtered to own userId regardless of customerId param")
+        void customer_filteredToOwnId() throws Exception {
+            when(orderService.search(eq(customerId), any(), any(), any(), any(), any(), any()))
+                    .thenReturn(new PageImpl<>(new java.util.ArrayList<>(List.of(buildResponse())),
+                            PageRequest.of(0, 20), 1));
+
+            mockMvc.perform(get("/api/v1/orders/search")
+                            .param("customerId", UUID.randomUUID().toString())
+                            .param("keyword", "ORD")
+                            .with(authentication(authFor(customerId, false))))
+                    .andExpect(status().isOk());
+
+            verify(orderService).search(eq(customerId), any(), any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("admin with no customerId param → unfiltered (null)")
+        void admin_noFilter() throws Exception {
+            when(orderService.search(eq(null), any(), any(), any(), any(), any(), any()))
+                    .thenReturn(new PageImpl<>(new java.util.ArrayList<>(), PageRequest.of(0, 20), 0));
+
+            mockMvc.perform(get("/api/v1/orders/search").with(authentication(authFor(UUID.randomUUID(), true))))
+                    .andExpect(status().isOk());
+
+            verify(orderService).search(eq(null), any(), any(), any(), any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/orders/export")
+    class Export {
+
+        @Test
+        @DisplayName("customer, CSV format → 200 with attachment headers, filtered to own userId")
+        void customer_csv_ok() throws Exception {
+            doNothing().when(orderService).export(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+
+            MvcResult started = mockMvc.perform(get("/api/v1/orders/export")
+                            .param("format", "CSV")
+                            .param("customerId", UUID.randomUUID().toString())
+                            .with(authentication(authFor(customerId, false))))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+
+            mockMvc.perform(asyncDispatch(started))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Content-Type", "text/csv"))
+                    .andExpect(header().exists("Content-Disposition"));
+
+            verify(orderService).export(eq(com.farm2home.common.export.ExportFormat.CSV), any(), eq(customerId),
+                    any(), any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        }
+
+        @Test
+        @DisplayName("admin with no customerId param → unfiltered (null), Excel format → 200")
+        void admin_noFilter_excel_ok() throws Exception {
+            doNothing().when(orderService).export(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+
+            MvcResult started = mockMvc.perform(get("/api/v1/orders/export")
+                            .param("format", "EXCEL")
+                            .with(authentication(authFor(UUID.randomUUID(), true))))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+
+            mockMvc.perform(asyncDispatch(started))
+                    .andExpect(status().isOk())
+                    .andExpect(header().exists("Content-Disposition"));
+
+            verify(orderService).export(any(), any(), eq(null), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
         }
     }
 }

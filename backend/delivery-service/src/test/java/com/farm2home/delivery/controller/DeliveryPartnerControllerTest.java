@@ -102,4 +102,14 @@ class DeliveryPartnerControllerTest {
                         .content("{}"))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    @DisplayName("PUT /api/v1/delivery/partners/{id} - invalid mobile number → 400 (validation now enforced)")
+    void update_invalidMobile_badRequest() throws Exception {
+        mockMvc.perform(put("/api/v1/delivery/partners/{id}", partnerId)
+                        .with(authentication(authFor(true)))
+                        .contentType("application/json")
+                        .content("{\"mobile\":\"123\"}"))
+                .andExpect(status().isBadRequest());
+    }
 }

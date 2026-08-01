@@ -4,6 +4,7 @@ import com.farm2home.farm.config.GatewayHeaderAuthFilter;
 import com.farm2home.farm.config.SecurityConfig;
 import com.farm2home.farm.config.UserPrincipal;
 import com.farm2home.farm.dto.request.CreateVaccinationRequest;
+import com.farm2home.farm.dto.request.UpdateVaccinationRequest;
 import com.farm2home.farm.dto.response.VaccinationResponse;
 import com.farm2home.farm.service.impl.VaccinationServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -81,6 +82,37 @@ class VaccinationControllerTest {
         req.setAdministeredAt(LocalDate.now());
 
         mockMvc.perform(post("/api/v1/farm/cows/{cowId}/vaccinations", cowId)
+                        .with(authentication(authFor(false)))
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("PUT /api/v1/farm/cows/{cowId}/vaccinations/{id} - admin role → 200")
+    void update_admin_ok() throws Exception {
+        UUID vaccinationId = UUID.randomUUID();
+        UpdateVaccinationRequest req = new UpdateVaccinationRequest();
+        req.setNotes("Booster due next month");
+        when(vaccinationService.update(org.mockito.ArgumentMatchers.eq(cowId),
+                org.mockito.ArgumentMatchers.eq(vaccinationId), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(VaccinationResponse.builder().id(vaccinationId).build());
+
+        mockMvc.perform(put("/api/v1/farm/cows/{cowId}/vaccinations/{id}", cowId, vaccinationId)
+                        .with(authentication(authFor(true)))
+                        .contentType("application/json")
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("PUT /api/v1/farm/cows/{cowId}/vaccinations/{id} - non-admin role → 403")
+    void update_nonAdmin_forbidden() throws Exception {
+        UUID vaccinationId = UUID.randomUUID();
+        UpdateVaccinationRequest req = new UpdateVaccinationRequest();
+        req.setNotes("Booster due next month");
+
+        mockMvc.perform(put("/api/v1/farm/cows/{cowId}/vaccinations/{id}", cowId, vaccinationId)
                         .with(authentication(authFor(false)))
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(req)))

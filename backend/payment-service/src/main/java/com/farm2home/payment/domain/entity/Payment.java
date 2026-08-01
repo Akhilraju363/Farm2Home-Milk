@@ -49,6 +49,15 @@ public class Payment {
     @Column(name = "gateway_response", columnDefinition = "TEXT")
     private String gatewayResponse;
 
+    @Column(name = "gateway_order_id", length = 100)
+    private String gatewayOrderId;
+
+    @Column(name = "gateway_payment_id", length = 100)
+    private String gatewayPaymentId;
+
+    @Column(name = "gateway_refund_id", length = 100)
+    private String gatewayRefundId;
+
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
 

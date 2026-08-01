@@ -3,6 +3,10 @@ package com.farm2home.delivery.controller;
 import com.farm2home.delivery.config.GatewayHeaderAuthFilter;
 import com.farm2home.delivery.config.SecurityConfig;
 import com.farm2home.delivery.config.UserPrincipal;
+import com.farm2home.common.core.analytics.DeliveryPerformancePoint;
+import com.farm2home.common.core.analytics.Granularity;
+import com.farm2home.common.core.analytics.TrendSeries;
+import com.farm2home.common.core.dashboard.DeliverySummaryResponse;
 import com.farm2home.delivery.domain.enums.AssignmentStatus;
 import com.farm2home.delivery.dto.request.ManualAssignRequest;
 import com.farm2home.delivery.dto.request.UpdateAssignmentStatusRequest;
@@ -154,6 +158,148 @@ class DeliveryAssignmentControllerTest {
                             .content(objectMapper.writeValueAsString(req)))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.status").value("DELIVERED"));
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/delivery/assignments/summary")
+    class Summary {
+
+        // The summary endpoint uses hasAnyAuthority(...) (matched against raw role strings,
+        // no ROLE_ prefix) rather than hasAnyRole(...) like the rest of this controller, so
+        // it needs its own authority builder distinct from authFor() above.
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210", Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(assignmentService.getSummary()).thenReturn(
+                    DeliverySummaryResponse.builder().completedDeliveriesToday(5L).build());
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/summary")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.completedDeliveriesToday").value(5));
+        }
+
+        @Test
+        @DisplayName("delivery partner authority → 403")
+        void deliveryPartner_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/delivery/assignments/summary")
+                            .with(authentication(authorityFor("DELIVERY_PARTNER"))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/delivery/assignments/reports")
+    class GetReport {
+
+        // Same rationale as Summary above: this endpoint uses hasAnyAuthority(...) rather than
+        // hasAnyRole(...), so it needs its own authority builder distinct from authFor().
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210", Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(assignmentService.getReport(any(), any(), any(), any(), any())).thenReturn(
+                    com.farm2home.common.core.reports.ReportPage.<com.farm2home.common.core.reports.DeliveryReportRow,
+                            com.farm2home.common.core.reports.DeliveryReportSummary>builder()
+                            .content(java.util.List.of())
+                            .pageNumber(0).pageSize(20).totalElements(0).totalPages(0)
+                            .summary(com.farm2home.common.core.reports.DeliveryReportSummary.builder()
+                                    .totalDeliveries(0).completedCount(0).failedCount(0).build())
+                            .build());
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/reports")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.summary.totalDeliveries").value(0));
+        }
+
+        @Test
+        @DisplayName("delivery partner authority → 403")
+        void deliveryPartner_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/delivery/assignments/reports")
+                            .with(authentication(authorityFor("DELIVERY_PARTNER"))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/delivery/assignments/search")
+    class Search {
+
+        @Test
+        @DisplayName("delivery partner → passes own userId and isAdmin=false")
+        void partner_ownIdNotAdmin() throws Exception {
+            when(assignmentService.search(eq(partnerUserId), eq(false), any(), any(), any(), any(), any()))
+                    .thenReturn(new PageImpl<>(List.of(AssignmentResponse.builder().id(assignmentId).build()),
+                            PageRequest.of(0, 20), 1));
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/search")
+                            .param("keyword", "Ravi")
+                            .with(authentication(authFor(partnerUserId, false))))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("admin → passes own userId and isAdmin=true")
+        void admin_isAdminTrue() throws Exception {
+            UUID adminId = UUID.randomUUID();
+            when(assignmentService.search(eq(adminId), eq(true), any(), any(), any(), any(), any()))
+                    .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/search").with(authentication(authFor(adminId, true))))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/delivery/assignments/analytics/performance-trend")
+    class GetPerformanceTrend {
+
+        // Same rationale as Summary/GetReport above: this endpoint uses hasAnyAuthority(...)
+        // rather than hasAnyRole(...), so it needs its own authority builder distinct from authFor().
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210", Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(assignmentService.getPerformanceTrend(eq(Granularity.DAILY), any(), any())).thenReturn(
+                    TrendSeries.<DeliveryPerformancePoint>builder()
+                            .granularity(Granularity.DAILY)
+                            .points(List.of(DeliveryPerformancePoint.builder()
+                                    .period(java.time.LocalDate.of(2026, 1, 1))
+                                    .totalDeliveries(4).completedDeliveries(3).failedDeliveries(1).build()))
+                            .build());
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/analytics/performance-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.points[0].totalDeliveries").value(4));
+        }
+
+        @Test
+        @DisplayName("delivery partner authority → 403")
+        void deliveryPartner_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/delivery/assignments/analytics/performance-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(authorityFor("DELIVERY_PARTNER"))))
+                    .andExpect(status().isForbidden());
         }
     }
 }

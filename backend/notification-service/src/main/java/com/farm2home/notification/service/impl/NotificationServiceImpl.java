@@ -1,5 +1,14 @@
 package com.farm2home.notification.service.impl;
 
+import com.farm2home.common.core.audit.AuditAction;
+import com.farm2home.common.core.audit.AuditEntry;
+import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.common.core.constants.EmailTemplateConstants;
+import com.farm2home.common.core.dashboard.NotificationSummaryItem;
+import com.farm2home.common.core.push.PushSendResult;
+import com.farm2home.common.core.push.PushService;
+import com.farm2home.common.core.sms.SmsSendResult;
+import com.farm2home.common.core.sms.SmsService;
 import com.farm2home.notification.domain.entity.NotificationLog;
 import com.farm2home.notification.domain.entity.NotificationTemplate;
 import com.farm2home.notification.domain.enums.NotificationChannel;
@@ -9,17 +18,22 @@ import com.farm2home.notification.domain.repository.NotificationTemplateReposito
 import com.farm2home.notification.dto.KafkaEventDto;
 import com.farm2home.notification.dto.response.NotificationLogResponse;
 import com.farm2home.notification.mapper.NotificationMapper;
+import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.mail.SimpleMailMessage;
+import org.springframework.data.domain.Sort;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -33,24 +47,53 @@ public class NotificationServiceImpl {
     private final NotificationTemplateRepository templateRepository;
     private final NotificationMapper mapper;
     private final Optional<JavaMailSender> mailSender;
+    private final AuditLogService auditLogService;
+    private final SmsService smsService;
+    private final PushService pushService;
+
+    @Value("${app.mail.from}")
+    private String mailFrom;
 
     @Transactional
     public void process(KafkaEventDto event) {
-        if (event.getCustomerId() == null || event.getEventType() == null) {
-            log.warn("Skipping notification: missing customerId or eventType");
+        if (event.getEventType() == null) {
+            log.warn("Skipping notification: missing eventType");
             return;
         }
 
-        // Try SMS first, then EMAIL
+        // Ops alert, not a customer notification - no customerId involved, so it must be
+        // handled before the customerId check below rather than through the SMS/EMAIL
+        // template pipeline.
+        if (EmailTemplateConstants.EVENT_INVENTORY_UPDATED.equals(event.getEventType())) {
+            if (Boolean.TRUE.equals(event.getLowStock())) {
+                log.warn("[LOW STOCK ALERT] {} — quantity: {}", event.getItemName(), event.getQuantity());
+            }
+            return;
+        }
+
+        if (event.getCustomerId() == null) {
+            log.warn("Skipping notification: missing customerId");
+            return;
+        }
+
+        // Try SMS first, then EMAIL, then PUSH
         sendForChannel(event, NotificationChannel.SMS,
-                event.getEventType() + "_SMS",
+                event.getEventType() + EmailTemplateConstants.SMS_SUFFIX,
                 event.getRecipientMobile());
 
         if (event.getRecipientEmail() != null) {
             sendForChannel(event, NotificationChannel.EMAIL,
-                    event.getEventType() + "_EMAIL",
+                    event.getEventType() + EmailTemplateConstants.EMAIL_SUFFIX,
                     event.getRecipientEmail());
         }
+
+        // Push has no device-token registry in this codebase (see PushService/dispatch() below) -
+        // addressed by customerId instead, which is always present here (checked above), unlike
+        // recipientMobile/recipientEmail which depend on what the producing service happened to
+        // include on the event.
+        sendForChannel(event, NotificationChannel.PUSH,
+                event.getEventType() + EmailTemplateConstants.PUSH_SUFFIX,
+                event.getCustomerId().toString());
     }
 
     private void sendForChannel(KafkaEventDto event, NotificationChannel channel,
@@ -80,38 +123,70 @@ public class NotificationServiceImpl {
                 .status(NotificationStatus.PENDING)
                 .build();
 
+        String failureReason = null;
         try {
-            dispatch(channel, recipient, renderedSubject, renderedBody);
+            dispatch(channel, event, recipient, renderedSubject, renderedBody);
             notifLog.setStatus(NotificationStatus.SENT);
             notifLog.setSentAt(LocalDateTime.now());
         } catch (Exception ex) {
             log.error("Failed to send {} notification to {}: {}", channel, recipient, ex.getMessage());
             notifLog.setStatus(NotificationStatus.FAILED);
             notifLog.setFailureReason(ex.getMessage());
+            failureReason = ex.getMessage();
         }
 
-        logRepository.save(notifLog);
+        NotificationLog saved = logRepository.save(notifLog);
+
+        // SMS and PUSH sends are already audited by SmsService/PushService themselves
+        // (entityType "Sms"/"Push", action *_SENT/*_FAILED) - recording it again here under the
+        // Notification entity would just duplicate the same information under a different name.
+        // EMAIL has no such provider-level abstraction yet, so it's still audited here.
+        if (channel == NotificationChannel.EMAIL) {
+            auditLogService.record(AuditEntry.builder()
+                    .action(AuditAction.EMAIL_SENT)
+                    .entityType("Notification")
+                    .entityId(saved.getId() != null ? saved.getId().toString() : null)
+                    .username(recipient)
+                    .success(saved.getStatus() == NotificationStatus.SENT)
+                    .failureReason(failureReason)
+                    .details(channel + " notification for event " + event.getEventType())
+                    .build());
+        }
     }
 
-    private void dispatch(NotificationChannel channel, String recipient,
-                          String subject, String body) {
+    private void dispatch(NotificationChannel channel, KafkaEventDto event, String recipient,
+                          String subject, String body) throws Exception {
         switch (channel) {
-            case SMS  -> log.info("[SMS] To: {} | Message: {}", recipient, body);
+            case SMS -> {
+                SmsSendResult result = smsService.sendSms(recipient, body, event.getEventType());
+                if (!result.success()) {
+                    throw new IllegalStateException(
+                            result.failureReason() != null ? result.failureReason() : "SMS delivery failed");
+                }
+            }
             case EMAIL -> sendEmail(recipient, subject, body);
-            case PUSH  -> log.info("[PUSH] To: {} | Message: {}", recipient, body);
+            case PUSH -> {
+                PushSendResult result = pushService.sendPush(recipient, subject, body, event.getEventType());
+                if (!result.success()) {
+                    throw new IllegalStateException(
+                            result.failureReason() != null ? result.failureReason() : "Push delivery failed");
+                }
+            }
         }
     }
 
-    private void sendEmail(String to, String subject, String body) {
+    private void sendEmail(String to, String subject, String body) throws Exception {
         if (mailSender.isEmpty()) {
             log.warn("Mail sender not configured; skipping email to {}", to);
             return;
         }
-        SimpleMailMessage msg = new SimpleMailMessage();
-        msg.setTo(to);
-        msg.setSubject(subject != null ? subject : "Farm2Home Notification");
-        msg.setText(body);
-        mailSender.get().send(msg);
+        MimeMessage message = mailSender.get().createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
+        helper.setFrom(mailFrom);
+        helper.setTo(to);
+        helper.setSubject(subject != null ? subject : "Farm2Home Notification");
+        helper.setText(body, true);
+        mailSender.get().send(message);
     }
 
     private String render(String template, Map<String, String> payload) {
@@ -134,6 +209,8 @@ public class NotificationServiceImpl {
         if (event.getCustomerName()     != null) payload.put("customer_name",  event.getCustomerName());
         if (event.getQuantity()         != null) payload.put("quantity",       event.getQuantity());
         if (event.getMilkType()         != null) payload.put("milk_type",      event.getMilkType());
+        if (event.getOtp()              != null) payload.put("otp",            event.getOtp());
+        if (event.getFailureReason()    != null) payload.put("reason",         event.getFailureReason());
         if (event.getExtra()            != null) payload.putAll(event.getExtra());
         return payload;
     }
@@ -149,5 +226,20 @@ public class NotificationServiceImpl {
         return mapper.toResponse(logRepository.findById(id)
                 .orElseThrow(() -> new com.farm2home.notification.exception.ResourceNotFoundException(
                         "Notification log not found: " + id)));
+    }
+
+    @Transactional(readOnly = true)
+    public List<NotificationSummaryItem> getRecent(int limit) {
+        return logRepository.findAll(PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt")))
+                .stream()
+                .map(entry -> NotificationSummaryItem.builder()
+                        .id(entry.getId())
+                        .channel(entry.getChannel().name())
+                        .recipient(entry.getRecipient())
+                        .subject(entry.getSubject())
+                        .status(entry.getStatus().name())
+                        .createdAt(entry.getCreatedAt())
+                        .build())
+                .toList();
     }
 }

@@ -24,6 +24,21 @@ spring:
   kafka:
     bootstrap-servers: localhost:9092
 
+payment:
+  gateway:
+    # mock (default, no external calls/credentials — used for local dev and every test) | razorpay
+    provider: ${PAYMENT_GATEWAY_PROVIDER:mock}
+    razorpay:
+      key-id: ${RAZORPAY_KEY_ID:}
+      key-secret: ${RAZORPAY_KEY_SECRET:}
+      webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+      base-url: ${RAZORPAY_BASE_URL:https://api.razorpay.com/v1}
+      currency: ${RAZORPAY_CURRENCY:INR}
+    reconciliation:
+      enabled: ${PAYMENT_RECONCILIATION_ENABLED:true}
+      interval-ms: ${PAYMENT_RECONCILIATION_INTERVAL_MS:300000}
+      stale-after-minutes: ${PAYMENT_RECONCILIATION_STALE_MINUTES:5}
+
 eureka:
   client:
     service-url:

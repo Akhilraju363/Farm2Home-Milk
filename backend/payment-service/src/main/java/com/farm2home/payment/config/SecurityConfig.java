@@ -1,5 +1,6 @@
 package com.farm2home.payment.config;
 
+import com.farm2home.common.core.constants.ApiConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,7 +20,10 @@ public class SecurityConfig {
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/swagger-ui/**", "/api-docs/**", "/actuator/**",
-            "/api/v1/payments/callback"
+            ApiConstants.API_V1 + "/payments/callback",
+            // The gateway calls this server-to-server and cannot attach our JWT — every payload's
+            // signature is verified inside PaymentServiceImpl.handleWebhook() before it's acted on.
+            ApiConstants.API_V1 + "/payments/webhook"
     };
 
     private final GatewayHeaderAuthFilter gatewayHeaderAuthFilter;

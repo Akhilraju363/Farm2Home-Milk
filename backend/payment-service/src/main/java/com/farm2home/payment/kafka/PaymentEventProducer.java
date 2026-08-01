@@ -1,5 +1,7 @@
 package com.farm2home.payment.kafka;
 
+import com.farm2home.common.core.constants.KafkaTopics;
+import com.farm2home.events.payment.PaymentEvent;
 import com.farm2home.payment.domain.entity.Payment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,7 +15,7 @@ import java.time.LocalDateTime;
 @Slf4j
 public class PaymentEventProducer {
 
-    private static final String TOPIC = "payment.events";
+    private static final String TOPIC = KafkaTopics.PAYMENT_EVENTS;
 
     private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
 

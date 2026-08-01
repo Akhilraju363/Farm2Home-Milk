@@ -36,6 +36,39 @@
             <artifactId>common-observability</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- AuditAspect (@Audited) needs aspectjweaver on the classpath at runtime, not just for
+             compiling common-core - kept as a normal (compile-scope) dependency so it flows
+             transitively into every consuming service instead of requiring 9 separate pom edits.
+             Spring Boot's own AopAutoConfiguration auto-enables proxying once this is present,
+             no @EnableAspectJAutoProxy needed. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <!-- For AuditLogService/AuditHttpContext to read the current HttpServletRequest
+             (ip/uri/method, gateway identity headers). "provided" since every real consuming
+             service already brings the servlet/web runtime via spring-boot-starter-web,
+             matching the spring-boot-starter-data-jpa pattern below. -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- For @Schema examples/descriptions on shared response DTOs (reports/dashboard/analytics
+             packages) so springdoc renders them for every consuming service's endpoints. "provided"
+             since every real consuming service already brings the full springdoc-openapi runtime
+             (which includes this transitively) via its own pom - matching the pattern above. -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations-jakarta</artifactId>
+            <version>2.2.19</version>
+            <scope>provided</scope>
+        </dependency>
         <!-- Integration testing support with Testcontainers -->
         <dependency>
             <groupId>org.testcontainers</groupId>
@@ -61,17 +94,6 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <!-- Servlet API for MockMvc -->
-        <dependency>
-            <groupId>jakarta.servlet</groupId>
-            <artifactId>jakarta.servlet-api</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-web</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

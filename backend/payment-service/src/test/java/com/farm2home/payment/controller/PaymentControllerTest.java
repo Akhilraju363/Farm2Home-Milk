@@ -3,9 +3,15 @@ package com.farm2home.payment.controller;
 import com.farm2home.payment.config.GatewayHeaderAuthFilter;
 import com.farm2home.payment.config.SecurityConfig;
 import com.farm2home.payment.config.UserPrincipal;
+import com.farm2home.common.core.analytics.Granularity;
+import com.farm2home.common.core.analytics.PaymentAnalyticsPoint;
+import com.farm2home.common.core.analytics.RevenueTrendPoint;
+import com.farm2home.common.core.analytics.TrendSeries;
+import com.farm2home.common.core.dashboard.PaymentSummaryResponse;
 import com.farm2home.payment.domain.enums.PaymentMethod;
 import com.farm2home.payment.dto.request.InitiatePaymentRequest;
 import com.farm2home.payment.dto.request.PaymentCallbackRequest;
+import com.farm2home.payment.dto.request.VerifyPaymentRequest;
 import com.farm2home.payment.dto.response.PaymentResponse;
 import com.farm2home.payment.service.PaymentService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +29,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -30,11 +37,14 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(PaymentController.class)
@@ -112,6 +122,74 @@ class PaymentControllerTest {
     }
 
     @Nested
+    @DisplayName("POST /api/v1/payments/{id}/verify")
+    class Verify {
+
+        @Test
+        @DisplayName("valid request → 200")
+        void validRequest_ok() throws Exception {
+            VerifyPaymentRequest req = new VerifyPaymentRequest();
+            req.setGatewayOrderId("gw_order_1");
+            req.setGatewayPaymentId("gw_pay_1");
+            req.setSignature("sig");
+            when(paymentService.verify(eq(paymentId), any(), eq(customerId), eq(false)))
+                    .thenReturn(buildResponse());
+
+            mockMvc.perform(post("/api/v1/payments/{id}/verify", paymentId)
+                            .with(authentication(authFor(customerId, false)))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("unauthenticated → 403 (no bearer token — same as every other non-public endpoint)")
+        void unauthenticated_forbidden() throws Exception {
+            VerifyPaymentRequest req = new VerifyPaymentRequest();
+            req.setGatewayOrderId("gw_order_1");
+            req.setGatewayPaymentId("gw_pay_1");
+            req.setSignature("sig");
+
+            mockMvc.perform(post("/api/v1/payments/{id}/verify", paymentId)
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("POST /api/v1/payments/webhook")
+    class Webhook {
+
+        @Test
+        @DisplayName("public endpoint → 200 without authentication")
+        void noAuth_ok() throws Exception {
+            String payload = "{\"event\":\"payment.captured\"}";
+
+            mockMvc.perform(post("/api/v1/payments/webhook")
+                            .header("X-Razorpay-Signature", "sig")
+                            .contentType("application/json")
+                            .content(payload))
+                    .andExpect(status().isOk());
+
+            verify(paymentService).handleWebhook(payload, "sig");
+        }
+
+        @Test
+        @DisplayName("missing signature header → still reaches the service (which rejects it)")
+        void missingSignature_stillReachesService() throws Exception {
+            String payload = "{\"event\":\"payment.captured\"}";
+
+            mockMvc.perform(post("/api/v1/payments/webhook")
+                            .contentType("application/json")
+                            .content(payload))
+                    .andExpect(status().isOk());
+
+            verify(paymentService).handleWebhook(eq(payload), eq((String) null));
+        }
+    }
+
+    @Nested
     @DisplayName("GET /api/v1/payments")
     class FindAll {
 
@@ -162,6 +240,23 @@ class PaymentControllerTest {
     }
 
     @Nested
+    @DisplayName("GET /api/v1/payments/order/{orderId}/payment-exists")
+    class HasPayableProgress {
+
+        @Test
+        @DisplayName("any authenticated caller → 200, not scoped to the order's own customer")
+        void anyAuthenticatedCaller_ok() throws Exception {
+            UUID orderId = UUID.randomUUID();
+            when(paymentService.hasPayableProgress(orderId)).thenReturn(true);
+
+            mockMvc.perform(get("/api/v1/payments/order/{orderId}/payment-exists", orderId)
+                            .with(authentication(authFor(UUID.randomUUID(), false))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data").value(true));
+        }
+    }
+
+    @Nested
     @DisplayName("POST /api/v1/payments/{id}/refund")
     class Refund {
 
@@ -181,6 +276,203 @@ class PaymentControllerTest {
         void nonAdmin_forbidden() throws Exception {
             mockMvc.perform(post("/api/v1/payments/{id}/refund", paymentId)
                             .with(authentication(authFor(customerId, false))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/payments/summary")
+    class Summary {
+
+        // The summary endpoint uses hasAnyAuthority(...) (matched against raw role strings,
+        // no ROLE_ prefix) rather than hasAnyRole(...) like the rest of this controller, so
+        // it needs its own authority builder distinct from authFor() above.
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
+                    java.util.Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(paymentService.getSummary()).thenReturn(
+                    PaymentSummaryResponse.builder()
+                            .revenueToday(new BigDecimal("500.00"))
+                            .revenueThisMonth(new BigDecimal("12000.00"))
+                            .build());
+
+            mockMvc.perform(get("/api/v1/payments/summary")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.revenueToday").value(500.00));
+        }
+
+        @Test
+        @DisplayName("customer authority → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/payments/summary")
+                            .with(authentication(authorityFor("CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/payments/reports")
+    class GetReport {
+
+        // Same rationale as Summary above: this endpoint uses hasAnyAuthority(...) rather than
+        // hasAnyRole(...), so it needs its own authority builder distinct from authFor().
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
+                    java.util.Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(paymentService.getReport(any(), any(), any(), any(), any())).thenReturn(
+                    com.farm2home.common.core.reports.ReportPage.<com.farm2home.common.core.reports.PaymentReportRow,
+                            com.farm2home.common.core.reports.PaymentReportSummary>builder()
+                            .content(List.of())
+                            .pageNumber(0).pageSize(20).totalElements(0).totalPages(0)
+                            .summary(com.farm2home.common.core.reports.PaymentReportSummary.builder()
+                                    .totalPayments(0).totalAmount(BigDecimal.ZERO).successAmount(BigDecimal.ZERO).build())
+                            .build());
+
+            mockMvc.perform(get("/api/v1/payments/reports")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.summary.totalPayments").value(0));
+        }
+
+        @Test
+        @DisplayName("customer authority → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/payments/reports")
+                            .with(authentication(authorityFor("CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/payments/export")
+    class Export {
+
+        // Same rationale as Summary/GetReport above: this endpoint uses hasAnyAuthority(...)
+        // rather than hasAnyRole(...), so it needs its own authority builder distinct from authFor().
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
+                    java.util.Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority, CSV format → 200 with attachment headers")
+        void farmManager_csv_ok() throws Exception {
+            doNothing().when(paymentService).export(any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean());
+
+            MvcResult started = mockMvc.perform(get("/api/v1/payments/export")
+                            .param("format", "CSV")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(request().asyncStarted())
+                    .andReturn();
+
+            mockMvc.perform(asyncDispatch(started))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Content-Type", "text/csv"))
+                    .andExpect(header().exists("Content-Disposition"));
+        }
+
+        @Test
+        @DisplayName("customer authority → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/payments/export").param("format", "CSV")
+                            .with(authentication(authorityFor("CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/payments/analytics/revenue-trend")
+    class GetRevenueTrend {
+
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
+                    java.util.Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(paymentService.getRevenueTrend(eq(Granularity.DAILY), any(), any())).thenReturn(
+                    TrendSeries.<RevenueTrendPoint>builder()
+                            .granularity(Granularity.DAILY)
+                            .points(List.of(RevenueTrendPoint.builder()
+                                    .period(java.time.LocalDate.of(2026, 1, 1))
+                                    .revenue(new BigDecimal("500.00")).build()))
+                            .build());
+
+            mockMvc.perform(get("/api/v1/payments/analytics/revenue-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.points[0].revenue").value(500.00));
+        }
+
+        @Test
+        @DisplayName("customer authority → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/payments/analytics/revenue-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(authorityFor("CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/payments/analytics/payment-trend")
+    class GetPaymentAnalytics {
+
+        private UsernamePasswordAuthenticationToken authorityFor(String authority) {
+            UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
+                    java.util.Set.of(authority));
+            return new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority(authority)));
+        }
+
+        @Test
+        @DisplayName("farm manager authority → 200")
+        void farmManager_ok() throws Exception {
+            when(paymentService.getPaymentAnalytics(eq(Granularity.MONTHLY), any(), any())).thenReturn(
+                    TrendSeries.<PaymentAnalyticsPoint>builder()
+                            .granularity(Granularity.MONTHLY)
+                            .points(List.of(PaymentAnalyticsPoint.builder()
+                                    .period(java.time.LocalDate.of(2026, 1, 1))
+                                    .totalPayments(4).totalAmount(new BigDecimal("350.00"))
+                                    .successCount(3).failedCount(1).build()))
+                            .build());
+
+            mockMvc.perform(get("/api/v1/payments/analytics/payment-trend")
+                            .param("granularity", "MONTHLY")
+                            .with(authentication(authorityFor("FARM_MANAGER"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.points[0].totalPayments").value(4));
+        }
+
+        @Test
+        @DisplayName("customer authority → 403")
+        void customer_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/payments/analytics/payment-trend")
+                            .param("granularity", "MONTHLY")
+                            .with(authentication(authorityFor("CUSTOMER"))))
                     .andExpect(status().isForbidden());
         }
     }

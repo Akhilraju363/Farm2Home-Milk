@@ -28,6 +28,8 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     create-schemas: true
+  kafka:
+    bootstrap-servers: localhost:9092
 
 eureka:
   client:
@@ -42,6 +44,13 @@ jwt:
   secret: ${JWT_SECRET:ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
   expiration: 86400000        # 24h in ms
   refresh-expiration: 604800000 # 7d in ms
+
+sms:
+  # logging (default, no external calls/credentials — used by every automated test) | a future
+  # real provider's own property value.
+  provider: ${SMS_PROVIDER:logging}
+  max-attempts: ${SMS_MAX_ATTEMPTS:3}
+  retry-backoff-millis: ${SMS_RETRY_BACKOFF_MILLIS:150}
 
 management:
   endpoints:

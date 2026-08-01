@@ -1,25 +1,31 @@
 package com.farm2home.customer.config;
 
+import com.farm2home.common.core.constants.ApiConstants;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-/**
- * Without this, spring-boot-starter-security falls back to its default lockdown (a random
- * password regenerated on every restart), which would block unauthenticated actuator health
- * checks. Mirrors the permitAll actuator/docs rule already used by every sibling service.
- */
+import java.util.stream.Stream;
+
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
 
-    private static final String[] PUBLIC_ENDPOINTS = {
-            "/actuator/**", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
-    };
+    private static final String[] PUBLIC_ENDPOINTS = Stream.concat(
+            Stream.of(ApiConstants.PUBLIC_ENDPOINTS_BASE),
+            Stream.of("/uploads/**")
+    ).toArray(String[]::new);
+
+    private final GatewayHeaderAuthFilter gatewayHeaderAuthFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -29,6 +35,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         .anyRequest().authenticated())
+                .addFilterBefore(gatewayHeaderAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 }

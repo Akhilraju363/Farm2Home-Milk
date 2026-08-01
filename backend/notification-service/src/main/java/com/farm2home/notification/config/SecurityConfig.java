@@ -1,5 +1,6 @@
 package com.farm2home.notification.config;
 
+import com.farm2home.common.core.constants.ApiConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,9 +18,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private static final String[] PUBLIC_ENDPOINTS = {
-            "/actuator/**", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
-    };
+    private static final String[] PUBLIC_ENDPOINTS = ApiConstants.PUBLIC_ENDPOINTS_BASE;
 
     private final GatewayHeaderAuthFilter gatewayHeaderAuthFilter;
 

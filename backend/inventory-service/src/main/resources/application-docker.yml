@@ -5,6 +5,8 @@ spring:
     password: ${DB_PASSWORD:farm2home@123}
   flyway:
     schemas: inventory
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:29092}
 
 eureka:
   client:
@@ -14,6 +16,10 @@ eureka:
 configserver:
   health:
     url: http://config-server:8888
+
+app:
+  upload:
+    base-dir: /app/uploads
 
 management:
   endpoints:

@@ -1,5 +1,6 @@
 package com.farm2home.inventory.config;
 
+import com.farm2home.common.core.constants.ApiConstants;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,15 +12,17 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import java.util.stream.Stream;
+
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private static final String[] PUBLIC_ENDPOINTS = {
-            "/actuator/**", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
-    };
+    private static final String[] PUBLIC_ENDPOINTS =
+            Stream.concat(Stream.of(ApiConstants.PUBLIC_ENDPOINTS_BASE), Stream.of("/uploads/**"))
+                    .toArray(String[]::new);
 
     private final GatewayHeaderAuthFilter gatewayHeaderAuthFilter;
 

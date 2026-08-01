@@ -3,6 +3,7 @@ package com.farm2home.order.kafka;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.farm2home.events.order.OrderEvent;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -13,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.*;
+import org.springframework.kafka.support.serializer.JsonSerializer;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,7 +37,7 @@ public class KafkaConfig {
         return mapper;
     }
 
-    // ── Consumer ────────────────────────────────────────────────────────────────
+    // ── Consumer (subscription.events - raw String, parsed manually) ────────────
 
     @Bean
     public ConsumerFactory<String, String> consumerFactory() {
@@ -57,21 +59,22 @@ public class KafkaConfig {
         return factory;
     }
 
-    // ── Producer ────────────────────────────────────────────────────────────────
+    // ── Producer (order.events - typed OrderEvent) ───────────────────────────────
 
     @Bean
-    public ProducerFactory<String, String> producerFactory() {
-        Map<String, Object> props = new HashMap<>();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        props.put(ProducerConfig.ACKS_CONFIG, "all");
-        props.put(ProducerConfig.RETRIES_CONFIG, 3);
-        return new DefaultKafkaProducerFactory<>(props);
+    public ProducerFactory<String, OrderEvent> orderProducerFactory() {
+        return new DefaultKafkaProducerFactory<>(Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class,
+                ProducerConfig.ACKS_CONFIG, "all",
+                ProducerConfig.RETRIES_CONFIG, 3,
+                JsonSerializer.ADD_TYPE_INFO_HEADERS, false
+        ));
     }
 
     @Bean
-    public KafkaTemplate<String, String> kafkaTemplate() {
-        return new KafkaTemplate<>(producerFactory());
+    public KafkaTemplate<String, OrderEvent> orderKafkaTemplate() {
+        return new KafkaTemplate<>(orderProducerFactory());
     }
 }

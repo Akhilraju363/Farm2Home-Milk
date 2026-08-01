@@ -30,7 +30,7 @@ spring:
         - id: customer-service
           uri: lb://customer-service
           predicates:
-            - Path=/api/v1/customers/**
+            - Path=/api/v1/customers/**,/uploads/customers/**
           filters:
             - name: CircuitBreaker
               args:
@@ -110,7 +110,7 @@ spring:
         - id: farm-service
           uri: lb://farm-service
           predicates:
-            - Path=/api/v1/cows/**,/api/v1/farm/**
+            - Path=/api/v1/cows/**,/api/v1/farm/**,/uploads/farms/**
           filters:
             - name: CircuitBreaker
               args:
@@ -142,7 +142,7 @@ spring:
         - id: inventory-service
           uri: lb://inventory-service
           predicates:
-            - Path=/api/v1/inventory/**
+            - Path=/api/v1/inventory/**,/uploads/products/**
           filters:
             - name: CircuitBreaker
               args:
@@ -170,6 +170,38 @@ spring:
             - name: Resilience4jBulkhead
               args:
                 name: notificationServiceBH
+
+        - id: dashboard-service
+          uri: lb://dashboard-service
+          predicates:
+            - Path=/api/v1/dashboard/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: dashboardServiceCB
+                fallbackUri: forward:/fallback/dashboard-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: dashboardServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: dashboardServiceBH
+
+        - id: reports-service
+          uri: lb://reports-service
+          predicates:
+            - Path=/api/v1/reports/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: reportsServiceCB
+                fallbackUri: forward:/fallback/reports-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: reportsServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: reportsServiceBH
 
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
@@ -233,6 +265,8 @@ resilience4j:
       productionServiceCB: { base-config: default }
       inventoryServiceCB: { base-config: default }
       notificationServiceCB: { base-config: default }
+      dashboardServiceCB: { base-config: default }
+      reportsServiceCB: { base-config: default }
 
   # Spring Cloud Circuit Breaker's Resilience4j implementation pairs a timelimiter
   # instance with the circuitbreaker instance of the SAME name, so these names must
@@ -253,6 +287,8 @@ resilience4j:
       productionServiceCB: { base-config: default }
       inventoryServiceCB: { base-config: default }
       notificationServiceCB: { base-config: default }
+      dashboardServiceCB: { base-config: default }
+      reportsServiceCB: { base-config: default }
 
   ratelimiter:
     configs:
@@ -274,6 +310,8 @@ resilience4j:
       productionServiceRL: { base-config: default }
       inventoryServiceRL: { base-config: default }
       notificationServiceRL: { base-config: default }
+      dashboardServiceRL: { base-config: default }
+      reportsServiceRL: { base-config: default }
 
   bulkhead:
     configs:
@@ -293,6 +331,8 @@ resilience4j:
       productionServiceBH: { base-config: default }
       inventoryServiceBH: { base-config: default }
       notificationServiceBH: { base-config: default }
+      dashboardServiceBH: { base-config: default }
+      reportsServiceBH: { base-config: default }
 
 management:
   endpoints:

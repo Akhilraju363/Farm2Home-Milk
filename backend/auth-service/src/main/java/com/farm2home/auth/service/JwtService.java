@@ -2,6 +2,7 @@ package com.farm2home.auth.service;
 
 import com.farm2home.auth.domain.entity.Role;
 import com.farm2home.auth.domain.entity.User;
+import com.farm2home.common.core.constants.SecurityConstants;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
@@ -38,9 +39,9 @@ public class JwtService {
 
         return Jwts.builder()
                 .subject(user.getMobile())
-                .claim("userId", user.getId().toString())
-                .claim("roles", roles)
-                .claim("type", "ACCESS")
+                .claim(SecurityConstants.CLAIM_USER_ID, user.getId().toString())
+                .claim(SecurityConstants.CLAIM_ROLES, roles)
+                .claim(SecurityConstants.CLAIM_TYPE, SecurityConstants.TOKEN_TYPE_ACCESS)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + accessTokenExpiration))
                 .signWith(getSigningKey())
@@ -50,8 +51,8 @@ public class JwtService {
     public String generateRefreshToken(User user) {
         return Jwts.builder()
                 .subject(user.getMobile())
-                .claim("userId", user.getId().toString())
-                .claim("type", "REFRESH")
+                .claim(SecurityConstants.CLAIM_USER_ID, user.getId().toString())
+                .claim(SecurityConstants.CLAIM_TYPE, SecurityConstants.TOKEN_TYPE_REFRESH)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + refreshTokenExpiration))
                 .signWith(getSigningKey())

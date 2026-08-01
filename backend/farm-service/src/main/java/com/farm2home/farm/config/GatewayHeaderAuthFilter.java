@@ -1,5 +1,7 @@
 package com.farm2home.farm.config;
 
+import com.farm2home.common.core.constants.HeaderConstants;
+import com.farm2home.common.core.constants.SecurityConstants;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,9 +28,9 @@ public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String userId = request.getHeader("X-User-Id");
-        String mobile = request.getHeader("X-User-Mobile");
-        String rolesHeader = request.getHeader("X-User-Roles");
+        String userId = request.getHeader(HeaderConstants.X_USER_ID);
+        String mobile = request.getHeader(HeaderConstants.X_USER_MOBILE);
+        String rolesHeader = request.getHeader(HeaderConstants.X_USER_ROLES);
 
         if (StringUtils.hasText(userId) && StringUtils.hasText(mobile)) {
             try {
@@ -37,7 +39,7 @@ public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
                         : Set.of();
                 var principal = new UserPrincipal(UUID.fromString(userId), mobile, roles);
                 var authorities = roles.stream()
-                        .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+                        .map(r -> new SimpleGrantedAuthority(SecurityConstants.ROLE_PREFIX + r))
                         .collect(Collectors.toList());
                 SecurityContextHolder.getContext().setAuthentication(
                         new UsernamePasswordAuthenticationToken(principal, null, authorities));

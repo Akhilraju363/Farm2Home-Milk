@@ -127,8 +127,12 @@ services:
       SPRING_DATASOURCE_USERNAME: farm2home
       SPRING_DATASOURCE_PASSWORD: farm2home@123
       JWT_SECRET: ${JWT_SECRET:-ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
+      SMS_PROVIDER: ${SMS_PROVIDER:-logging}
+      SMS_MAX_ATTEMPTS: ${SMS_MAX_ATTEMPTS:-3}
+      SMS_RETRY_BACKOFF_MILLIS: ${SMS_RETRY_BACKOFF_MILLIS:-150}
     volumes:
       - ./logs:/var/log/farm2home
     depends_on:
@@ -136,6 +140,8 @@ services:
         condition: service_healthy
       discovery-service:
         condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
       - farm2home-network
 
@@ -146,15 +152,22 @@ services:
       - "8082:8082"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=customer
       SPRING_DATASOURCE_USERNAME: farm2home
       SPRING_DATASOURCE_PASSWORD: farm2home@123
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
+      - ./uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
+      discovery-service:
+        condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
       - farm2home-network
 
@@ -168,6 +181,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=subscription
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
@@ -177,6 +191,8 @@ services:
         condition: service_healthy
       discovery-service:
         condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
       - farm2home-network
 
@@ -217,6 +233,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
+      PAYMENT_GATEWAY_PROVIDER: ${PAYMENT_GATEWAY_PROVIDER:-mock}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
     volumes:
       - ./logs:/var/log/farm2home
     depends_on:
@@ -268,6 +288,7 @@ services:
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
+      - ./uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -308,15 +329,19 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/farm2home?currentSchema=inventory
       DB_USERNAME: farm2home
       DB_PASSWORD: farm2home@123
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
       LOGGING_FILE_PATH: /var/log/farm2home
     volumes:
       - ./logs:/var/log/farm2home
+      - ./uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
       discovery-service:
         condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
       - farm2home-network
 
@@ -332,7 +357,18 @@ services:
       DB_PASSWORD: farm2home@123
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
+      MAIL_HOST: ${MAIL_HOST:-sandbox.smtp.mailtrap.io}
+      MAIL_PORT: ${MAIL_PORT:-2525}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@farm2homemilk.example}
       LOGGING_FILE_PATH: /var/log/farm2home
+      SMS_PROVIDER: ${SMS_PROVIDER:-logging}
+      SMS_MAX_ATTEMPTS: ${SMS_MAX_ATTEMPTS:-3}
+      SMS_RETRY_BACKOFF_MILLIS: ${SMS_RETRY_BACKOFF_MILLIS:-150}
+      PUSH_PROVIDER: ${PUSH_PROVIDER:-logging}
+      PUSH_MAX_ATTEMPTS: ${PUSH_MAX_ATTEMPTS:-3}
+      PUSH_RETRY_BACKOFF_MILLIS: ${PUSH_RETRY_BACKOFF_MILLIS:-150}
     volumes:
       - ./logs:/var/log/farm2home
     depends_on:
@@ -341,6 +377,72 @@ services:
       discovery-service:
         condition: service_healthy
       kafka:
+        condition: service_started
+    networks:
+      - farm2home-network
+
+  dashboard-service:
+    build: ./backend/dashboard-service
+    container_name: farm2home-dashboard-service
+    ports:
+      - "8092:8092"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
+      LOGGING_FILE_PATH: /var/log/farm2home
+    volumes:
+      - ./logs:/var/log/farm2home
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      customer-service:
+        condition: service_started
+      subscription-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      delivery-service:
+        condition: service_started
+      production-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+    networks:
+      - farm2home-network
+
+  reports-service:
+    build: ./backend/reports-service
+    container_name: farm2home-reports-service
+    ports:
+      - "8093:8093"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://eureka:eurekaSecret@discovery-service:8761/eureka
+      LOGGING_FILE_PATH: /var/log/farm2home
+    volumes:
+      - ./logs:/var/log/farm2home
+    depends_on:
+      discovery-service:
+        condition: service_healthy
+      customer-service:
+        condition: service_started
+      subscription-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      delivery-service:
+        condition: service_started
+      production-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      farm-service:
         condition: service_started
     networks:
       - farm2home-network

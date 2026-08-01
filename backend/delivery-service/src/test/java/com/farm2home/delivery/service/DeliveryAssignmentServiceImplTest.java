@@ -7,11 +7,21 @@ import com.farm2home.delivery.domain.enums.AssignmentStatus;
 import com.farm2home.delivery.domain.repository.DeliveryAssignmentRepository;
 import com.farm2home.delivery.domain.repository.DeliveryPartnerRepository;
 import com.farm2home.delivery.domain.repository.DeliveryRouteRepository;
+import com.farm2home.delivery.dto.request.DelayAssignmentRequest;
 import com.farm2home.delivery.dto.request.ManualAssignRequest;
 import com.farm2home.delivery.dto.request.UpdateAssignmentStatusRequest;
+import com.farm2home.delivery.client.PaymentServiceClient;
 import com.farm2home.delivery.dto.response.AssignmentResponse;
 import com.farm2home.delivery.exception.DeliveryException;
 import com.farm2home.delivery.exception.ResourceNotFoundException;
+import com.farm2home.common.core.analytics.DeliveryPerformancePoint;
+import com.farm2home.common.core.analytics.Granularity;
+import com.farm2home.common.core.analytics.TrendSeries;
+import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.common.core.dashboard.DeliverySummaryResponse;
+import com.farm2home.common.core.reports.ReportPage;
+import com.farm2home.common.core.reports.DeliveryReportRow;
+import com.farm2home.common.core.reports.DeliveryReportSummary;
 import com.farm2home.delivery.kafka.DeliveryEventProducer;
 import com.farm2home.delivery.mapper.DeliveryMapper;
 import com.farm2home.delivery.service.impl.DeliveryAssignmentServiceImpl;
@@ -23,7 +33,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
+import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,6 +57,8 @@ class DeliveryAssignmentServiceImplTest {
     @Mock private DeliveryRouteRepository routeRepository;
     @Mock private DeliveryMapper mapper;
     @Mock private DeliveryEventProducer eventProducer;
+    @Mock private AuditLogService auditLogService;
+    @Mock private PaymentServiceClient paymentServiceClient;
 
     @InjectMocks private DeliveryAssignmentServiceImpl service;
 
@@ -96,6 +115,9 @@ class DeliveryAssignmentServiceImplTest {
 
             assertThat(result.getStatus()).isEqualTo("ASSIGNED");
             verify(eventProducer).publishDeliveryEvent(saved, "DELIVERY_ASSIGNED");
+            verify(auditLogService).record(argThat(entry ->
+                    entry.getAction().equals(com.farm2home.common.core.audit.AuditAction.ASSIGN)
+                            && entry.getEntityId().equals(assignId.toString())));
         }
 
         @Test
@@ -142,6 +164,7 @@ class DeliveryAssignmentServiceImplTest {
         void assignedToOutForDelivery() {
             DeliveryAssignment assignment = buildAssignment(AssignmentStatus.ASSIGNED);
             when(assignmentRepository.findById(assignId)).thenReturn(Optional.of(assignment));
+            when(paymentServiceClient.hasPayableProgress(any())).thenReturn(Mono.just(true));
             when(assignmentRepository.save(assignment)).thenReturn(assignment);
             when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.OUT_FOR_DELIVERY));
 
@@ -171,6 +194,10 @@ class DeliveryAssignmentServiceImplTest {
             assertThat(assignment.getDeliveredAt()).isNotNull();
             assertThat(assignment.getDeliveryProof()).isEqualTo("https://cdn.farm2home.in/proofs/photo123.jpg");
             verify(eventProducer).publishDeliveryEvent(assignment, "DELIVERY_COMPLETED");
+            verify(auditLogService).record(argThat(entry ->
+                    "OUT_FOR_DELIVERY".equals(entry.getOldValue())
+                            && "DELIVERED".equals(entry.getNewValue())
+                            && entry.isSuccess()));
         }
 
         @Test
@@ -210,6 +237,7 @@ class DeliveryAssignmentServiceImplTest {
             when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.of(partner));
             when(assignmentRepository.findByIdAndDeliveryPartnerId(assignId, partnerId))
                     .thenReturn(Optional.of(assignment));
+            when(paymentServiceClient.hasPayableProgress(any())).thenReturn(Mono.just(true));
             when(assignmentRepository.save(assignment)).thenReturn(assignment);
             when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.OUT_FOR_DELIVERY));
 
@@ -220,6 +248,82 @@ class DeliveryAssignmentServiceImplTest {
 
             verify(partnerRepository).findByUserIdAndDeletedFalse(partnerUserId);
             verify(assignmentRepository).findByIdAndDeliveryPartnerId(assignId, partnerId);
+        }
+
+        @Test
+        @DisplayName("no payment initiated → throws DeliveryException, does not transition to OUT_FOR_DELIVERY")
+        void noPaymentInitiated_throws() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.ASSIGNED);
+            when(assignmentRepository.findById(assignId)).thenReturn(Optional.of(assignment));
+            when(paymentServiceClient.hasPayableProgress(any())).thenReturn(Mono.just(false));
+
+            UpdateAssignmentStatusRequest req = new UpdateAssignmentStatusRequest();
+            req.setStatus(AssignmentStatus.OUT_FOR_DELIVERY);
+
+            assertThatThrownBy(() -> service.updateStatus(assignId, req, UUID.randomUUID(), true))
+                    .isInstanceOf(DeliveryException.class)
+                    .hasMessageContaining("payment");
+            verify(assignmentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("payment-service unreachable → throws DeliveryException rather than a raw error")
+        void paymentServiceUnreachable_throwsDeliveryException() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.ASSIGNED);
+            when(assignmentRepository.findById(assignId)).thenReturn(Optional.of(assignment));
+            when(paymentServiceClient.hasPayableProgress(any())).thenReturn(Mono.error(
+                    new org.springframework.web.reactive.function.client.WebClientRequestException(
+                            new java.net.ConnectException("connection refused"),
+                            org.springframework.http.HttpMethod.GET,
+                            java.net.URI.create("http://payment-service/x"),
+                            new org.springframework.http.HttpHeaders())));
+
+            UpdateAssignmentStatusRequest req = new UpdateAssignmentStatusRequest();
+            req.setStatus(AssignmentStatus.OUT_FOR_DELIVERY);
+
+            assertThatThrownBy(() -> service.updateStatus(assignId, req, UUID.randomUUID(), true))
+                    .isInstanceOf(DeliveryException.class);
+            verify(assignmentRepository, never()).save(any());
+        }
+    }
+
+    // ── MarkDelayed ──────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("markDelayed()")
+    class MarkDelayed {
+
+        @Test
+        @DisplayName("non-terminal assignment → publishes DELIVERY_DELAYED, status unchanged")
+        void nonTerminal_publishesDelayEvent() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.OUT_FOR_DELIVERY);
+            when(assignmentRepository.findById(assignId)).thenReturn(Optional.of(assignment));
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.OUT_FOR_DELIVERY));
+
+            DelayAssignmentRequest req = new DelayAssignmentRequest();
+            req.setReason("Heavy traffic on the route");
+
+            AssignmentResponse result = service.markDelayed(assignId, req, UUID.randomUUID(), true);
+
+            assertThat(assignment.getStatus()).isEqualTo(AssignmentStatus.OUT_FOR_DELIVERY);
+            assertThat(result.getStatus()).isEqualTo("OUT_FOR_DELIVERY");
+            verify(eventProducer).publishDeliveryEvent(assignment, "DELIVERY_DELAYED");
+            verify(assignmentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("terminal (DELIVERED) assignment → throws, no event published")
+        void terminal_throws() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.DELIVERED);
+            when(assignmentRepository.findById(assignId)).thenReturn(Optional.of(assignment));
+
+            DelayAssignmentRequest req = new DelayAssignmentRequest();
+            req.setReason("Heavy traffic on the route");
+
+            assertThatThrownBy(() -> service.markDelayed(assignId, req, UUID.randomUUID(), true))
+                    .isInstanceOf(DeliveryException.class)
+                    .hasMessageContaining("DELIVERED");
+            verify(eventProducer, never()).publishDeliveryEvent(any(), any());
         }
     }
 
@@ -253,6 +357,205 @@ class DeliveryAssignmentServiceImplTest {
         void delivered_toAnything_invalid() {
             assertThat(AssignmentStatus.DELIVERED.canTransitionTo(AssignmentStatus.FAILED)).isFalse();
             assertThat(AssignmentStatus.DELIVERED.canTransitionTo(AssignmentStatus.ASSIGNED)).isFalse();
+        }
+    }
+
+    // ── GetSummary ───────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getSummary()")
+    class GetSummary {
+
+        @Test
+        @DisplayName("returns completed deliveries count for today from repository")
+        void returnsCompletedDeliveriesToday() {
+            when(assignmentRepository.countByStatusAndDeliveredAtBetween(eq(AssignmentStatus.DELIVERED), any(), any()))
+                    .thenReturn(7L);
+
+            DeliverySummaryResponse result = service.getSummary();
+
+            assertThat(result.getCompletedDeliveriesToday()).isEqualTo(7L);
+            verify(assignmentRepository).countByStatusAndDeliveredAtBetween(eq(AssignmentStatus.DELIVERED), any(), any());
+        }
+    }
+
+    // ── GetReport ────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("getReport()")
+    class GetReport {
+
+        @Test
+        @DisplayName("maps the repository page into report rows and totals")
+        void happyPath() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.DELIVERED);
+            var page = new PageImpl<>(List.of(assignment), PageRequest.of(0, 20), 1);
+            when(assignmentRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(assignmentRepository.count(any(Specification.class))).thenReturn(1L, 0L);
+
+            ReportPage<DeliveryReportRow, DeliveryReportSummary> result = service.getReport(
+                    null, null, null, null, PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).hasSize(1);
+            assertThat(result.getContent().get(0).getAssignmentId()).isEqualTo(assignId);
+            assertThat(result.getContent().get(0).getOrderId()).isEqualTo(orderId);
+            assertThat(result.getContent().get(0).getDeliveryPartnerId()).isEqualTo(partnerId);
+            assertThat(result.getContent().get(0).getStatus()).isEqualTo("DELIVERED");
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            assertThat(result.getSummary().getTotalDeliveries()).isEqualTo(1);
+            assertThat(result.getSummary().getCompletedCount()).isEqualTo(1L);
+            assertThat(result.getSummary().getFailedCount()).isEqualTo(0L);
+        }
+
+        @Test
+        @DisplayName("no matching assignments → empty content with zeroed summary")
+        void noResults() {
+            var page = new PageImpl<DeliveryAssignment>(List.of(), PageRequest.of(0, 20), 0);
+            when(assignmentRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(assignmentRepository.count(any(Specification.class))).thenReturn(0L, 0L);
+
+            ReportPage<DeliveryReportRow, DeliveryReportSummary> result = service.getReport(
+                    LocalDate.now().minusDays(7), LocalDate.now(), AssignmentStatus.FAILED, List.of(orderId),
+                    PageRequest.of(0, 20));
+
+            assertThat(result.getContent()).isEmpty();
+            assertThat(result.getSummary().getTotalDeliveries()).isZero();
+            assertThat(result.getSummary().getCompletedCount()).isZero();
+            assertThat(result.getSummary().getFailedCount()).isZero();
+        }
+    }
+
+    // ── Search ───────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("search()")
+    class Search {
+
+        @Test
+        @DisplayName("admin: keyword + status + date range combine into one query, unscoped by partner")
+        void allFiltersCombine_admin() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.DELIVERED);
+            var page = new PageImpl<>(List.of(assignment), PageRequest.of(0, 20), 1);
+            when(assignmentRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.DELIVERED));
+
+            Page<AssignmentResponse> result = service.search(null, true, "Ravi", LocalDate.now().minusDays(7),
+                    LocalDate.now(), AssignmentStatus.DELIVERED, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            assertThat(result.getContent().get(0).getId()).isEqualTo(assignId);
+        }
+
+        @Test
+        @DisplayName("non-admin with blank keyword → resolves caller's own DeliveryPartner id, no keyword predicate applied")
+        void nonAdmin_scopedByPartner_blankKeyword() {
+            when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.of(buildPartner()));
+            var page = new PageImpl<DeliveryAssignment>(List.of(), PageRequest.of(0, 20), 0);
+            when(assignmentRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+
+            Page<AssignmentResponse> result = service.search(partnerUserId, false, "  ", null, null, null,
+                    PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isZero();
+            verify(partnerRepository).findByUserIdAndDeletedFalse(partnerUserId);
+        }
+
+        @Test
+        @DisplayName("non-admin caller with no DeliveryPartner profile → throws ResourceNotFoundException")
+        void nonAdmin_noPartnerProfile_throws() {
+            when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.search(partnerUserId, false, null, null, null, null, PageRequest.of(0, 20)))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+    }
+
+    // ── FindAll ──────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("findAll()")
+    class FindAll {
+
+        @Test
+        @DisplayName("admin → sees every assignment, unscoped by partner")
+        void admin_seesAll() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.DELIVERED);
+            var page = new PageImpl<>(List.of(assignment), PageRequest.of(0, 20), 1);
+            when(assignmentRepository.findAll(any(PageRequest.class))).thenReturn(page);
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.DELIVERED));
+
+            Page<AssignmentResponse> result = service.findAll(null, true, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            verify(partnerRepository, never()).findByUserIdAndDeletedFalse(any());
+        }
+
+        @Test
+        @DisplayName("non-admin → resolves caller's own DeliveryPartner id before filtering (not the raw caller id)")
+        void nonAdmin_resolvesOwnPartnerId() {
+            when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.of(buildPartner()));
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.ASSIGNED);
+            var page = new PageImpl<>(List.of(assignment), PageRequest.of(0, 20), 1);
+            when(assignmentRepository.findAllByDeliveryPartnerId(partnerId, PageRequest.of(0, 20))).thenReturn(page);
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
+
+            Page<AssignmentResponse> result = service.findAll(partnerUserId, false, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            // The key regression check: the repository is queried by the resolved DeliveryPartner.id
+            // (partnerId), never by the caller's raw auth id (partnerUserId) - those are different UUIDs.
+            verify(assignmentRepository).findAllByDeliveryPartnerId(partnerId, PageRequest.of(0, 20));
+        }
+
+        @Test
+        @DisplayName("non-admin caller with no DeliveryPartner profile → throws ResourceNotFoundException")
+        void nonAdmin_noPartnerProfile_throws() {
+            when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.findAll(partnerUserId, false, PageRequest.of(0, 20)))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("getPerformanceTrend()")
+    class GetPerformanceTrend {
+
+        @Test
+        @DisplayName("folds per-status rows for the same period into one point")
+        void foldsRowsByPeriod() {
+            DeliveryAssignmentRepository.DeliveryPerformanceRow delivered =
+                    mock(DeliveryAssignmentRepository.DeliveryPerformanceRow.class);
+            when(delivered.getPeriod()).thenReturn(LocalDate.of(2026, 1, 1));
+            when(delivered.getStatus()).thenReturn("DELIVERED");
+            when(delivered.getCnt()).thenReturn(3L);
+
+            DeliveryAssignmentRepository.DeliveryPerformanceRow failed =
+                    mock(DeliveryAssignmentRepository.DeliveryPerformanceRow.class);
+            when(failed.getPeriod()).thenReturn(LocalDate.of(2026, 1, 1));
+            when(failed.getStatus()).thenReturn("FAILED");
+            when(failed.getCnt()).thenReturn(1L);
+
+            when(assignmentRepository.findPerformanceTrend(eq("day"), any(), any()))
+                    .thenReturn(List.of(delivered, failed));
+
+            TrendSeries<DeliveryPerformancePoint> result = service.getPerformanceTrend(Granularity.DAILY, null, null);
+
+            assertThat(result.getPoints()).hasSize(1);
+            DeliveryPerformancePoint point = result.getPoints().get(0);
+            assertThat(point.getTotalDeliveries()).isEqualTo(4);
+            assertThat(point.getCompletedDeliveries()).isEqualTo(3);
+            assertThat(point.getFailedDeliveries()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("no rows → empty points list")
+        void noRows_emptyPoints() {
+            when(assignmentRepository.findPerformanceTrend(eq("year"), any(), any())).thenReturn(List.of());
+
+            TrendSeries<DeliveryPerformancePoint> result = service.getPerformanceTrend(Granularity.YEARLY, null, null);
+
+            assertThat(result.getPoints()).isEmpty();
         }
     }
 }

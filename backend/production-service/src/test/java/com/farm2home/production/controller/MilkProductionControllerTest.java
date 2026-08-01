@@ -1,5 +1,8 @@
 package com.farm2home.production.controller;
 
+import com.farm2home.common.core.analytics.Granularity;
+import com.farm2home.common.core.analytics.ProductionTrendPoint;
+import com.farm2home.common.core.analytics.TrendSeries;
 import com.farm2home.production.config.GatewayHeaderAuthFilter;
 import com.farm2home.production.config.SecurityConfig;
 import com.farm2home.production.domain.enums.MilkSession;
@@ -8,6 +11,7 @@ import com.farm2home.production.dto.response.MilkProductionResponse;
 import com.farm2home.production.service.impl.MilkProductionServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -29,6 +33,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(MilkProductionController.class)
@@ -154,5 +159,84 @@ class MilkProductionControllerTest {
     void delete_nonAdmin_forbidden() throws Exception {
         mockMvc.perform(delete("/api/v1/productions/{id}", recordId).with(authentication(authFor(false))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/productions/summary/today - admin authority → 200")
+    void todaySummary_admin_ok() throws Exception {
+        when(service.getSummary()).thenReturn(
+                com.farm2home.common.core.dashboard.ProductionSummaryResponse.builder()
+                        .totalLitersToday(new BigDecimal("42.50"))
+                        .build());
+
+        mockMvc.perform(get("/api/v1/productions/summary/today").with(authentication(authFor(true))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/productions/summary/today - non-admin authority → 403")
+    void todaySummary_nonAdmin_forbidden() throws Exception {
+        mockMvc.perform(get("/api/v1/productions/summary/today").with(authentication(authFor(false))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/productions/reports")
+    class GetReport {
+
+        @Test
+        @DisplayName("admin authority → 200")
+        void admin_ok() throws Exception {
+            when(service.getReport(any(), any(), any(), any(), any())).thenReturn(
+                    com.farm2home.common.core.reports.ReportPage.<com.farm2home.common.core.reports.ProductionReportRow,
+                            com.farm2home.common.core.reports.ProductionReportSummary>builder()
+                            .content(List.of())
+                            .pageNumber(0).pageSize(20).totalElements(0).totalPages(0)
+                            .summary(com.farm2home.common.core.reports.ProductionReportSummary.builder()
+                                    .totalRecords(0)
+                                    .totalLiters(BigDecimal.ZERO)
+                                    .build())
+                            .build());
+
+            mockMvc.perform(get("/api/v1/productions/reports").with(authentication(authFor(true))))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("non-admin authority → 403")
+        void nonAdmin_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/productions/reports").with(authentication(authFor(false))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/productions/analytics/production-trend")
+    class GetProductionTrend {
+
+        @Test
+        @DisplayName("authorized role → 200")
+        void authorized_ok() throws Exception {
+            when(service.getProductionTrend(eq(Granularity.DAILY), any(), any())).thenReturn(
+                    TrendSeries.<ProductionTrendPoint>builder().granularity(Granularity.DAILY)
+                            .points(List.of(ProductionTrendPoint.builder()
+                                    .period(LocalDate.of(2026, 1, 1)).totalLiters(new BigDecimal("500.00")).build()))
+                            .build());
+
+            mockMvc.perform(get("/api/v1/productions/analytics/production-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(authFor(true))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.points[0].totalLiters").value(500.00));
+        }
+
+        @Test
+        @DisplayName("unauthorized role → 403")
+        void unauthorized_forbidden() throws Exception {
+            mockMvc.perform(get("/api/v1/productions/analytics/production-trend")
+                            .param("granularity", "DAILY")
+                            .with(authentication(authFor(false))))
+                    .andExpect(status().isForbidden());
+        }
     }
 }
