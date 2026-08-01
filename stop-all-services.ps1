@@ -82,6 +82,15 @@ function Stop-TrackedProcess {
 
     if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
         & taskkill /PID $ProcessId /T /F *> $null
+        # taskkill returns as soon as it has *requested* termination, not once the process
+        # has actually exited - a JVM with many threads/handles can take a moment to vanish
+        # from the process table even after being force-killed. Without this second wait,
+        # a slow-to-exit-but-genuinely-dying process was misreported as "could not be
+        # stopped" even though the kill succeeded a few hundred ms later.
+        $forceDeadline = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $forceDeadline -and (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            Start-Sleep -Milliseconds 500
+        }
     }
 
     if (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
