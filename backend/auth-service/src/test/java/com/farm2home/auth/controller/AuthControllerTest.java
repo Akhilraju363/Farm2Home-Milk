@@ -85,7 +85,7 @@ class AuthControllerTest {
         @DisplayName("valid credentials → 200 with tokens")
         void validCredentials_ok() throws Exception {
             LoginRequest req = new LoginRequest();
-            req.setMobile("9876543210");
+            req.setIdentifier("9876543210");
             req.setPassword("Passw0rd!");
 
             when(authService.login(any(LoginRequest.class))).thenReturn(
@@ -102,7 +102,7 @@ class AuthControllerTest {
         @DisplayName("bad credentials → 401 via GlobalExceptionHandler")
         void badCredentials_unauthorized() throws Exception {
             LoginRequest req = new LoginRequest();
-            req.setMobile("9876543210");
+            req.setIdentifier("9876543210");
             req.setPassword("wrong");
 
             when(authService.login(any(LoginRequest.class)))
@@ -123,7 +123,7 @@ class AuthControllerTest {
         @DisplayName("send-otp → 200, delegates")
         void sendOtp_ok() throws Exception {
             OtpRequest req = new OtpRequest();
-            req.setMobile("9876543210");
+            req.setIdentifier("9876543210");
             req.setOtpType(OtpType.LOGIN);
 
             mockMvc.perform(post("/api/v1/auth/send-otp")

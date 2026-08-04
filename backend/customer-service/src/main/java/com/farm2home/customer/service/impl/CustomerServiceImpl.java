@@ -16,13 +16,18 @@ import com.farm2home.common.export.ExportFormat;
 import com.farm2home.common.export.TabularExporterFactory;
 import com.farm2home.common.web.storage.FileStorageService;
 import com.farm2home.customer.domain.entity.Customer;
+import com.farm2home.customer.domain.entity.CustomerAddress;
 import com.farm2home.customer.domain.enums.CustomerStatus;
+import com.farm2home.customer.domain.repository.CustomerAddressRepository;
 import com.farm2home.customer.domain.repository.CustomerRepository;
 import com.farm2home.customer.domain.repository.CustomerSpecifications;
+import com.farm2home.customer.dto.request.CreateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
+import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
 import com.farm2home.customer.exception.CustomerException;
 import com.farm2home.customer.exception.ResourceNotFoundException;
+import com.farm2home.customer.mapper.CustomerAddressMapper;
 import com.farm2home.customer.mapper.CustomerMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -51,6 +56,8 @@ public class CustomerServiceImpl {
     private final CustomerRepository repository;
     private final CustomerMapper mapper;
     private final FileStorageService fileStorageService;
+    private final CustomerAddressRepository addressRepository;
+    private final CustomerAddressMapper addressMapper;
 
     @Transactional(readOnly = true)
     public CustomerResponse findById(UUID id) {
@@ -99,6 +106,19 @@ public class CustomerServiceImpl {
     private Customer getCustomer(UUID id) {
         return repository.findByIdAndDeletedFalse(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Customer not found: " + id));
+    }
+
+    /** Self-service address creation. Note the customer row this depends on is created
+     *  asynchronously (CustomerEventConsumer, via Kafka) after auth-service's register() call —
+     *  callers hitting this immediately after registering may see a brief 404 until that event is
+     *  consumed, and should retry with a short backoff rather than treat it as a hard failure. */
+    @Transactional
+    @Audited(action = AuditAction.CREATE, entityType = "CustomerAddress")
+    public AddressResponse addAddress(UUID customerId, CreateAddressRequest request) {
+        Customer customer = getCustomer(customerId);
+        CustomerAddress address = addressMapper.toEntity(request);
+        address.setCustomerId(customer.getId());
+        return addressMapper.toResponse(addressRepository.save(address));
     }
 
     @Transactional(readOnly = true)

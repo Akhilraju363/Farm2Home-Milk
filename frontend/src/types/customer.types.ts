@@ -12,13 +12,19 @@ export type CustomerStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED'
 
 export interface CustomerAddress {
   id: string
-  customerId: string
   addressLine1: string
   addressLine2?: string
   city: string
   state: string
   pincode: string
-  latitude?: number
-  longitude?: number
-  isDefault: boolean
+  defaultAddress: boolean
+  createdAt: string
+}
+
+export interface CreateAddressRequest {
+  addressLine1: string
+  addressLine2?: string
+  city: string
+  state: string
+  pincode: string
 }

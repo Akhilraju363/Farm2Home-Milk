@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { tokenStorage } from './tokenStorage'
 
 const axiosClient = axios.create({
   baseURL: '/api/v1',
@@ -7,7 +8,7 @@ const axiosClient = axios.create({
 })
 
 axiosClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('accessToken')
+  const token = tokenStorage.getAccessToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -18,7 +19,7 @@ axiosClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('accessToken')
+      tokenStorage.clear()
       window.location.href = '/login'
     }
     return Promise.reject(error)

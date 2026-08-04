@@ -1,8 +1,9 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { AuthLayout } from '../layouts/AuthLayout'
 import { MainLayout } from '../layouts/MainLayout'
 import { ProtectedRoute } from '../components/common/ProtectedRoute'
 import { LoginPage } from '../pages/auth/LoginPage'
+import { RegisterPage } from '../pages/auth/RegisterPage'
+import { ForgotPasswordPage } from '../pages/auth/ForgotPasswordPage'
 import { DashboardPage } from '../pages/dashboard/DashboardPage'
 import { CustomersPage } from '../pages/customers/CustomersPage'
 import { SubscriptionsPage } from '../pages/subscriptions/SubscriptionsPage'
@@ -18,10 +19,9 @@ export function AppRoutes() {
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
       {/* Public auth routes */}
-      <Route element={<AuthLayout />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<div style={{ textAlign: 'center', padding: 16 }}>Registration coming soon</div>} />
-      </Route>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
       {/* Protected main app routes */}
       <Route element={<ProtectedRoute />}>

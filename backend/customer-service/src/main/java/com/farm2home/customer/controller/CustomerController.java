@@ -11,8 +11,11 @@ import com.farm2home.common.core.reports.CustomerReportSummary;
 import com.farm2home.common.core.reports.ReportPage;
 import com.farm2home.common.export.ExportFormat;
 import com.farm2home.common.web.dto.response.ApiResponse;
+import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.enums.CustomerStatus;
+import com.farm2home.customer.dto.request.CreateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
+import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
 import com.farm2home.customer.service.impl.CustomerServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
@@ -28,9 +31,11 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -151,6 +156,34 @@ public class CustomerController {
             @RequestParam("file") MultipartFile file) {
         return ResponseEntity.ok(ApiResponse.success("Profile image uploaded successfully",
                 customerService.uploadProfileImage(id, file)));
+    }
+
+    @PostMapping("/me/addresses")
+    @Operation(summary = "Add a delivery address for the current customer",
+            description = "Self-service: saves a delivery address against the caller's own customer profile "
+                    + "(customer id is taken from the bearer token, not the request body — there is no way to "
+                    + "add an address to a different customer here). The underlying customer row is created "
+                    + "asynchronously from auth-service's register() call via a Kafka event "
+                    + "(CustomerEventConsumer); calling this endpoint immediately after registering may 404 "
+                    + "briefly until that event is consumed — retry a few times with a short backoff rather "
+                    + "than treating it as a hard failure.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201",
+                description = "Address saved"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "Validation failed (missing city/state/address line, or pincode not 6 digits)",
+                content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "Customer profile not created yet (registration Kafka event not yet consumed) — "
+                        + "retry shortly", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<AddressResponse>> addAddress(
+            @Valid @RequestBody CreateAddressRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Address saved successfully", customerService.addAddress(principal.userId(), request)));
     }
 
     @GetMapping("/summary")

@@ -16,9 +16,9 @@ public class UserDetailsServiceImpl implements UserDetailsService {
 
     @Override
     @Transactional(readOnly = true)
-    public UserDetails loadUserByUsername(String mobile) throws UsernameNotFoundException {
-        return userRepository.findByMobileAndDeletedFalse(mobile)
+    public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
+        return userRepository.findByIdentifierAndDeletedFalse(identifier)
                 .orElseThrow(() -> new UsernameNotFoundException(
-                        "User not found with mobile: " + mobile));
+                        "User not found with mobile/email: " + identifier));
     }
 }

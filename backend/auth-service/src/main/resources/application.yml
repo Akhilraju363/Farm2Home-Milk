@@ -30,6 +30,9 @@ spring:
     create-schemas: true
   kafka:
     bootstrap-servers: localhost:9092
+    # Producer tuning (e.g. max.block.ms) lives in KafkaConfig.java's explicit ProducerFactory
+    # config maps, NOT here - both producer beans are built with a hardcoded Map.of(...) that
+    # never reads spring.kafka.producer.* properties, so settings here would be silently inert.
 
 eureka:
   client:
