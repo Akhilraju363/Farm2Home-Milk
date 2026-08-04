@@ -39,18 +39,34 @@ public class AuthController {
     @Operation(summary = "Register a new customer",
             description = "Creates a new CUSTOMER-role account (verified=false) and sends a 6-digit "
                     + "verification OTP to the given mobile number (OtpType.REGISTRATION, 5-minute expiry). "
-                    + "Call POST /verify-otp with the same mobile to activate the account. No authentication "
-                    + "required — this is a pre-registration, public endpoint (listed in SecurityConfig's "
-                    + "PUBLIC_ENDPOINTS).")
+                    + "Returns an access/refresh token pair immediately (AuthServiceImpl.register builds one the "
+                    + "same way login does) so callers can proceed through post-registration steps (e.g. saving "
+                    + "an address) before verification — isEnabled() is false until verify-otp is called, but "
+                    + "JWT bearer validation does not check that flag. Call POST /verify-otp with the same "
+                    + "mobile to activate the account. No authentication required — this is a pre-registration, "
+                    + "public endpoint (listed in SecurityConfig's PUBLIC_ENDPOINTS).")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201",
-                description = "Account created and OTP sent",
+                description = "Account created, OTP sent, tokens issued",
                 content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                         examples = @ExampleObject(value = """
                                 {
                                   "success": true,
                                   "message": "Registration successful. Please verify your mobile number with the OTP sent.",
-                                  "data": null
+                                  "data": {
+                                    "accessToken": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI5ODc2NTQzMjEwIn0.abc123",
+                                    "refreshToken": "8b1e6a2c-2f9a-4b8b-9c2e-0a1a2b3c4d5e.def456",
+                                    "tokenType": "Bearer",
+                                    "expiresIn": 604800,
+                                    "user": {
+                                      "id": "1a2b3c4d-5e6f-4a1b-8c9d-0e1f2a3b4c5d",
+                                      "mobile": "9876543210",
+                                      "email": "jane.doe@example.com",
+                                      "username": "jane.doe",
+                                      "verified": false,
+                                      "roles": ["CUSTOMER"]
+                                    }
+                                  }
                                 }"""))),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                 description = "Validation failed (e.g. invalid mobile/email format, password missing an "
@@ -63,18 +79,20 @@ public class AuthController {
                 description = "CUSTOMER role missing from the database — a server misconfiguration (seed data "
                         + "not run), not a client error", content = @Content)
     })
-    public ResponseEntity<ApiResponse<Void>> register(@Valid @RequestBody RegisterRequest request) {
-        authService.register(request);
+    public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
+        AuthResponse response = authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Registration successful. Please verify your mobile number with the OTP sent.", null));
+                .body(ApiResponse.success("Registration successful. Please verify your mobile number with the OTP sent.", response));
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Login with mobile and password",
-            description = "Authenticates by mobile + password and returns a fresh access/refresh token pair. "
-                    + "Revokes every refresh token previously issued to the user, so only the tokens from this "
-                    + "login remain usable with POST /refresh-token. No authentication required — this is a "
-                    + "pre-login, public endpoint (listed in SecurityConfig's PUBLIC_ENDPOINTS).")
+    @Operation(summary = "Login with mobile/email and password",
+            description = "Authenticates by identifier (10-digit mobile number OR registered email address, "
+                    + "see UserRepository.findByIdentifierAndDeletedFalse) + password, and returns a fresh "
+                    + "access/refresh token pair. Revokes every refresh token previously issued to the user, "
+                    + "so only the tokens from this login remain usable with POST /refresh-token. No "
+                    + "authentication required — this is a pre-login, public endpoint (listed in "
+                    + "SecurityConfig's PUBLIC_ENDPOINTS).")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Login successful",
@@ -101,7 +119,7 @@ public class AuthController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                 description = "Validation failed", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                description = "Invalid mobile number or password", content = @Content),
+                description = "Invalid mobile number/email/username or password", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                 description = "Edge case only: authentication succeeded but the user row could not be "
                         + "re-fetched immediately after (e.g. deleted concurrently)", content = @Content)
@@ -111,25 +129,28 @@ public class AuthController {
     }
 
     @PostMapping("/send-otp")
-    @Operation(summary = "Send OTP to mobile number",
-            description = "Generates a 6-digit OTP (5-minute expiry) for the given mobile + otpType, "
-                    + "invalidating any previously unused OTP for the same combination, and sends it by SMS "
-                    + "(best-effort — SmsService swallows delivery failures, so this call never fails because "
-                    + "of an SMS outage). Also emails the OTP if the mobile already belongs to a registered "
-                    + "user with an email on file. Does not require the mobile to belong to an existing user "
-                    + "(REGISTRATION OTPs are requested before the account is verified). No authentication "
-                    + "required — this is a pre-login, public endpoint (listed in SecurityConfig's "
-                    + "PUBLIC_ENDPOINTS).")
+    @Operation(summary = "Send OTP to a mobile number or email's registered account",
+            description = "Generates a 6-digit OTP (5-minute expiry) and sends it by SMS (best-effort — "
+                    + "SmsService swallows delivery failures, so this call never fails because of an SMS "
+                    + "outage), invalidating any previously unused OTP for the same combination. The "
+                    + "identifier may be a 10-digit mobile number (used as-is; need not already belong to a "
+                    + "registered user, since REGISTRATION OTPs are requested before the account exists) or "
+                    + "an email address (resolved to that account's mobile number - if the email matches no "
+                    + "account, this silently does nothing rather than ever confirming/denying it's "
+                    + "registered). Also emails the OTP if the resolved user has an email on file. No "
+                    + "authentication required — this is a pre-login, public endpoint (listed in "
+                    + "SecurityConfig's PUBLIC_ENDPOINTS).")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                description = "OTP generated and send attempted (always returns success even if the "
-                        + "downstream SMS provider call fails)"),
+                description = "Always returns success, whether or not an OTP was actually generated/sent - "
+                        + "see the identifier resolution rules above"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                description = "Validation failed (invalid mobile format or missing otpType)", content = @Content)
+                description = "Validation failed (blank identifier or missing otpType)", content = @Content)
     })
     public ResponseEntity<ApiResponse<Void>> sendOtp(@Valid @RequestBody OtpRequest request) {
         authService.sendOtp(request);
-        return ResponseEntity.ok(ApiResponse.success("OTP sent successfully to " + request.getMobile(), null));
+        return ResponseEntity.ok(ApiResponse.success(
+                "If " + request.getIdentifier() + " is registered, an OTP has been sent.", null));
     }
 
     @PostMapping("/verify-otp")

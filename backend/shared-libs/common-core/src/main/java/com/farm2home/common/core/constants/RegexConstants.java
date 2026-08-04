@@ -11,6 +11,9 @@ public final class RegexConstants {
 
     public static final String OTP_PATTERN = "^\\d{6}$";
 
+    /** 6-digit Indian postal (PIN) code. */
+    public static final String PINCODE_PATTERN = "^\\d{6}$";
+
     /** At least one lowercase, one uppercase, one digit, one of @$!%*?& */
     public static final String PASSWORD_PATTERN =
             "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&]).+$";

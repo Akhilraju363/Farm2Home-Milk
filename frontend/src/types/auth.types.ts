@@ -1,5 +1,5 @@
 export interface LoginRequest {
-  mobile: string
+  identifier: string
   password: string
 }
 
@@ -11,9 +11,11 @@ export interface RegisterRequest {
   password: string
 }
 
+export type OtpType = 'REGISTRATION' | 'LOGIN' | 'FORGOT_PASSWORD'
+
 export interface OtpRequest {
-  mobile: string
-  otpType: 'REGISTRATION' | 'LOGIN' | 'FORGOT_PASSWORD'
+  identifier: string
+  otpType: OtpType
 }
 
 export interface AuthResponse {

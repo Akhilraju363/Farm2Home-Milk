@@ -19,6 +19,7 @@ import com.farm2home.auth.service.OtpService;
 import com.farm2home.common.core.audit.AuditAction;
 import com.farm2home.common.core.audit.AuditEntry;
 import com.farm2home.common.core.audit.AuditLogService;
+import com.farm2home.common.core.constants.RegexConstants;
 import com.farm2home.common.core.constants.SecurityConstants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -99,21 +100,21 @@ public class AuthServiceImpl implements AuthService {
     public AuthResponse login(LoginRequest request) {
         try {
             authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(request.getMobile(), request.getPassword())
+                    new UsernamePasswordAuthenticationToken(request.getIdentifier(), request.getPassword())
             );
         } catch (BadCredentialsException e) {
-            throw new AuthException("Invalid mobile number or password.");
+            throw new AuthException("Invalid mobile number/email/username or password.");
         } catch (AuthenticationException e) {
             throw new AuthException("Authentication failed: " + e.getMessage());
         }
 
-        User user = userRepository.findByMobileAndDeletedFalse(request.getMobile())
+        User user = userRepository.findByIdentifierAndDeletedFalse(request.getIdentifier())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found."));
 
         // Revoke previous refresh tokens
         refreshTokenRepository.revokeAllByUser(user);
 
-        log.info("User logged in: {}", request.getMobile());
+        log.info("User logged in: {}", user.getMobile());
         auditLogService.record(AuditAction.LOGIN, "User", user.getId().toString(), user.getMobile(),
                 "User logged in");
         return buildAuthResponse(user);
@@ -122,7 +123,25 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void sendOtp(OtpRequest request) {
-        otpService.generateAndSend(request.getMobile(), request.getOtpType());
+        String mobile = resolveMobileForOtp(request.getIdentifier());
+        if (mobile == null) {
+            // Email-shaped identifier that matches no account - stay silent rather than ever
+            // confirming/denying whether it's registered (classic forgot-password enumeration guard).
+            return;
+        }
+        otpService.generateAndSend(mobile, request.getOtpType());
+    }
+
+    /** A mobile-shaped identifier is used as-is - matches the existing REGISTRATION-resend
+     *  behavior, which has never required the mobile to belong to an existing user. An
+     *  email-shaped identifier must resolve to a real account's mobile number (OTPs are always
+     *  SMS-delivered); see the null-handling in sendOtp() above for why an unresolvable email
+     *  isn't treated as an error. */
+    private String resolveMobileForOtp(String identifier) {
+        if (identifier != null && identifier.matches(RegexConstants.MOBILE_PATTERN)) {
+            return identifier;
+        }
+        return userRepository.findByEmailAndDeletedFalse(identifier).map(User::getMobile).orElse(null);
     }
 
     @Override

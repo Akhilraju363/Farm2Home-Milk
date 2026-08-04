@@ -176,13 +176,13 @@ class AuthServiceImplTest {
         @DisplayName("valid credentials → authenticates, revokes old tokens, returns new tokens")
         void happyPath() {
             LoginRequest req = new LoginRequest();
-            req.setMobile(mobile);
+            req.setIdentifier(mobile);
             req.setPassword("Passw0rd!");
 
             when(authenticationManager.authenticate(any())).thenReturn(
                     new UsernamePasswordAuthenticationToken(mobile, "Passw0rd!"));
             User user = buildUser(true);
-            when(userRepository.findByMobileAndDeletedFalse(mobile)).thenReturn(Optional.of(user));
+            when(userRepository.findByIdentifierAndDeletedFalse(mobile)).thenReturn(Optional.of(user));
             stubJwtAndMapperForBuildAuthResponse(user);
 
             AuthResponse response = service.login(req);
@@ -196,20 +196,20 @@ class AuthServiceImplTest {
         @DisplayName("bad credentials → throws AuthException")
         void badCredentials_throws() {
             LoginRequest req = new LoginRequest();
-            req.setMobile(mobile);
+            req.setIdentifier(mobile);
             req.setPassword("wrong");
             when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("bad"));
 
             assertThatThrownBy(() -> service.login(req))
                     .isInstanceOf(AuthException.class)
-                    .hasMessageContaining("Invalid mobile number or password");
+                    .hasMessageContaining("Invalid mobile number/email/username or password");
         }
 
         @Test
         @DisplayName("other authentication failure → throws AuthException")
         void otherAuthFailure_throws() {
             LoginRequest req = new LoginRequest();
-            req.setMobile(mobile);
+            req.setIdentifier(mobile);
             req.setPassword("wrong");
             when(authenticationManager.authenticate(any())).thenThrow(
                     new AuthenticationException("locked") {});
@@ -227,15 +227,46 @@ class AuthServiceImplTest {
     class Otp {
 
         @Test
-        @DisplayName("sendOtp delegates to OtpService")
-        void sendOtp_delegates() {
+        @DisplayName("sendOtp with a mobile identifier → delegates to OtpService as-is")
+        void sendOtp_mobileIdentifier_delegates() {
             OtpRequest req = new OtpRequest();
-            req.setMobile(mobile);
+            req.setIdentifier(mobile);
             req.setOtpType(OtpType.LOGIN);
 
             service.sendOtp(req);
 
             verify(otpService).generateAndSend(mobile, OtpType.LOGIN);
+        }
+
+        @Test
+        @DisplayName("sendOtp with a registered email identifier → resolves to the account's mobile")
+        void sendOtp_registeredEmailIdentifier_resolvesToMobile() {
+            String email = "asha.rao@example.com";
+            OtpRequest req = new OtpRequest();
+            req.setIdentifier(email);
+            req.setOtpType(OtpType.FORGOT_PASSWORD);
+
+            User user = buildUser(true);
+            when(userRepository.findByEmailAndDeletedFalse(email)).thenReturn(Optional.of(user));
+
+            service.sendOtp(req);
+
+            verify(otpService).generateAndSend(user.getMobile(), OtpType.FORGOT_PASSWORD);
+        }
+
+        @Test
+        @DisplayName("sendOtp with an unregistered email identifier → silently does nothing")
+        void sendOtp_unregisteredEmailIdentifier_noOp() {
+            String email = "nobody@example.com";
+            OtpRequest req = new OtpRequest();
+            req.setIdentifier(email);
+            req.setOtpType(OtpType.FORGOT_PASSWORD);
+
+            when(userRepository.findByEmailAndDeletedFalse(email)).thenReturn(Optional.empty());
+
+            service.sendOtp(req);
+
+            verifyNoInteractions(otpService);
         }
 
         @Test

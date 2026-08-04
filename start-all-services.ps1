@@ -263,11 +263,22 @@ function Start-BackendService {
         [string]$HealthPath = '/actuator/health',
         [hashtable]$AuthHeaders,
         [switch]$AnyResponseCounts,
-        [int]$TimeoutSeconds = $HealthTimeoutSeconds
+        [int]$TimeoutSeconds = $HealthTimeoutSeconds,
+        # Lets a call site pass extra -D system properties, e.g. a server.port override for a
+        # service whose documented default port collides with something else already running on
+        # a given developer's machine (add a machine-local override at the call site, not here).
+        # $Port must be kept in sync with whatever port is actually passed here - it's what
+        # Wait-ForHealth polls.
+        [string[]]$ExtraJavaArgs = @()
     )
 
     Write-Step "Starting $Name..."
     $logFile = Join-Path $LogsDir "$Name.log"
+
+    # Guard against a $null caught by the [string[]] type (e.g. a caller-side if/else that
+    # collapsed an empty-array branch to $null) - a null element here would otherwise poison
+    # Start-Process's -ArgumentList below.
+    if (-not $ExtraJavaArgs) { $ExtraJavaArgs = @() }
 
     $jar = Resolve-ServiceJar -ModuleName $Name
     if (-not $jar) {
@@ -280,6 +291,7 @@ function Start-BackendService {
     # logs/ folder regardless of the working directory it happens to be launched from.
     $javaArgs = @(
         "-Dlogging.file.path=`"$LogsDir`""
+    ) + $ExtraJavaArgs + @(
         '-jar'
         "`"$($jar.FullName)`""
     )
@@ -410,7 +422,12 @@ $microservices = @(
 
 $failedServices = @()
 foreach ($service in $microservices) {
-    $ok = Start-BackendService -Name $service.Name -Port $service.Port
+    # NOTE: assigning the output of an if/else directly (`$x = if(...){a}else{@()}`) collapses
+    # an empty-array branch to $null, which then poisons Start-Process's -ArgumentList with a
+    # null element. Building the array imperatively avoids that collapse.
+    $extraArgs = @()
+    if ($service.ContainsKey('ExtraJavaArgs')) { $extraArgs = $service.ExtraJavaArgs }
+    $ok = Start-BackendService -Name $service.Name -Port $service.Port -ExtraJavaArgs $extraArgs
     if (-not $ok) { $failedServices += $service.Name }
 }
 
