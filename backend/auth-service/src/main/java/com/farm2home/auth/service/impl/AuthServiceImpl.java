@@ -71,7 +71,9 @@ public class AuthServiceImpl implements AuthService {
         user.setUsername(request.getFirstName().toLowerCase() + "." + request.getLastName().toLowerCase());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setActive(true);
-        user.setVerified(false);
+        // TODO: set back to false once real-time mobile OTP delivery is integrated (SmsService
+        // is currently a stub), and require verifyOtp() before isEnabled() allows login.
+        user.setVerified(true);
         user.setRoles(Set.of(customerRole));
 
         user = userRepository.save(user);
@@ -91,7 +93,6 @@ public class AuthServiceImpl implements AuthService {
                 .details("User registered: " + user.getMobile())
                 .build());
 
-        // Return tokens but user.isEnabled() is false until verified
         return buildAuthResponse(user);
     }
 
@@ -190,6 +191,12 @@ public class AuthServiceImpl implements AuthService {
         log.info("User logged out: {}", mobile);
         auditLogService.record(AuditAction.LOGOUT, "User", user.getId().toString(), user.getMobile(),
                 "User logged out");
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AuthResponse.UserInfo getCurrentUserInfo(User user) {
+        return userMapper.toUserInfo(user);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

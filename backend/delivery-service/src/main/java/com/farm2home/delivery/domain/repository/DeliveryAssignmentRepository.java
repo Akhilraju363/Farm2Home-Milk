@@ -35,8 +35,11 @@ public interface DeliveryAssignmentRepository extends JpaRepository<DeliveryAssi
      *  these rows into one point per period (total/completed/failed counts). The GROUP BY/COUNT
      *  runs entirely in Postgres; the result set is at most a few rows per period, never one
      *  row per assignment. */
+    // Uses CAST(expr AS date), not Postgres' expr::date shorthand - Hibernate's native-query
+    // parameter parser misreads the second ':' in '::' as the start of a malformed named
+    // parameter, which Postgres then rejects with a syntax error at the leftover ':'.
     @Query(value = """
-            SELECT date_trunc(:unit, a.assigned_at)::date AS period, a.status AS status, COUNT(*) AS cnt
+            SELECT CAST(date_trunc(:unit, a.assigned_at) AS date) AS period, a.status AS status, COUNT(*) AS cnt
             FROM delivery.delivery_assignments a
             WHERE (CAST(:start AS timestamp) IS NULL OR a.assigned_at >= :start)
               AND (CAST(:endExclusive AS timestamp) IS NULL OR a.assigned_at < :endExclusive)

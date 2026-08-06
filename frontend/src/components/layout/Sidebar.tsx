@@ -1,12 +1,17 @@
 import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText,
-  Toolbar, Typography, Box, Divider, Tooltip,
+  Toolbar, Typography, Box, Divider, Tooltip, Button, Menu, MenuItem, CircularProgress,
 } from '@mui/material'
 import {
   Dashboard, People, Subscriptions, ShoppingCart, Payment,
-  Inventory, Agriculture, BarChart, WaterDrop,
+  Inventory, Agriculture, BarChart, WaterDrop, Download, Logout, Notifications,
 } from '@mui/icons-material'
+import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useSnackbar } from 'notistack'
+import { useAuth } from '../../hooks/useAuth'
+import { reportsService, REPORT_TYPES, type ReportType } from '../../services/reportsService'
+import { downloadBlob } from '../../utils/download'
 
 export const DRAWER_WIDTH = 240
 
@@ -19,6 +24,10 @@ const NAV_ITEMS = [
   { label: 'Inventory',     icon: <Inventory />,      path: '/inventory' },
   { label: 'Production',    icon: <WaterDrop />,      path: '/production' },
   { label: 'Reports',       icon: <BarChart />,       path: '/reports' },
+  // Customers/delivery partners still reach their own notifications via the bell's "View all"
+  // link (self-scoped /notifications/me) - this sidebar entry is just the ops-wide browsing
+  // path, so it's restricted the same way the other admin-only pages here effectively are.
+  { label: 'Notifications', icon: <Notifications />,  path: '/notifications', adminOnly: true },
 ]
 
 interface Props {
@@ -26,12 +35,62 @@ interface Props {
   onClose: () => void
 }
 
-function DrawerContent() {
-  const navigate = useNavigate()
-  const { pathname } = useLocation()
+function DownloadReportsButton() {
+  const { enqueueSnackbar } = useSnackbar()
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const [downloading, setDownloading] = useState<string | null>(null)
+
+  const handleDownload = async (report: ReportType) => {
+    setAnchorEl(null)
+    setDownloading(report.path)
+    try {
+      const { blob, filename } = await reportsService.export(report, 'CSV')
+      downloadBlob(blob, filename)
+    } catch {
+      enqueueSnackbar(`Couldn't download ${report.label}. Please try again.`, { variant: 'error' })
+    } finally {
+      setDownloading(null)
+    }
+  }
 
   return (
     <>
+      <Button
+        fullWidth
+        variant="contained"
+        color="primary"
+        startIcon={downloading ? <CircularProgress size={16} color="inherit" /> : <Download />}
+        onClick={(e) => setAnchorEl(e.currentTarget)}
+        disabled={!!downloading}
+        sx={{ borderRadius: 1.5, textTransform: 'none', py: 1 }}
+      >
+        Download Reports
+      </Button>
+      <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}>
+        {REPORT_TYPES.map((r) => (
+          <MenuItem key={r.path} onClick={() => handleDownload(r)}>
+            {r.label} (CSV)
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  )
+}
+
+function DrawerContent() {
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const { logoutUser, isAdmin } = useAuth()
+  const admin = isAdmin()
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || admin)
+
+  const handleLogout = () => {
+    logoutUser()
+    navigate('/login')
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <Toolbar sx={{ gap: 1 }}>
         <Agriculture sx={{ color: 'primary.main', fontSize: 28 }} />
         <Box>
@@ -45,7 +104,7 @@ function DrawerContent() {
       </Toolbar>
       <Divider />
       <List sx={{ px: 1, pt: 1 }}>
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const active = pathname === item.path || pathname.startsWith(item.path + '/')
           return (
             <Tooltip key={item.path} title="" placement="right">
@@ -70,7 +129,16 @@ function DrawerContent() {
           )
         })}
       </List>
-    </>
+
+      <Box sx={{ mt: 'auto', p: 1.5 }}>
+        <DownloadReportsButton />
+        <Divider sx={{ my: 1.5 }} />
+        <ListItemButton onClick={handleLogout} sx={{ borderRadius: 1.5, color: 'error.main' }}>
+          <ListItemIcon sx={{ minWidth: 36, color: 'error.main' }}><Logout fontSize="small" /></ListItemIcon>
+          <ListItemText primary="Logout" primaryTypographyProps={{ fontSize: 14 }} />
+        </ListItemButton>
+      </Box>
+    </Box>
   )
 }
 

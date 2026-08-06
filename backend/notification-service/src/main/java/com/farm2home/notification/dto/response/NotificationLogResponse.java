@@ -24,6 +24,13 @@ public class NotificationLogResponse {
             + "name from order/delivery/payment/subscription-service).", example = "DELIVERY_ASSIGNED")
     private String eventType;
 
+    @Schema(description = "Coarse category derived from eventType: ORDER, PAYMENT, DELIVERY, "
+            + "SUBSCRIPTION, ACCOUNT, or OTHER.", example = "DELIVERY")
+    private String type;
+
+    @Schema(description = "Urgency derived from eventType: HIGH, MEDIUM, or LOW.", example = "MEDIUM")
+    private String priority;
+
     @Schema(description = "Channel-specific destination: email address (EMAIL), mobile number "
             + "(SMS), or the recipient's customer id (PUSH).", example = "customer@example.com")
     private String recipient;
@@ -45,6 +52,9 @@ public class NotificationLogResponse {
 
     @Schema(description = "When the send was attempted. Null if still PENDING.", example = "2026-07-31T09:15:05")
     private LocalDateTime sentAt;
+
+    @Schema(description = "Whether the recipient has read this notification yet.", example = "false")
+    private boolean read;
 
     @Schema(description = "When the log entry was created.", example = "2026-07-31T09:15:00")
     private LocalDateTime createdAt;

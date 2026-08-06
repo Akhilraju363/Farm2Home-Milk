@@ -6,6 +6,8 @@ import com.farm2home.common.core.push.PushSendResult;
 import com.farm2home.common.core.push.PushService;
 import com.farm2home.common.core.sms.SmsSendResult;
 import com.farm2home.common.core.sms.SmsService;
+import com.farm2home.notification.client.CustomerContactDto;
+import com.farm2home.notification.client.CustomerServiceClient;
 import com.farm2home.notification.domain.entity.NotificationLog;
 import com.farm2home.notification.domain.entity.NotificationTemplate;
 import com.farm2home.notification.domain.enums.NotificationChannel;
@@ -15,6 +17,7 @@ import com.farm2home.notification.domain.repository.NotificationTemplateReposito
 import com.farm2home.notification.dto.KafkaEventDto;
 import com.farm2home.notification.mapper.NotificationMapper;
 import com.farm2home.notification.service.impl.NotificationServiceImpl;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -25,6 +28,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.util.ReflectionTestUtils;
+import reactor.core.publisher.Mono;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -45,10 +49,19 @@ class NotificationServiceImplTest {
     @Mock private AuditLogService auditLogService;
     @Mock private SmsService smsService;
     @Mock private PushService pushService;
+    @Mock private CustomerServiceClient customerServiceClient;
 
     @InjectMocks private NotificationServiceImpl service;
 
     private final UUID customerId = UUID.randomUUID();
+
+    // buildEvent() never sets recipientEmail/customerName, so process() enriches from
+    // customerServiceClient on nearly every test here - default it to "nothing found" so
+    // pre-existing tests that don't care about enrichment keep behaving exactly as before.
+    @BeforeEach
+    void stubEnrichmentAsEmpty() {
+        lenient().when(customerServiceClient.getContact(any())).thenReturn(Mono.empty());
+    }
 
     private KafkaEventDto buildEvent(String eventType) {
         KafkaEventDto event = new KafkaEventDto();
@@ -291,6 +304,56 @@ class NotificationServiceImplTest {
         }
 
         @Test
+        @DisplayName("recipientEmail/customerName missing → enriches from customer-service before sending")
+        void missingContactInfo_enrichedFromCustomerService() {
+            KafkaEventDto event = buildEvent("PAYMENT_SUCCESS");
+            event.setRecipientMobile(null); // force both SMS and EMAIL to depend on enrichment
+            CustomerContactDto contact = new CustomerContactDto();
+            contact.setFirstName("Asha");
+            contact.setLastName("Rao");
+            contact.setMobile("9876500000");
+            contact.setEmail("asha.rao@example.com");
+            when(customerServiceClient.getContact(customerId)).thenReturn(Mono.just(contact));
+            NotificationTemplate smsTemplate = buildTemplate("PAYMENT_SUCCESS_SMS", NotificationChannel.SMS);
+            NotificationTemplate emailTemplate = buildTemplate("PAYMENT_SUCCESS_EMAIL", NotificationChannel.EMAIL);
+            when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_SMS"))
+                    .thenReturn(Optional.of(smsTemplate));
+            when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_EMAIL"))
+                    .thenReturn(Optional.of(emailTemplate));
+            when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
+            when(mailSender.isEmpty()).thenReturn(true);
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            verify(smsService).sendSms(eq("9876500000"), any(), eq("PAYMENT_SUCCESS"));
+            assertThat(event.getCustomerName()).isEqualTo("Asha Rao");
+            assertThat(event.getRecipientEmail()).isEqualTo("asha.rao@example.com");
+        }
+
+        @Test
+        @DisplayName("customer-service lookup fails → falls back to PUSH only, no exception")
+        void enrichmentLookupFails_fallsBackToPushOnly() {
+            KafkaEventDto event = buildEvent("PAYMENT_SUCCESS");
+            event.setRecipientMobile(null);
+            when(customerServiceClient.getContact(customerId)).thenReturn(Mono.error(new RuntimeException("unreachable")));
+            lenient().when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_SMS"))
+                    .thenReturn(Optional.empty());
+            NotificationTemplate pushTemplate = NotificationTemplate.builder()
+                    .id(UUID.randomUUID()).templateCode("PAYMENT_SUCCESS_PUSH").channel(NotificationChannel.PUSH)
+                    .subject("Payment Received").body("body").active(true).build();
+            when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_PUSH"))
+                    .thenReturn(Optional.of(pushTemplate));
+            when(pushService.sendPush(any(), any(), any(), any())).thenReturn(PushSendResult.success("push-1"));
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            verify(smsService, never()).sendSms(any(), any(), any());
+            verify(pushService).sendPush(eq(customerId.toString()), any(), any(), eq("PAYMENT_SUCCESS"));
+        }
+
+        @Test
         @DisplayName("template renders placeholders correctly")
         void templateRendering() {
             KafkaEventDto event = buildEvent("PAYMENT_SUCCESS");
@@ -366,6 +429,76 @@ class NotificationServiceImplTest {
         }
     }
 
+    @Nested @DisplayName("getMyRecent()")
+    class GetMyRecent {
+
+        private NotificationLog logEntry(String eventType, NotificationChannel channel, String subject,
+                                          java.time.LocalDateTime createdAt) {
+            return NotificationLog.builder()
+                    .id(UUID.randomUUID())
+                    .eventType(eventType)
+                    .channel(channel)
+                    .recipient("9876543210")
+                    .subject(subject)
+                    .message("body")
+                    .status(NotificationStatus.SENT)
+                    .createdAt(createdAt)
+                    .build();
+        }
+
+        @Test
+        @DisplayName("same event fanned out to SMS+EMAIL+PUSH within seconds → collapses to one item, preferring the subject-bearing entry")
+        void collapsesSameEventAcrossChannels() {
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            NotificationLog sms = logEntry("ORDER_CREATED", NotificationChannel.SMS, null, now);
+            NotificationLog email = logEntry("ORDER_CREATED", NotificationChannel.EMAIL, "Order Confirmed", now.minusSeconds(1));
+            when(logRepository.findAllByRecipientIdOrderByCreatedAtDesc(eq(customerId), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(sms, email)));
+
+            var result = service.getMyRecent(customerId, 10);
+
+            assertThat(result).hasSize(1);
+            assertThat(result.get(0).getSubject()).isEqualTo("Order Confirmed");
+            assertThat(result.get(0).getEventType()).isEqualTo("ORDER_CREATED");
+        }
+
+        @Test
+        @DisplayName("different event types are never collapsed, even if adjacent in time")
+        void distinctEventTypesKeptSeparate() {
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            NotificationLog order = logEntry("ORDER_CREATED", NotificationChannel.SMS, null, now);
+            NotificationLog payment = logEntry("PAYMENT_SUCCESS", NotificationChannel.SMS, null, now.minusSeconds(1));
+            when(logRepository.findAllByRecipientIdOrderByCreatedAtDesc(eq(customerId), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(order, payment)));
+
+            var result = service.getMyRecent(customerId, 10);
+
+            assertThat(result).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("OTP events are excluded from the notification center")
+        void excludesOtpEvents() {
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            NotificationLog otp = logEntry(EmailTemplateConstants.EVENT_OTP, NotificationChannel.SMS, null, now);
+            when(logRepository.findAllByRecipientIdOrderByCreatedAtDesc(eq(customerId), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(otp)));
+
+            var result = service.getMyRecent(customerId, 10);
+
+            assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("no logs → returns empty list")
+        void noLogs_returnsEmpty() {
+            when(logRepository.findAllByRecipientIdOrderByCreatedAtDesc(eq(customerId), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of()));
+
+            assertThat(service.getMyRecent(customerId, 10)).isEmpty();
+        }
+    }
+
     @Nested @DisplayName("findById()")
     class FindById {
 
@@ -391,6 +524,58 @@ class NotificationServiceImplTest {
 
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.findById(logId))
                     .isInstanceOf(com.farm2home.notification.exception.ResourceNotFoundException.class);
+        }
+    }
+
+    @Nested @DisplayName("markAsRead()")
+    class MarkAsRead {
+
+        @Test
+        @DisplayName("unread notification owned by the caller → marks it read and saves")
+        void marksUnreadAsRead() {
+            UUID notificationId = UUID.randomUUID();
+            NotificationLog log = NotificationLog.builder().id(notificationId).recipientId(customerId).build();
+            when(logRepository.findByIdAndRecipientId(notificationId, customerId)).thenReturn(Optional.of(log));
+
+            service.markAsRead(customerId, notificationId);
+
+            assertThat(log.isRead()).isTrue();
+            verify(logRepository).save(log);
+        }
+
+        @Test
+        @DisplayName("already-read notification → no-op, does not re-save")
+        void alreadyRead_noOp() {
+            UUID notificationId = UUID.randomUUID();
+            NotificationLog log = NotificationLog.builder().id(notificationId).recipientId(customerId).isRead(true).build();
+            when(logRepository.findByIdAndRecipientId(notificationId, customerId)).thenReturn(Optional.of(log));
+
+            service.markAsRead(customerId, notificationId);
+
+            verify(logRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("notification belongs to someone else (or doesn't exist) → throws, never leaks existence via a different error")
+        void notOwnedByCaller_throws() {
+            UUID notificationId = UUID.randomUUID();
+            when(logRepository.findByIdAndRecipientId(notificationId, customerId)).thenReturn(Optional.empty());
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.markAsRead(customerId, notificationId))
+                    .isInstanceOf(com.farm2home.notification.exception.ResourceNotFoundException.class);
+            verify(logRepository, never()).save(any());
+        }
+    }
+
+    @Nested @DisplayName("markAllAsRead()")
+    class MarkAllAsRead {
+
+        @Test
+        @DisplayName("delegates to the bulk repository update, scoped to the caller")
+        void delegatesToRepository() {
+            service.markAllAsRead(customerId);
+
+            verify(logRepository).markAllAsReadForRecipient(customerId);
         }
     }
 }

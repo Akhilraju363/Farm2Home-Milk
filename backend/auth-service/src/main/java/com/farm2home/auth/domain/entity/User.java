@@ -95,10 +95,19 @@ public class User implements UserDetails {
         return passwordHash;
     }
 
-    /** Spring Security uses mobile as the principal identifier. */
+    /** Spring Security uses mobile as the principal identifier. This shadows Lombok's own
+     *  generated getter for the `username` field below - anything that needs the actual
+     *  username column (e.g. UserMapper#toUserInfo) must go through getAccountUsername()
+     *  instead of getUsername(). */
     @Override
     public String getUsername() {
         return mobile;
+    }
+
+    /** The account's actual username column, distinct from getUsername() above (which Spring
+     *  Security's UserDetails contract repurposes to return the mobile number instead). */
+    public String getAccountUsername() {
+        return username;
     }
 
     @Override

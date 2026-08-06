@@ -145,6 +145,16 @@
                         <exclude>**/dto/**</exclude>
                         <exclude>**/domain/entity/**</exclude>
                         <exclude>**/domain/enums/**</exclude>
+                        <!-- Cross-service dashboard/report/analytics response DTOs (common-core) -
+                             same rationale as **/dto/** above, just different package names since
+                             these are shared response shapes rather than one service's own DTOs.
+                             Scoped to the exact common-core path (not a bare **/reports/** or
+                             **/analytics/**) since those bare patterns would also match
+                             reports-service's/other services' own package roots, which do have
+                             real logic. -->
+                        <exclude>**/common/core/dashboard/**</exclude>
+                        <exclude>**/common/core/reports/**</exclude>
+                        <exclude>**/common/core/analytics/**</exclude>
                         <!-- Spring Data interfaces - no method bodies to cover. -->
                         <exclude>**/domain/repository/**</exclude>
                         <!-- Bean wiring / security filter chains - exercised indirectly through

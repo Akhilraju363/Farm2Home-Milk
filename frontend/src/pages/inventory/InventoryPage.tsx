@@ -1,4 +1,5 @@
 import { Box, TextField, MenuItem, Chip, Tooltip, IconButton, Alert } from '@mui/material'
+import { alpha } from '@mui/material/styles'
 import { DataGrid, type GridColDef, type GridValueGetterParams } from '@mui/x-data-grid'
 import { Refresh, Warning } from '@mui/icons-material'
 import { useState } from 'react'
@@ -94,10 +95,12 @@ export function InventoryPage() {
         pageSizeOptions={[20, 50, 100]}
         autoHeight disableRowSelectionOnClick
         getRowClassName={({ row }) => row.belowReorderLevel ? 'low-stock-row' : ''}
-        sx={{
+        sx={(theme) => ({
           bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider',
-          '& .low-stock-row': { bgcolor: '#FFF3E0' },
-        }}
+          '& .low-stock-row': {
+            bgcolor: alpha(theme.palette.warning.main, theme.palette.mode === 'dark' ? 0.2 : 0.12),
+          },
+        })}
       />
     </Box>
   )

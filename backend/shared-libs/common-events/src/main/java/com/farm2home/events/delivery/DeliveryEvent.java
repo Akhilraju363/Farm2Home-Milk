@@ -20,6 +20,8 @@ public class DeliveryEvent {
     private String eventType;
     private UUID assignmentId;
     private UUID orderId;
+    private String orderNumber;
+    private UUID customerId;
     private UUID deliveryPartnerId;
     private String deliveryPartnerName;
     private String status;

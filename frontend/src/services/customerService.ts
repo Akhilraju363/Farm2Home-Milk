@@ -2,6 +2,8 @@ import axiosClient from './axiosClient'
 import type { Customer, CustomerAddress, CreateAddressRequest } from '../types/customer.types'
 import type { ApiResponse, PageResponse } from '../types/common.types'
 
+const SEARCH_RESULT_LIMIT = 5
+
 const BASE = '/customers'
 
 const ADDRESS_RETRY_ATTEMPTS = 4
@@ -39,6 +41,13 @@ export const customerService = {
 
   delete: (id: string) =>
     axiosClient.delete(`${BASE}/${id}`),
+
+  // GET /search requires SUPER_ADMIN/DELIVERY_MANAGER (see CustomerController) - only ever call
+  // this for admin roles, e.g. from GlobalSearch, or it 403s for a plain customer.
+  search: (keyword: string) =>
+    axiosClient.get<ApiResponse<PageResponse<Customer>>>(`${BASE}/search`, {
+      params: { keyword, size: SEARCH_RESULT_LIMIT },
+    }),
 
   addAddress,
 }

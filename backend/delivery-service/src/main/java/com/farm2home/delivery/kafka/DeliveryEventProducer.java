@@ -23,6 +23,8 @@ public class DeliveryEventProducer {
                 .eventType(eventType)
                 .assignmentId(assignment.getId())
                 .orderId(assignment.getOrderId())
+                .orderNumber(assignment.getOrderNumber())
+                .customerId(assignment.getCustomerId())
                 .deliveryPartnerId(assignment.getDeliveryPartner().getId())
                 .deliveryPartnerName(assignment.getDeliveryPartner().getName())
                 .status(assignment.getStatus().name())

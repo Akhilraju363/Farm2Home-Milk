@@ -1,5 +1,6 @@
 package com.farm2home.auth.controller;
 
+import com.farm2home.auth.domain.entity.User;
 import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
 import com.farm2home.auth.service.AuthService;
@@ -15,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -23,7 +25,7 @@ import org.springframework.web.bind.annotation.*;
  * name, since it collides with this codebase's own {@link ApiResponse} success envelope - the
  * same convention WalletController (payment-service) uses.
  *
- * Five of these six endpoints (everything except logout) are listed in SecurityConfig's
+ * Five of these seven endpoints (everything except logout and me) are listed in SecurityConfig's
  * PUBLIC_ENDPOINTS and require no bearer token — this is deliberate (there's no JWT to present
  * before you've logged in or registered), not an oversight, and each is documented as such below.
  */
@@ -214,5 +216,22 @@ public class AuthController {
             @RequestHeader("Authorization") String authHeader) {
         authService.logout(authHeader);
         return ResponseEntity.ok(ApiResponse.success("Logged out successfully.", null));
+    }
+
+    @GetMapping("/me")
+    @Operation(summary = "Get the current authenticated user's profile",
+            description = "Returns the profile (username, mobile, email, roles, verified) of whichever user "
+                    + "the bearer token belongs to. Exists because the frontend only persists the token "
+                    + "itself, not the user object built from it - this lets it repopulate that object on "
+                    + "app boot/page refresh instead of showing a blank/unknown user until the next login.",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Profile retrieved"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<AuthResponse.UserInfo>> me(@AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(ApiResponse.success("Profile retrieved successfully", authService.getCurrentUserInfo(user)));
     }
 }

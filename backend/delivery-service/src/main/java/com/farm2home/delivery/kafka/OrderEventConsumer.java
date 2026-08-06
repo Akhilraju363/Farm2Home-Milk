@@ -50,6 +50,8 @@ public class OrderEventConsumer {
             DeliveryPartner partner = candidates.get(0);
             DeliveryAssignment assignment = DeliveryAssignment.builder()
                     .orderId(event.getOrderId())
+                    .customerId(event.getCustomerId())
+                    .orderNumber(event.getOrderNumber())
                     .deliveryPartner(partner)
                     .route(partner.getRoute())
                     .build();

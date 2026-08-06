@@ -26,6 +26,7 @@ public final class EmailTemplateConstants {
     public static final String EVENT_DELIVERY_COMPLETED = "DELIVERY_COMPLETED";
     public static final String EVENT_DELIVERY_DELAYED = "DELIVERY_DELAYED";
     public static final String EVENT_PAYMENT_SUCCESS = "PAYMENT_SUCCESS";
+    public static final String EVENT_PAYMENT_FAILED = "PAYMENT_FAILED";
     public static final String EVENT_SUBSCRIPTION_CREATED = "SUBSCRIPTION_CREATED";
     public static final String EVENT_SUBSCRIPTION_PAUSED = "SUBSCRIPTION_PAUSED";
     public static final String EVENT_SUBSCRIPTION_RESUMED = "SUBSCRIPTION_RESUMED";
