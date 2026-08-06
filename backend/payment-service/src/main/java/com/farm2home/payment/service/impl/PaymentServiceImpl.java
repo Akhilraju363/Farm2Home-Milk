@@ -172,7 +172,7 @@ public class PaymentServiceImpl implements PaymentService {
         }
         Payment saved = paymentRepository.save(payment);
 
-        String eventType = result.valid() ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : "PAYMENT_FAILED";
+        String eventType = result.valid() ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : EmailTemplateConstants.EVENT_PAYMENT_FAILED;
         publishStatusChanged(saved, eventType);
         auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), customerId.toString(),
                 "Gateway verification for payment " + saved.getPaymentReference() + ": " + saved.getPaymentStatus());
@@ -217,7 +217,7 @@ public class PaymentServiceImpl implements PaymentService {
         } else if (event.state() == GatewayPaymentState.FAILED) {
             payment.setPaymentStatus(PaymentStatus.FAILED);
             Payment saved = paymentRepository.save(payment);
-            publishStatusChanged(saved, "PAYMENT_FAILED");
+            publishStatusChanged(saved, EmailTemplateConstants.EVENT_PAYMENT_FAILED);
             auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), saved.getCustomerId().toString(),
                     "Webhook [" + event.eventType() + "]: payment " + saved.getPaymentReference() + " failed");
         } else {
@@ -257,7 +257,7 @@ public class PaymentServiceImpl implements PaymentService {
         Payment saved = paymentRepository.save(payment);
 
         String eventType = status.state() == GatewayPaymentState.CAPTURED
-                ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : "PAYMENT_FAILED";
+                ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : EmailTemplateConstants.EVENT_PAYMENT_FAILED;
         publishStatusChanged(saved, eventType);
         auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), saved.getCustomerId().toString(),
                 source + ": payment " + saved.getPaymentReference() + " synced to " + saved.getPaymentStatus());
@@ -293,7 +293,7 @@ public class PaymentServiceImpl implements PaymentService {
         } else {
             payment.setPaymentStatus(PaymentStatus.FAILED);
             Payment saved = paymentRepository.save(payment);
-            publishStatusChanged(saved, "PAYMENT_FAILED");
+            publishStatusChanged(saved, EmailTemplateConstants.EVENT_PAYMENT_FAILED);
             auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(),
                     saved.getCustomerId().toString(),
                     "Gateway callback: payment " + request.getPaymentReference() + " failed");

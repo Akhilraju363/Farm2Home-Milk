@@ -1,207 +1,269 @@
-import { Grid, Box, Card, CardContent, Typography, Chip } from '@mui/material'
-import { People, Subscriptions, WaterDrop, Inventory } from '@mui/icons-material'
 import {
-  ResponsiveContainer, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell,
+  Grid, Box, Card, CardContent, Typography, Chip, Button, LinearProgress,
+} from '@mui/material'
+import {
+  AttachMoney, ShoppingCart, CalendarMonth, People, Subscriptions,
+  AddBox, ChevronRight,
+} from '@mui/icons-material'
+import {
+  ResponsiveContainer, LineChart, Line, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts'
-import { useQuery } from '@tanstack/react-query'
-import { StatCard } from '../../components/common/StatCard'
-import { customerService } from '../../services/customerService'
-import { subscriptionService } from '../../services/subscriptionService'
-import { productionService } from '../../services/productionService'
-import { inventoryService } from '../../services/inventoryService'
-import { orderService } from '../../services/orderService'
-import { formatDate } from '../../utils/formatters'
+import { useQuery, useQueries } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import dayjs from 'dayjs'
+import { StatCard } from '../../components/common/StatCard'
+import { useAuth } from '../../hooks/useAuth'
+import { dashboardService } from '../../services/dashboardService'
+import { orderService } from '../../services/orderService'
+import { customerService } from '../../services/customerService'
+import { formatCurrency, statusColor } from '../../utils/formatters'
 
-const ORDER_STATUS_COLORS: Record<string, string> = {
-  PENDING: '#F9A825', ASSIGNED: '#1565C0', OUT_FOR_DELIVERY: '#0277BD',
-  DELIVERED: '#2E7D32', CANCELLED: '#C62828',
-}
+const WEEKDAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2 }}>
-      <Typography variant="subtitle1" fontWeight={600} mb={2}>{title}</Typography>
+    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, p: 2.5 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="subtitle1" fontWeight={600}>{title}</Typography>
+        {action}
+      </Box>
       {children}
     </Card>
   )
 }
 
+function greeting() {
+  const hour = dayjs().hour()
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
 export function DashboardPage() {
-  const from = dayjs().subtract(13, 'day').format('YYYY-MM-DD')
-  const to   = dayjs().format('YYYY-MM-DD')
+  const { user } = useAuth()
+  const navigate = useNavigate()
 
-  const { data: customers } = useQuery({
-    queryKey: ['customers', 'count'],
-    queryFn: () => customerService.getAll(0, 1),
+  const today = dayjs().format('YYYY-MM-DD')
+  const weekAgo = dayjs().subtract(6, 'day').format('YYYY-MM-DD')
+
+  const { data: summaryRes } = useQuery({
+    queryKey: ['dashboard', 'summary'],
+    queryFn: () => dashboardService.getSummary(),
   })
+  const summary = summaryRes?.data.data
 
-  const { data: activeSubs } = useQuery({
-    queryKey: ['subscriptions', 'active'],
-    queryFn: () => subscriptionService.getAll({ status: 'ACTIVE', size: 1 }),
+  const { data: revenueTrendRes } = useQuery({
+    queryKey: ['dashboard', 'revenue-trend', weekAgo, today],
+    queryFn: () => dashboardService.getRevenueTrend(weekAgo, today),
   })
-
-  const { data: productionSummary } = useQuery({
-    queryKey: ['production', 'summary', from, to],
-    queryFn: () => productionService.getDailySummary(from, to),
-  })
-
-  const { data: lowStock } = useQuery({
-    queryKey: ['inventory', 'low-stock'],
-    queryFn: () => inventoryService.getLowStock(),
-  })
-
-  const { data: recentOrders } = useQuery({
-    queryKey: ['orders', 'recent'],
-    queryFn: () => orderService.getAll({ size: 100 }),
-  })
-
-  const prodArr = productionSummary?.data ?? []
-  const todayProduction = prodArr.length > 0 ? prodArr[prodArr.length - 1].totalLiters : 0
-  const totalCustomers = customers?.data?.totalElements ?? 0
-  const activeSubsCount = activeSubs?.data?.totalElements ?? 0
-  const lowStockCount = lowStock?.data?.length ?? 0
-
-  // Build production chart data
-  const productionChartData = (productionSummary?.data ?? []).map((d) => ({
-    date: dayjs(d.date).format('DD MMM'),
-    liters: Number(d.totalLiters.toFixed(1)),
+  const revenueChartData = (revenueTrendRes?.data.data.points ?? []).map((p) => ({
+    date: dayjs(p.period).format('DD MMM'),
+    revenue: p.revenue,
   }))
 
-  // Order status distribution
-  const orderStatusMap: Record<string, number> = {}
-  for (const order of recentOrders?.data?.content ?? []) {
-    orderStatusMap[order.status] = (orderStatusMap[order.status] ?? 0) + 1
-  }
-  const orderPieData = Object.entries(orderStatusMap).map(([name, value]) => ({ name, value }))
+  const { data: customerGrowthRes } = useQuery({
+    queryKey: ['dashboard', 'customer-growth', weekAgo, today],
+    queryFn: () => dashboardService.getCustomerGrowthTrend(weekAgo, today),
+  })
+  const newCustomersThisWeek = (customerGrowthRes?.data.data.points ?? [])
+    .reduce((sum, p) => sum + p.newCustomers, 0)
+
+  const { data: subscriptionTrendRes } = useQuery({
+    queryKey: ['dashboard', 'subscription-trend', weekAgo, today],
+    queryFn: () => dashboardService.getSubscriptionTrend(weekAgo, today),
+  })
+  const subscriptionChartData = WEEKDAY_LABELS.map((label, i) => {
+    const point = (subscriptionTrendRes?.data.data.points ?? [])
+      .find((p) => dayjs(p.period).day() === (i + 1) % 7)
+    return { day: label, count: point?.newSubscriptions ?? 0 }
+  })
+
+  const { data: recentOrdersRes } = useQuery({
+    queryKey: ['dashboard', 'recent-orders'],
+    queryFn: () => orderService.getRecent(5),
+  })
+  const recentOrders = recentOrdersRes?.data.data.content ?? []
+
+  const customerQueries = useQueries({
+    queries: recentOrders.map((order) => ({
+      queryKey: ['customer', order.customerId],
+      queryFn: () => customerService.getById(order.customerId),
+      enabled: !!order.customerId,
+      staleTime: 5 * 60 * 1000,
+    })),
+  })
+  const customerNameById = new Map<string, string>()
+  recentOrders.forEach((order, i) => {
+    const c = customerQueries[i]?.data?.data
+    if (c) customerNameById.set(order.customerId, `${c.firstName} ${c.lastName}`)
+  })
 
   return (
     <Box>
-      {/* Stat cards */}
+      {/* Welcome header */}
+      <Box mb={3}>
+        <Typography variant="h5" fontWeight={700}>
+          {greeting()}, {user?.username ?? 'Admin'}.
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Here's what's happening on your farm today.
+        </Typography>
+      </Box>
+
+      {/* KPI cards */}
       <Grid container spacing={2} mb={3}>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid item xs={12} sm={6} md={4} lg={2.4}>
+          <StatCard
+            title="Today's Revenue"
+            value={formatCurrency(summary?.revenueToday ?? 0)}
+            icon={<AttachMoney />}
+            color="#2E7D32"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={4} lg={2.4}>
+          <StatCard
+            title="Today's Orders"
+            value={summary?.todaysOrders ?? 0}
+            icon={<ShoppingCart />}
+            color="#1565C0"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={4} lg={2.4}>
+          <StatCard
+            title="Monthly Revenue"
+            value={formatCurrency(summary?.revenueThisMonth ?? 0)}
+            icon={<CalendarMonth />}
+            color="#0277BD"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={4} lg={2.4}>
           <StatCard
             title="Total Customers"
-            value={totalCustomers.toLocaleString()}
+            value={(summary?.totalCustomers ?? 0).toLocaleString()}
             icon={<People />}
-            color="#2E7D32"
-            subtitle="All registered customers"
+            color="#7B1FA2"
+            subtitle={`+${newCustomersThisWeek} this week`}
           />
         </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
+        <Grid item xs={12} sm={6} md={4} lg={2.4}>
           <StatCard
-            title="Active Subscriptions"
-            value={activeSubsCount.toLocaleString()}
+            title="Active Subs"
+            value={(summary?.activeSubscriptions ?? 0).toLocaleString()}
             icon={<Subscriptions />}
-            color="#1565C0"
-            subtitle="Currently active"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
-          <StatCard
-            title="Today's Production"
-            value={`${todayProduction.toFixed(1)} L`}
-            icon={<WaterDrop />}
-            color="#0277BD"
-            subtitle={formatDate(to)}
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} lg={3}>
-          <StatCard
-            title="Low Stock Alerts"
-            value={lowStockCount}
-            icon={<Inventory />}
-            color={lowStockCount > 0 ? '#C62828' : '#2E7D32'}
-            subtitle="Items below reorder level"
+            color="#F57F17"
           />
         </Grid>
       </Grid>
 
-      {/* Charts row */}
-      <Grid container spacing={2} mb={3}>
-        <Grid item xs={12} lg={8}>
-          <ChartCard title="Milk Production (Last 14 Days)">
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={productionChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} unit=" L" />
-                <Tooltip formatter={(v: number) => [`${v} L`, 'Production']} />
-                <Line
-                  type="monotone" dataKey="liters" stroke="#2E7D32"
-                  strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
-        </Grid>
-        <Grid item xs={12} lg={4}>
-          <ChartCard title="Orders by Status">
-            {orderPieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie
-                    data={orderPieData} cx="50%" cy="50%"
-                    innerRadius={60} outerRadius={90}
-                    paddingAngle={3} dataKey="value"
-                  >
-                    {orderPieData.map((entry) => (
-                      <Cell key={entry.name} fill={ORDER_STATUS_COLORS[entry.name] ?? '#999'} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend formatter={(v) => <span style={{ fontSize: 12 }}>{v}</span>} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <Box sx={{ height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Typography color="text.secondary" variant="body2">No order data</Typography>
-              </Box>
-            )}
-          </ChartCard>
-        </Grid>
-      </Grid>
-
-      {/* Recent orders summary */}
       <Grid container spacing={2}>
-        <Grid item xs={12}>
-          <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
+        {/* Main column */}
+        <Grid item xs={12} lg={8}>
+          <Box mb={2}>
+            <ChartCard title="Revenue Trend (Last 7 Days)">
+              <ResponsiveContainer width="100%" height={260}>
+                <LineChart data={revenueChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(v: number) => [formatCurrency(v), 'Revenue']} />
+                  <Line
+                    type="monotone" dataKey="revenue" stroke="#2E7D32"
+                    strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </Box>
+
+          <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3 }}>
             <CardContent>
-              <Typography variant="subtitle1" fontWeight={600} mb={2}>
-                Recent Orders
-              </Typography>
-              {(recentOrders?.data?.content ?? []).slice(0, 8).map((order) => (
-                <Box
-                  key={order.id}
-                  sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1, borderBottom: '1px solid', borderColor: 'divider' }}
-                >
-                  <Box>
-                    <Typography variant="body2" fontWeight={600}>{order.orderNumber}</Typography>
-                    <Typography variant="caption" color="text.secondary">{formatDate(order.orderDate)}</Typography>
-                  </Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Typography variant="body2" fontWeight={500}>
-                      ₹{Number(order.totalAmount).toFixed(2)}
-                    </Typography>
-                    <Chip
-                      label={order.status}
-                      size="small"
-                      sx={{
-                        bgcolor: `${ORDER_STATUS_COLORS[order.status]}22`,
-                        color: ORDER_STATUS_COLORS[order.status],
-                        fontWeight: 600, fontSize: 11,
-                      }}
-                    />
-                  </Box>
-                </Box>
-              ))}
-              {(recentOrders?.data?.content?.length ?? 0) === 0 && (
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="subtitle1" fontWeight={600}>Recent Orders</Typography>
+                <Button size="small" onClick={() => navigate('/orders')}>View All</Button>
+              </Box>
+              {recentOrders.length === 0 ? (
                 <Typography color="text.secondary" variant="body2" textAlign="center" py={3}>
                   No recent orders
                 </Typography>
+              ) : (
+                recentOrders.map((order) => (
+                  <Box
+                    key={order.id}
+                    sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body2" fontWeight={600} color="primary.main">{order.orderNumber}</Typography>
+                      <Typography variant="caption" color="text.secondary" noWrap>
+                        {customerNameById.get(order.customerId) ?? '—'}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Typography variant="body2" fontWeight={500}>
+                        {formatCurrency(order.totalAmount)}
+                      </Typography>
+                      <Chip
+                        label={order.status.replace(/_/g, ' ')}
+                        size="small"
+                        color={statusColor(order.status)}
+                        sx={{ fontWeight: 600, fontSize: 11 }}
+                      />
+                    </Box>
+                  </Box>
+                ))
               )}
             </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Right sidebar */}
+        <Grid item xs={12} lg={4}>
+          <Box mb={2}>
+            <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, p: 2.5 }}>
+              <Typography variant="subtitle1" fontWeight={600} mb={2}>Quick Actions</Typography>
+              <Button
+                fullWidth
+                variant="outlined"
+                onClick={() => navigate('/inventory')}
+                sx={{ justifyContent: 'space-between', textTransform: 'none', py: 1.5, px: 2 }}
+                endIcon={<ChevronRight />}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <AddBox color="primary" />
+                  <Box sx={{ textAlign: 'left' }}>
+                    <Typography variant="body2" fontWeight={600} color="text.primary">Add Product</Typography>
+                    <Typography variant="caption" color="text.secondary">Catalog entry</Typography>
+                  </Box>
+                </Box>
+              </Button>
+            </Card>
+          </Box>
+
+          <Box mb={2}>
+            <ChartCard title="Subscription Analytics (Last 7 Days)">
+              <ResponsiveContainer width="100%" height={140}>
+                <BarChart data={subscriptionChartData}>
+                  <XAxis dataKey="day" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#2E7D32" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </Box>
+
+          <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 3, p: 2.5 }}>
+            <Typography variant="subtitle1" fontWeight={600} mb={1}>Milk Production Today</Typography>
+            <Typography variant="h5" fontWeight={700} color="primary.main">
+              {(summary?.milkProductionToday ?? 0).toFixed(1)} L
+            </Typography>
+            {summary && summary.lowStockProductsCount > 0 && (
+              <Box mt={2}>
+                <Typography variant="caption" color="error.main">
+                  {summary.lowStockProductsCount} product{summary.lowStockProductsCount === 1 ? '' : 's'} low on stock
+                </Typography>
+                <LinearProgress variant="determinate" value={100} color="error" sx={{ mt: 0.5, height: 4, borderRadius: 2 }} />
+              </Box>
+            )}
           </Card>
         </Grid>
       </Grid>

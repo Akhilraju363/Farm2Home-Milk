@@ -3,6 +3,7 @@ package com.farm2home.notification.controller;
 import com.farm2home.common.core.constants.SecurityConstants;
 import com.farm2home.common.core.dashboard.NotificationSummaryItem;
 import com.farm2home.common.web.dto.response.ApiResponse;
+import com.farm2home.notification.config.UserPrincipal;
 import com.farm2home.notification.dto.response.NotificationLogResponse;
 import com.farm2home.notification.service.impl.NotificationServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,6 +19,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -109,5 +111,55 @@ public class NotificationLogController {
     public ResponseEntity<ApiResponse<List<NotificationSummaryItem>>> getSummary(
             @RequestParam(defaultValue = "10") int limit) {
         return ResponseEntity.ok(ApiResponse.success("Recent notifications retrieved successfully", service.getRecent(limit)));
+    }
+
+    @GetMapping("/me")
+    @Operation(summary = "Get the caller's own recent notifications",
+            description = "Self-service equivalent of GET /summary, scoped to the caller's own "
+                    + "notifications only (recipientId = the caller's user id, resolved from the bearer "
+                    + "token - never a client-supplied value). Open to any authenticated user, not just "
+                    + "SUPER_ADMIN/FARM_MANAGER/DELIVERY_MANAGER, since unlike /summary this can never "
+                    + "expose another recipient's notifications.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Recent notifications retrieved (possibly empty)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<List<NotificationSummaryItem>>> getMyRecent(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(defaultValue = "10") int limit) {
+        return ResponseEntity.ok(ApiResponse.success(
+                "Recent notifications retrieved successfully", service.getMyRecent(principal.userId(), limit)));
+    }
+
+    @PatchMapping("/{id}/read")
+    @Operation(summary = "Mark one of the caller's own notifications as read",
+            description = "Ownership is enforced server-side (recipientId must match the caller) - "
+                    + "404 if the id doesn't exist or belongs to someone else, never a 403 that would "
+                    + "confirm the id exists.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Marked as read"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No such notification for this caller", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<Void>> markAsRead(
+            @AuthenticationPrincipal UserPrincipal principal, @PathVariable UUID id) {
+        service.markAsRead(principal.userId(), id);
+        return ResponseEntity.ok(ApiResponse.success("Notification marked as read", null));
+    }
+
+    @PatchMapping("/read-all")
+    @Operation(summary = "Mark all of the caller's own notifications as read")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Marked as read"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<Void>> markAllAsRead(@AuthenticationPrincipal UserPrincipal principal) {
+        service.markAllAsRead(principal.userId());
+        return ResponseEntity.ok(ApiResponse.success("All notifications marked as read", null));
     }
 }

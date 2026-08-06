@@ -9,6 +9,8 @@ import com.farm2home.common.core.push.PushSendResult;
 import com.farm2home.common.core.push.PushService;
 import com.farm2home.common.core.sms.SmsSendResult;
 import com.farm2home.common.core.sms.SmsService;
+import com.farm2home.notification.client.CustomerContactDto;
+import com.farm2home.notification.client.CustomerServiceClient;
 import com.farm2home.notification.domain.entity.NotificationLog;
 import com.farm2home.notification.domain.entity.NotificationTemplate;
 import com.farm2home.notification.domain.enums.NotificationChannel;
@@ -18,6 +20,7 @@ import com.farm2home.notification.domain.repository.NotificationTemplateReposito
 import com.farm2home.notification.dto.KafkaEventDto;
 import com.farm2home.notification.dto.response.NotificationLogResponse;
 import com.farm2home.notification.mapper.NotificationMapper;
+import com.farm2home.notification.service.NotificationClassifier;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +34,9 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +55,7 @@ public class NotificationServiceImpl {
     private final AuditLogService auditLogService;
     private final SmsService smsService;
     private final PushService pushService;
+    private final CustomerServiceClient customerServiceClient;
 
     @Value("${app.mail.from}")
     private String mailFrom;
@@ -76,6 +82,16 @@ public class NotificationServiceImpl {
             return;
         }
 
+        // Order/Payment/Subscription/Delivery events only carry a customerId, not the
+        // recipient's actual mobile/email/name (only CustomerEvent/OtpEvent do, since
+        // auth-service has that on hand directly) - without this, SMS/EMAIL would silently
+        // no-op below (sendForChannel returns early when recipient is null) even though a
+        // template exists. Best-effort: a lookup failure just means this event falls back to
+        // PUSH-only, exactly like it would have before this enrichment existed.
+        if (event.getRecipientMobile() == null || event.getRecipientEmail() == null || event.getCustomerName() == null) {
+            enrichFromCustomerService(event);
+        }
+
         // Try SMS first, then EMAIL, then PUSH
         sendForChannel(event, NotificationChannel.SMS,
                 event.getEventType() + EmailTemplateConstants.SMS_SUFFIX,
@@ -94,6 +110,24 @@ public class NotificationServiceImpl {
         sendForChannel(event, NotificationChannel.PUSH,
                 event.getEventType() + EmailTemplateConstants.PUSH_SUFFIX,
                 event.getCustomerId().toString());
+    }
+
+    private void enrichFromCustomerService(KafkaEventDto event) {
+        try {
+            CustomerContactDto contact = customerServiceClient.getContact(event.getCustomerId())
+                    .block(Duration.ofSeconds(3));
+            if (contact == null) return;
+
+            if (event.getRecipientMobile() == null) event.setRecipientMobile(contact.getMobile());
+            if (event.getRecipientEmail() == null) event.setRecipientEmail(contact.getEmail());
+            if (event.getCustomerName() == null) {
+                String name = ((contact.getFirstName() != null ? contact.getFirstName() : "")
+                        + " " + (contact.getLastName() != null ? contact.getLastName() : "")).trim();
+                if (!name.isEmpty()) event.setCustomerName(name);
+            }
+        } catch (Exception ex) {
+            log.warn("Customer contact lookup failed for {}: {}", event.getCustomerId(), ex.getMessage());
+        }
     }
 
     private void sendForChannel(KafkaEventDto event, NotificationChannel channel,
@@ -232,14 +266,84 @@ public class NotificationServiceImpl {
     public List<NotificationSummaryItem> getRecent(int limit) {
         return logRepository.findAll(PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt")))
                 .stream()
-                .map(entry -> NotificationSummaryItem.builder()
-                        .id(entry.getId())
-                        .channel(entry.getChannel().name())
-                        .recipient(entry.getRecipient())
-                        .subject(entry.getSubject())
-                        .status(entry.getStatus().name())
-                        .createdAt(entry.getCreatedAt())
-                        .build())
+                .map(this::toSummaryItem)
                 .toList();
+    }
+
+    /** Self-service equivalent of getRecent() above, scoped to one recipient - safe to expose to
+     *  any authenticated user (unlike getRecent, which spans every recipient) since it can only
+     *  ever return the caller's own notifications; see NotificationLogController.getMyRecent().
+     *  Fetches extra rows and collapses same-event fan-out (see collapseSameEvent()) so a caller
+     *  asking for `limit` gets `limit` real-world events, not `limit` raw channel rows. OTP is
+     *  excluded - it's a transient security code, not a "something happened" notification like
+     *  every other event type, and the mockup this screen is built from doesn't show it. */
+    @Transactional(readOnly = true)
+    public List<NotificationSummaryItem> getMyRecent(UUID recipientId, int limit) {
+        List<NotificationLog> raw = logRepository
+                .findAllByRecipientIdOrderByCreatedAtDesc(recipientId, PageRequest.of(0, limit * 4))
+                .getContent()
+                .stream()
+                .filter(entry -> !EmailTemplateConstants.EVENT_OTP.equals(entry.getEventType()))
+                .toList();
+        return collapseSameEvent(raw).stream().map(this::toSummaryItem).limit(limit).toList();
+    }
+
+    /** SMS/EMAIL/PUSH sends for the same real-world event all happen within the same process()
+     *  call, so their createdAt timestamps land within a few hundred ms of each other - collapse
+     *  adjacent same-eventType rows within a short window into one, preferring whichever has a
+     *  subject (EMAIL/PUSH) over a bare SMS body, so the notification center shows one card per
+     *  event instead of one per channel. */
+    private List<NotificationLog> collapseSameEvent(List<NotificationLog> sortedDesc) {
+        List<NotificationLog> result = new ArrayList<>();
+        for (NotificationLog entry : sortedDesc) {
+            NotificationLog last = result.isEmpty() ? null : result.get(result.size() - 1);
+            boolean sameEvent = last != null
+                    && last.getEventType().equals(entry.getEventType())
+                    && Duration.between(entry.getCreatedAt(), last.getCreatedAt()).abs().getSeconds() <= 10;
+            if (sameEvent) {
+                if (last.getSubject() == null && entry.getSubject() != null) {
+                    result.set(result.size() - 1, entry);
+                }
+                continue;
+            }
+            result.add(entry);
+        }
+        return result;
+    }
+
+    private NotificationSummaryItem toSummaryItem(NotificationLog entry) {
+        return NotificationSummaryItem.builder()
+                .id(entry.getId())
+                .channel(entry.getChannel().name())
+                .recipient(entry.getRecipient())
+                .eventType(entry.getEventType())
+                .type(NotificationClassifier.typeOf(entry.getEventType()).name())
+                .priority(NotificationClassifier.priorityOf(entry.getEventType()).name())
+                .subject(entry.getSubject())
+                .message(entry.getMessage())
+                .status(entry.getStatus().name())
+                .read(entry.isRead())
+                .createdAt(entry.getCreatedAt())
+                .sentAt(entry.getSentAt())
+                .build();
+    }
+
+    /** Marks one of the caller's own notifications read - ownership is enforced here
+     *  (recipientId must match), not left to the controller, so this can never be used to mark
+     *  another recipient's notification as read by guessing its id. */
+    @Transactional
+    public void markAsRead(UUID recipientId, UUID notificationId) {
+        NotificationLog entry = logRepository.findByIdAndRecipientId(notificationId, recipientId)
+                .orElseThrow(() -> new com.farm2home.notification.exception.ResourceNotFoundException(
+                        "Notification not found: " + notificationId));
+        if (!entry.isRead()) {
+            entry.setRead(true);
+            logRepository.save(entry);
+        }
+    }
+
+    @Transactional
+    public void markAllAsRead(UUID recipientId) {
+        logRepository.markAllAsReadForRecipient(recipientId);
     }
 }

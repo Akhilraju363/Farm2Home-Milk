@@ -15,6 +15,10 @@ import java.util.stream.Collectors;
 @Mapper(componentModel = "spring")
 public interface UserMapper {
 
+    // source = "accountUsername" (not the default "username") because User#getUsername() is
+    // overridden for Spring Security's UserDetails contract to return the mobile number instead
+    // of the actual username column - see User#getAccountUsername().
+    @Mapping(target = "username", source = "accountUsername")
     @Mapping(target = "roles", source = "roles", qualifiedByName = "rolesToStringList")
     @Mapping(target = "verified", source = "verified")
     AuthResponse.UserInfo toUserInfo(User user);

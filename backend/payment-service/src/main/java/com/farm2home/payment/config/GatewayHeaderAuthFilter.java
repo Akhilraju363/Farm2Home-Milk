@@ -1,7 +1,6 @@
 package com.farm2home.payment.config;
 
 import com.farm2home.common.core.constants.HeaderConstants;
-import com.farm2home.common.core.constants.SecurityConstants;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,8 +43,13 @@ public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
                         : Set.of();
 
                 UserPrincipal principal = new UserPrincipal(UUID.fromString(userId), mobile, roles);
+                // Bare authority names (no ROLE_ prefix) - every @PreAuthorize check in this
+                // service uses hasAnyAuthority(...) against SecurityConstants.ROLE_* constants,
+                // which are themselves bare (e.g. "SUPER_ADMIN", not "ROLE_SUPER_ADMIN"). Unlike
+                // hasAnyRole(...), hasAnyAuthority(...) does not add the prefix itself, so
+                // granting a prefixed authority here would make every check silently fail closed.
                 var authorities = roles.stream()
-                        .map(r -> new SimpleGrantedAuthority(SecurityConstants.ROLE_PREFIX + r))
+                        .map(SimpleGrantedAuthority::new)
                         .collect(Collectors.toList());
 
                 var auth = new UsernamePasswordAuthenticationToken(principal, null, authorities);

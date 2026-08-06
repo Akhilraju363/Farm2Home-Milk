@@ -417,7 +417,9 @@ $microservices = @(
     @{ Name = 'order-service';         Port = 8084 },
     @{ Name = 'payment-service';       Port = 8085 },
     @{ Name = 'delivery-service';      Port = 8086 },
-    @{ Name = 'notification-service';  Port = 8090 }
+    @{ Name = 'notification-service';  Port = 8090 },
+    @{ Name = 'dashboard-service';     Port = 8092 },
+    @{ Name = 'reports-service';       Port = 8093 }
 )
 
 $failedServices = @()

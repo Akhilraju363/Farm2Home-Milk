@@ -12,8 +12,8 @@ interface Props {
 
 export function StatCard({ title, value, subtitle, icon, color = '#2E7D32', sx }: Props) {
   return (
-    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, ...sx }}>
-      <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 2.5, '&:last-child': { pb: 2.5 } }}>
+    <Card elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, height: '100%', display: 'flex', ...sx }}>
+      <CardContent sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 2, p: 2.5, '&:last-child': { pb: 2.5 } }}>
         <Box
           sx={{
             width: 52, height: 52, borderRadius: 2,

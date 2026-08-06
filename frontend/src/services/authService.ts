@@ -1,5 +1,5 @@
 import axiosClient from './axiosClient'
-import type { LoginRequest, RegisterRequest, OtpRequest, OtpType, AuthResponse } from '../types/auth.types'
+import type { LoginRequest, RegisterRequest, OtpRequest, OtpType, AuthResponse, UserInfo } from '../types/auth.types'
 import type { ApiResponse } from '../types/common.types'
 
 const AUTH_BASE = '/auth'
@@ -22,4 +22,9 @@ export const authService = {
 
   logout: () =>
     axiosClient.post(`${AUTH_BASE}/logout`),
+
+  // Only the token survives a page reload (see authSlice's initialState) - this repopulates the
+  // in-memory user object (username, roles, etc.) from it on app boot.
+  getMe: () =>
+    axiosClient.get<ApiResponse<UserInfo>>(`${AUTH_BASE}/me`),
 }

@@ -50,9 +50,12 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
     /** Revenue Trend: SUM(amount) of SUCCESS payments bucketed by {@code unit} (day/week/month/year,
      *  bound as a plain text argument to Postgres' own date_trunc - never string-concatenated).
      *  The GROUP BY/SUM runs entirely in the database; the result set is at most one row per
-     *  period in the requested range, never one row per payment. */
+     *  period in the requested range, never one row per payment. Uses CAST(expr AS date), not
+     *  Postgres' expr::date shorthand - Hibernate's native-query parameter parser misreads the
+     *  second ':' in '::' as the start of a malformed named parameter, which Postgres then
+     *  rejects with a syntax error at the leftover ':'. */
     @Query(value = """
-            SELECT date_trunc(:unit, p.paid_at)::date AS period, COALESCE(SUM(p.amount), 0) AS revenue
+            SELECT CAST(date_trunc(:unit, p.paid_at) AS date) AS period, COALESCE(SUM(p.amount), 0) AS revenue
             FROM payment.payments p
             WHERE p.payment_status = 'SUCCESS'
               AND p.is_deleted = false
@@ -69,8 +72,10 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
      *  service layer folds these rows into one point per period (total/success/failed counts).
      *  Grouped on created_at (not paid_at, which is null for pending/failed payments) so every
      *  payment attempt is represented, matching the Payment Report's date filter. */
+    // Uses CAST(expr AS date), not Postgres' expr::date shorthand - see findRevenueTrend above
+    // for why the :: form breaks Hibernate's native-query parameter parser.
     @Query(value = """
-            SELECT date_trunc(:unit, p.created_at)::date AS period, p.payment_status AS status,
+            SELECT CAST(date_trunc(:unit, p.created_at) AS date) AS period, p.payment_status AS status,
                    COUNT(*) AS txnCount, COALESCE(SUM(p.amount), 0) AS amount
             FROM payment.payments p
             WHERE p.is_deleted = false

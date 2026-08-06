@@ -26,13 +26,34 @@ public class NotificationSummaryItem {
             + "(SMS), or the recipient's customer id (PUSH).", example = "customer@example.com")
     private String recipient;
 
-    @Schema(description = "Message subject. Populated for EMAIL; typically null for SMS/PUSH.",
+    @Schema(description = "The Kafka event type this notification was generated from.", example = "ORDER_CREATED")
+    private String eventType;
+
+    @Schema(description = "Coarse category derived from eventType: ORDER, PAYMENT, DELIVERY, "
+            + "SUBSCRIPTION, ACCOUNT, or OTHER.", example = "ORDER")
+    private String type;
+
+    @Schema(description = "Urgency derived from eventType: HIGH, MEDIUM, or LOW.", example = "MEDIUM")
+    private String priority;
+
+    @Schema(description = "Display title - always populated (unlike the underlying SMS/EMAIL/PUSH "
+            + "channel content, which doesn't always carry one on its own).",
             example = "Your order is on its way!")
     private String subject;
+
+    @Schema(description = "Rendered message body - always populated, unlike subject.",
+            example = "Your order #1234 has been placed. Amount: Rs 500.")
+    private String message;
 
     @Schema(description = "Delivery outcome: PENDING, SENT, or FAILED.", example = "SENT")
     private String status;
 
+    @Schema(description = "Whether the recipient has read this notification yet.", example = "false")
+    private boolean read;
+
     @Schema(description = "When the log entry was created.", example = "2026-07-31T09:15:00")
     private LocalDateTime createdAt;
+
+    @Schema(description = "When the send was attempted. Null if still PENDING.", example = "2026-07-31T09:15:05")
+    private LocalDateTime sentAt;
 }

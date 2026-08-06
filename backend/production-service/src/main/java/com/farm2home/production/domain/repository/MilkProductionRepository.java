@@ -59,8 +59,11 @@ public interface MilkProductionRepository extends JpaRepository<MilkProduction, 
     @Query("SELECT COALESCE(SUM(m.quantityLiters), 0) FROM MilkProduction m WHERE m.collectionDate = :date AND m.deleted = false")
     BigDecimal sumQuantityByCollectionDate(@Param("date") LocalDate date);
 
+    // Uses CAST(expr AS type), not Postgres' expr::type shorthand - Hibernate's native-query
+    // parameter parser misreads the second ':' in '::' as the start of a malformed named
+    // parameter, which Postgres then rejects with a syntax error at the leftover ':'.
     @Query(value = """
-            SELECT date_trunc(:unit, m.collection_date::timestamp)::date AS period,
+            SELECT CAST(date_trunc(:unit, CAST(m.collection_date AS timestamp)) AS date) AS period,
                    COALESCE(SUM(m.quantity_liters), 0) AS totalLiters
             FROM production.milk_production m
             WHERE m.is_deleted = false

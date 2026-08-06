@@ -51,8 +51,11 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
            """)
     int expireByEndDate(@Param("today") LocalDate today);
 
+    // Uses CAST(expr AS type), not Postgres' expr::type shorthand - Hibernate's native-query
+    // parameter parser misreads the second ':' in '::' as the start of a malformed named
+    // parameter, which Postgres then rejects with a syntax error at the leftover ':'.
     @Query(value = """
-            SELECT date_trunc(:unit, s.start_date::timestamp)::date AS period, COUNT(*) AS newSubscriptions
+            SELECT CAST(date_trunc(:unit, CAST(s.start_date AS timestamp)) AS date) AS period, COUNT(*) AS newSubscriptions
             FROM subscription.subscriptions s
             WHERE s.is_deleted = false
               AND (CAST(:start AS date) IS NULL OR s.start_date >= :start)

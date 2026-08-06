@@ -32,9 +32,12 @@ public interface CustomerRepository extends JpaRepository<Customer, UUID>, JpaSp
     /** Customer Growth: COUNT(*) of non-deleted customers bucketed by {@code unit} (day/week/month/year,
      *  bound as a plain text argument to Postgres' own date_trunc - never string-concatenated).
      *  The GROUP BY/COUNT runs entirely in the database; the result set is at most one row per
-     *  period in the requested range, never one row per customer. */
+     *  period in the requested range, never one row per customer. Uses CAST(expr AS date), not
+     *  Postgres' expr::date shorthand - Hibernate's native-query parameter parser misreads the
+     *  second ':' in '::' as the start of a (malformed) named parameter, which Postgres then
+     *  rejects with a syntax error at the leftover ':'. */
     @Query(value = """
-            SELECT date_trunc(:unit, c.created_at)::date AS period, COUNT(*) AS newCustomers
+            SELECT CAST(date_trunc(:unit, c.created_at) AS date) AS period, COUNT(*) AS newCustomers
             FROM customer.customers c
             WHERE c.is_deleted = false
               AND (CAST(:start AS timestamp) IS NULL OR c.created_at >= :start)

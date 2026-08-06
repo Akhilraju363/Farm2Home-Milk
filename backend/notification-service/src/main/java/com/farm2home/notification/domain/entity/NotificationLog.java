@@ -47,6 +47,10 @@ public class NotificationLog {
     @Column(name = "sent_at")
     private LocalDateTime sentAt;
 
+    @Column(name = "is_read", nullable = false)
+    @Builder.Default
+    private boolean isRead = false;
+
     @Column(name = "created_at", updatable = false)
     @Builder.Default
     private LocalDateTime createdAt = LocalDateTime.now();

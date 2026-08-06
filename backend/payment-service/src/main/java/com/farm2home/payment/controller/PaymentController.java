@@ -287,7 +287,7 @@ public class PaymentController {
     }
 
     @PostMapping("/{id}/refund")
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Refund a payment (Farm Manager or Super Admin only)",
             description = "Reverses a SUCCESS payment. WALLET payments are credited back to the customer's "
                     + "in-app wallet; UPI/RAZORPAY payments are refunded through the gateway to their "

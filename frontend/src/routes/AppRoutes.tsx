@@ -12,6 +12,7 @@ import { PaymentsPage } from '../pages/payments/PaymentsPage'
 import { InventoryPage } from '../pages/inventory/InventoryPage'
 import { ProductionPage } from '../pages/production/ProductionPage'
 import { ReportsPage } from '../pages/reports/ReportsPage'
+import { NotificationsPage } from '../pages/notifications/NotificationsPage'
 
 export function AppRoutes() {
   return (
@@ -34,6 +35,7 @@ export function AppRoutes() {
           <Route path="/inventory"     element={<InventoryPage />} />
           <Route path="/production"    element={<ProductionPage />} />
           <Route path="/reports"       element={<ReportsPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
         </Route>
       </Route>
 

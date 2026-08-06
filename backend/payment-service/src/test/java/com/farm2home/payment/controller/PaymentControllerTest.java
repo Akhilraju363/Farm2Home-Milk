@@ -69,9 +69,12 @@ class PaymentControllerTest {
     private UsernamePasswordAuthenticationToken authFor(UUID userId, boolean admin) {
         UserPrincipal principal = new UserPrincipal(userId, "9876543210",
                 admin ? java.util.Set.of("FARM_MANAGER") : java.util.Set.of("CUSTOMER"));
+        // Bare authority names (no ROLE_ prefix) - every @PreAuthorize check in this controller
+        // uses hasAnyAuthority(...), which (unlike hasAnyRole(...)) does not add the prefix
+        // itself; must match GatewayHeaderAuthFilter's real granting behavior.
         var authorities = admin
-                ? List.of(new SimpleGrantedAuthority("ROLE_FARM_MANAGER"))
-                : List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER"));
+                ? List.of(new SimpleGrantedAuthority("FARM_MANAGER"))
+                : List.of(new SimpleGrantedAuthority("CUSTOMER"));
         return new UsernamePasswordAuthenticationToken(principal, null, authorities);
     }
 

@@ -13,6 +13,9 @@ public class KafkaEventDto {
     private String eventType;
     private UUID customerId;
     private String orderNumber;
+    // OrderEvent's Java field is "totalAmount", not "amount"; PaymentEvent already matches
+    // directly ("amount"), so both need to deserialize onto this one field.
+    @JsonAlias("totalAmount")
     private String amount;
     // DeliveryEvent's Java field is "deliveryPartnerName", not "partnerName".
     @JsonAlias("deliveryPartnerName")
