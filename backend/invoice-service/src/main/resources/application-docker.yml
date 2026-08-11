@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/farm2home?currentSchema=invoice
+    username: ${DB_USERNAME:farm2home}
+    password: ${DB_PASSWORD:farm2home@123}
+  flyway:
+    schemas: invoice
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE:http://eureka:eurekaSecret@discovery-service:8761/eureka}
+
+configserver:
+  health:
+    url: http://config-server:8888
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env
+
+logging:
+  level:
+    com.farm2home: INFO

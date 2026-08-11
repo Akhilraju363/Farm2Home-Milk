@@ -36,7 +36,7 @@ public class DeliveryPartnerController {
     private final DeliveryPartnerServiceImpl partnerService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Register a delivery partner (admin)",
             description = "Creates a delivery partner profile linked to an existing auth-service user id. If "
                     + "routeId is provided it must reference an existing, non-deleted route. The new partner is "
@@ -76,7 +76,7 @@ public class DeliveryPartnerController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "List all delivery partners (admin)",
             description = "Paginated list of all non-deleted delivery partners, sorted by name by default. "
                     + "Not filtered by the active flag - inactive partners are included.")
@@ -127,7 +127,7 @@ public class DeliveryPartnerController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Update partner (admin)",
             description = "Partial update - only non-null fields are applied (see UpdatePartnerRequest); "
                     + "bean-validation constraints (name/mobile length and format) are enforced via @Valid.")

@@ -8,6 +8,8 @@ import com.farm2home.common.core.audit.AuditEntry;
 import com.farm2home.common.core.audit.AuditLogService;
 import com.farm2home.common.core.constants.EmailTemplateConstants;
 import com.farm2home.common.core.dashboard.DeliverySummaryResponse;
+import com.farm2home.delivery.client.OrderDetailResponse;
+import com.farm2home.delivery.client.OrderServiceClient;
 import com.farm2home.delivery.client.PaymentServiceClient;
 import com.farm2home.delivery.domain.entity.DeliveryAssignment;
 import com.farm2home.delivery.domain.entity.DeliveryPartner;
@@ -36,12 +38,14 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -55,6 +59,7 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
     private final DeliveryEventProducer eventProducer;
     private final AuditLogService auditLogService;
     private final PaymentServiceClient paymentServiceClient;
+    private final OrderServiceClient orderServiceClient;
 
     @Override
     @Transactional
@@ -69,8 +74,20 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
             throw new DeliveryException("Order " + request.getOrderId() + " already has a delivery assignment");
         }
 
+        // ManualAssignRequest carries no customer/order-number info (unlike the ORDER_CREATED
+        // Kafka event OrderEventConsumer auto-assigns from), so a manually-created assignment
+        // used to leave customerId/orderNumber null - harmless for the fields that already
+        // existed, but it silently broke any future feature needing to verify a CUSTOMER owns
+        // this assignment (delivery-tracking's customer-ownership check needs exactly that).
+        // Backfilling from order-service here keeps both assignment paths consistent.
+        OrderDetailResponse order = orderServiceClient.getOrder(request.getOrderId())
+                .onErrorResume(ex -> Mono.empty())
+                .block();
+
         DeliveryAssignment assignment = assignmentRepository.save(DeliveryAssignment.builder()
                 .orderId(request.getOrderId())
+                .customerId(order != null ? order.getCustomerId() : null)
+                .orderNumber(order != null ? order.getOrderNumber() : null)
                 .deliveryPartner(partner)
                 .route(route)
                 .build());
@@ -176,9 +193,32 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
 
     @Override
     @Transactional(readOnly = true)
-    public List<AssignmentResponse> findByOrderId(UUID orderId) {
-        return assignmentRepository.findAllByOrderId(orderId).stream()
-                .map(mapper::toAssignmentResponse).toList();
+    public List<AssignmentResponse> findByOrderId(UUID orderId, UUID callerId, boolean isAdmin) {
+        List<DeliveryAssignment> assignments = assignmentRepository.findAllByOrderId(orderId);
+
+        if (isAdmin) {
+            return assignments.stream().map(mapper::toAssignmentResponse).toList();
+        }
+
+        // A caller who resolves to a DeliveryPartner profile only ever sees their own
+        // assignments; a caller who doesn't (a CUSTOMER, or a DELIVERY_PARTNER with no profile
+        // at all) falls through to the customer-ownership check below - assignment.customerId is
+        // now reliably populated for both auto- and manually-created assignments (see
+        // manualAssign()), which is what makes this branch safe: it was deliberately absent
+        // before that fix, since delivery-service previously had no reliable way to verify order
+        // ownership on its own (see the historical Javadoc on the controller's GET /order/{id}).
+        Optional<UUID> callerPartnerId = partnerRepository.findByUserIdAndDeletedFalse(callerId).map(DeliveryPartner::getId);
+        if (callerPartnerId.isPresent()) {
+            return assignments.stream()
+                    .filter(a -> callerPartnerId.get().equals(a.getDeliveryPartner().getId()))
+                    .map(mapper::toAssignmentResponse)
+                    .toList();
+        }
+
+        return assignments.stream()
+                .filter(a -> callerId.equals(a.getCustomerId()))
+                .map(mapper::toAssignmentResponse)
+                .toList();
     }
 
     @Override

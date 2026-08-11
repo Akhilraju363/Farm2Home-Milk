@@ -36,6 +36,12 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
 
     Page<Order> findAllBySubscriptionIdAndDeletedFalse(UUID subscriptionId, Pageable pageable);
 
+    /** Ownership-scoped counterpart used by non-admin callers of GET /orders/subscription/{id} -
+     *  each generated order already carries its own customerId (copied from the subscription at
+     *  generation time), so this is equivalent to "does the caller own the subscription these
+     *  orders came from" without a service-to-service call to subscription-service. */
+    Page<Order> findAllBySubscriptionIdAndCustomerIdAndDeletedFalse(UUID subscriptionId, UUID customerId, Pageable pageable);
+
     long countByOrderDateAndDeletedFalse(LocalDate orderDate);
 
     long countByStatusAndDeletedFalse(OrderStatus status);

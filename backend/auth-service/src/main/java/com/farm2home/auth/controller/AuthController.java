@@ -73,10 +73,8 @@ public class AuthController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                 description = "Validation failed (e.g. invalid mobile/email format, password missing an "
                         + "uppercase/lowercase/digit/special character)", content = @Content),
-        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                description = "Mobile number or email address is already registered (AuthServiceImpl.register "
-                        + "raises this as an AuthException, which this codebase maps to 401 rather than 409 — "
-                        + "documented here to match actual behavior)", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                description = "Mobile number or email address is already registered", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                 description = "CUSTOMER role missing from the database — a server misconfiguration (seed data "
                         + "not run), not a client error", content = @Content)

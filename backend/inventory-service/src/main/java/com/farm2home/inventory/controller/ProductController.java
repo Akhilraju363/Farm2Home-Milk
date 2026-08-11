@@ -4,6 +4,7 @@ import com.farm2home.common.core.constants.ApiConstants;
 import com.farm2home.common.core.constants.SecurityConstants;
 import com.farm2home.common.export.ExportFormat;
 import com.farm2home.common.web.dto.response.ApiResponse;
+import com.farm2home.inventory.domain.enums.ProductStockStatus;
 import com.farm2home.inventory.dto.request.CreateProductRequest;
 import com.farm2home.inventory.dto.request.UpdateProductRequest;
 import com.farm2home.inventory.dto.response.ProductResponse;
@@ -85,8 +86,9 @@ public class ProductController {
 
     @GetMapping("/search")
     @PreAuthorize("isAuthenticated()")
-    @Operation(summary = "Search products", description = "Keyword search across name/description/category, plus "
-            + "optional date range and active-status filters. All filters are optional and combine with AND.")
+    @Operation(summary = "Search products", description = "Keyword search across name/description/category name, "
+            + "plus optional date range, active-status, category, stock-status, and availability filters. All "
+            + "filters are optional and combine with AND.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Products retrieved (possibly empty if no product matches the filters)"),
@@ -94,13 +96,17 @@ public class ProductController {
                 description = "Missing or invalid bearer token", content = @Content)
     })
     public ResponseEntity<ApiResponse<Page<ProductResponse>>> search(
-            @Parameter(description = "Matches name, description, or category") @RequestParam(required = false) String keyword,
+            @Parameter(description = "Matches name, description, or category name") @RequestParam(required = false) String keyword,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
             @RequestParam(required = false) Boolean active,
+            @RequestParam(required = false) UUID categoryId,
+            @RequestParam(required = false) ProductStockStatus stockStatus,
+            @Parameter(description = "true = active AND in stock right now; false = the inverse")
+            @RequestParam(required = false) Boolean available,
             @PageableDefault(size = ApiConstants.DEFAULT_PAGE_SIZE, sort = "name") Pageable pageable) {
         return ResponseEntity.ok(ApiResponse.success("Products retrieved successfully",
-                service.search(keyword, dateFrom, dateTo, active, pageable)));
+                service.search(keyword, dateFrom, dateTo, active, categoryId, stockStatus, available, pageable)));
     }
 
     @GetMapping("/export")
@@ -120,15 +126,19 @@ public class ProductController {
     })
     public ResponseEntity<StreamingResponseBody> export(
             @RequestParam ExportFormat format,
-            @Parameter(description = "Matches name, description, or category") @RequestParam(required = false) String keyword,
+            @Parameter(description = "Matches name, description, or category name") @RequestParam(required = false) String keyword,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
             @RequestParam(required = false) Boolean active,
+            @RequestParam(required = false) UUID categoryId,
+            @RequestParam(required = false) ProductStockStatus stockStatus,
+            @RequestParam(required = false) Boolean available,
             @RequestParam(defaultValue = "name") String sortBy,
             @RequestParam(defaultValue = "true") boolean ascending) {
         String filename = "products-" + LocalDate.now().format(DateTimeFormatter.ISO_DATE) + format.getFileExtension();
         StreamingResponseBody body = out ->
-                service.export(format, out, keyword, dateFrom, dateTo, active, sortBy, ascending);
+                service.export(format, out, keyword, dateFrom, dateTo, active, categoryId, stockStatus, available,
+                        sortBy, ascending);
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
@@ -154,11 +164,18 @@ public class ProductController {
                                     "id": "3b1e6a2c-2f9a-4b8b-9c2e-0a1a2b3c4d5e",
                                     "name": "Full Cream Milk 1L",
                                     "description": "Farm-fresh full cream milk, pasteurized",
-                                    "category": "Milk",
+                                    "categoryId": "9f1c2d3e-4b5a-6c7d-8e9f-0a1b2c3d4e5f",
+                                    "categoryName": "Milk",
                                     "price": 65.00,
+                                    "unit": "L",
+                                    "stockQuantity": 142,
+                                    "minimumStockQuantity": 20,
+                                    "stockStatus": "IN_STOCK",
+                                    "availability": true,
                                     "imageUrl": "/uploads/products/3b1e6a2c-full-cream-1l.jpg",
                                     "active": true,
-                                    "createdAt": "2026-06-01T08:30:00"
+                                    "createdAt": "2026-06-01T08:30:00",
+                                    "updatedAt": "2026-06-15T10:00:00"
                                   }
                                 }"""))),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
@@ -173,10 +190,10 @@ public class ProductController {
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "','" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Update product",
-            description = "Partial update of a product's name/description/category/price/active flag - any "
-                    + "field left null in the request body is left unchanged (see "
-                    + "ProductMapper.updateEntityFromRequest, which uses MapStruct's null-ignore strategy). "
-                    + "Setting active=false is how a product is deactivated/hidden from customers.")
+            description = "Partial update of a product's name/description/categoryId/price/unit/stockQuantity/"
+                    + "minimumStockQuantity/active flag - any field left null in the request body is left "
+                    + "unchanged (see ProductMapper.updateEntityFromRequest, which uses MapStruct's null-ignore "
+                    + "strategy). Setting active=false is how a product is deactivated/hidden from customers.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Product updated"),

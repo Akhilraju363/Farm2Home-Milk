@@ -131,8 +131,12 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
-    public Page<OrderResponse> findBySubscription(UUID subscriptionId, Pageable pageable) {
-        return orderRepository.findAllBySubscriptionIdAndDeletedFalse(subscriptionId, pageable)
+    public Page<OrderResponse> findBySubscription(UUID subscriptionId, UUID customerId, Pageable pageable) {
+        if (customerId == null) {
+            return orderRepository.findAllBySubscriptionIdAndDeletedFalse(subscriptionId, pageable)
+                    .map(orderMapper::toResponse);
+        }
+        return orderRepository.findAllBySubscriptionIdAndCustomerIdAndDeletedFalse(subscriptionId, customerId, pageable)
                 .map(orderMapper::toResponse);
     }
 

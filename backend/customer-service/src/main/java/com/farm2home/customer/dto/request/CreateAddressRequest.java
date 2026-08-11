@@ -29,6 +29,12 @@ public class CreateAddressRequest {
     @Schema(example = "Maharashtra")
     private String state;
 
+    // Optional: not every caller of this endpoint (e.g. the admin Customer Management address
+    // dialog) collects a district - only the location-dropdown-driven registration Address step does.
+    @Size(max = 100, message = "District must be at most 100 characters")
+    @Schema(example = "Mumbai Suburban")
+    private String district;
+
     @NotBlank(message = "Pincode is required")
     @Pattern(regexp = RegexConstants.PINCODE_PATTERN, message = "Enter a valid 6-digit pincode")
     @Schema(example = "400001")

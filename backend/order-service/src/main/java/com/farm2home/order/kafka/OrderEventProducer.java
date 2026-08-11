@@ -41,14 +41,21 @@ public class OrderEventProducer {
                 .occurredAt(LocalDateTime.now())
                 .build();
 
-        orderKafkaTemplate.send(ORDER_EVENTS_TOPIC, order.getId().toString(), event)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Failed to publish OrderEvent [ORDER_CREATED] for order {}: {}",
-                                order.getOrderNumber(), ex.getMessage());
-                    } else {
-                        log.info("Published OrderEvent [ORDER_CREATED] for order {}", order.getOrderNumber());
-                    }
-                });
+        // send() can throw synchronously (e.g. on metadata-wait timeout when no broker is
+        // reachable) before ever returning the future that whenComplete() observes.
+        try {
+            orderKafkaTemplate.send(ORDER_EVENTS_TOPIC, order.getId().toString(), event)
+                    .whenComplete((result, ex) -> {
+                        if (ex != null) {
+                            log.error("Failed to publish OrderEvent [ORDER_CREATED] for order {}: {}",
+                                    order.getOrderNumber(), ex.getMessage());
+                        } else {
+                            log.info("Published OrderEvent [ORDER_CREATED] for order {}", order.getOrderNumber());
+                        }
+                    });
+        } catch (Exception ex) {
+            log.error("Failed to publish OrderEvent [ORDER_CREATED] for order {}: {}",
+                    order.getOrderNumber(), ex.getMessage());
+        }
     }
 }

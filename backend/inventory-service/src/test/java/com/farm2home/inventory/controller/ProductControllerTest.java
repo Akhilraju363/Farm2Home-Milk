@@ -2,6 +2,7 @@ package com.farm2home.inventory.controller;
 
 import com.farm2home.inventory.config.GatewayHeaderAuthFilter;
 import com.farm2home.inventory.config.SecurityConfig;
+import com.farm2home.inventory.domain.enums.ProductUnit;
 import com.farm2home.inventory.dto.request.CreateProductRequest;
 import com.farm2home.inventory.dto.response.ProductResponse;
 import com.farm2home.inventory.service.impl.ProductServiceImpl;
@@ -68,7 +69,7 @@ class ProductControllerTest {
 
     private ProductResponse buildResponse() {
         return ProductResponse.builder().id(productId).name("Full Cream Milk")
-                .price(new BigDecimal("80.00")).active(true).build();
+                .price(new BigDecimal("80.00")).unit("L").active(true).build();
     }
 
     @Test
@@ -77,6 +78,7 @@ class ProductControllerTest {
         CreateProductRequest req = new CreateProductRequest();
         req.setName("Full Cream Milk");
         req.setPrice(new BigDecimal("80.00"));
+        req.setUnit(ProductUnit.L);
         when(service.create(any())).thenReturn(buildResponse());
 
         mockMvc.perform(post("/api/v1/inventory/products")
@@ -93,6 +95,7 @@ class ProductControllerTest {
         CreateProductRequest req = new CreateProductRequest();
         req.setName("Full Cream Milk");
         req.setPrice(new BigDecimal("80.00"));
+        req.setUnit(ProductUnit.L);
 
         mockMvc.perform(post("/api/v1/inventory/products")
                         .with(authentication(customer()))
@@ -147,7 +150,7 @@ class ProductControllerTest {
         @Test
         @DisplayName("authenticated but unprivileged user → 200")
         void customer_ok() throws Exception {
-            when(service.search(any(), any(), any(), any(), any())).thenReturn(
+            when(service.search(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(
                     new PageImpl<>(List.of(buildResponse()), PageRequest.of(0, 20), 1));
 
             mockMvc.perform(get("/api/v1/inventory/products/search")
@@ -165,7 +168,7 @@ class ProductControllerTest {
         @Test
         @DisplayName("authenticated, CSV format → 200 with attachment headers")
         void authenticated_csv_ok() throws Exception {
-            doNothing().when(service).export(any(), any(), any(), any(), any(), any(), any(),
+            doNothing().when(service).export(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     org.mockito.ArgumentMatchers.anyBoolean());
 
             MvcResult started = mockMvc.perform(get("/api/v1/inventory/products/export")

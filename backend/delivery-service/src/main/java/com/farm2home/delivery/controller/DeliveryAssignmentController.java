@@ -60,7 +60,7 @@ public class DeliveryAssignmentController {
     private final DeliveryAssignmentService assignmentService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Manually assign an order to a delivery partner (admin)",
             description = "Creates a new delivery assignment linking an order to a delivery partner and route. "
                     + "An order may only have one assignment - a second manualAssign call for the same order is "
@@ -195,16 +195,22 @@ public class DeliveryAssignmentController {
     @GetMapping("/order/{orderId}")
     @Operation(summary = "Get all assignments for an order",
             description = "All assignments ever created for the given order (normally at most one, since "
-                    + "manualAssign rejects a second assignment for the same order). Open to any authenticated "
-                    + "caller - not scoped to the caller's own deliveries.")
+                    + "manualAssign rejects a second assignment for the same order). Admin sees any order's "
+                    + "assignments; a DELIVERY_PARTNER sees only assignments that are theirs; a CUSTOMER sees "
+                    + "only assignments for their own order (matched via DeliveryAssignment.customerId, now "
+                    + "reliably populated for both auto- and manually-created assignments - see "
+                    + "manualAssign()). Any other caller, or a mismatched order, gets an empty list rather than "
+                    + "an error, so this never confirms whether an unrelated order/assignment exists.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                description = "Assignments retrieved (empty list if the order has never been assigned)"),
+                description = "Assignments retrieved (empty if never assigned, or the caller doesn't own any of them)"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content)
     })
-    public ResponseEntity<ApiResponse<List<AssignmentResponse>>> findByOrder(@PathVariable UUID orderId) {
-        return ResponseEntity.ok(ApiResponse.success("Order assignments retrieved successfully", assignmentService.findByOrderId(orderId)));
+    public ResponseEntity<ApiResponse<List<AssignmentResponse>>> findByOrder(
+            @PathVariable UUID orderId, @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Order assignments retrieved successfully",
+                assignmentService.findByOrderId(orderId, principal.userId(), principal.isAdmin())));
     }
 
     @PatchMapping("/{id}/status")

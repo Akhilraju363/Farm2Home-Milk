@@ -30,6 +30,7 @@
         <module>payment-service</module>
         <module>delivery-service</module>
         <module>farm-service</module>
+        <module>invoice-service</module>
         <module>production-service</module>
         <module>inventory-service</module>
         <module>notification-service</module>

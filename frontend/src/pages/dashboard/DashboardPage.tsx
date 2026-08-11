@@ -95,7 +95,9 @@ export function DashboardPage() {
   })
   const customerNameById = new Map<string, string>()
   recentOrders.forEach((order, i) => {
-    const c = customerQueries[i]?.data?.data
+    // customerService.getById resolves to ApiResponse<Customer> (matching every other endpoint's
+    // envelope in this backend) - an extra .data hop is needed to reach the Customer itself.
+    const c = customerQueries[i]?.data?.data.data
     if (c) customerNameById.set(order.customerId, `${c.firstName} ${c.lastName}`)
   })
 

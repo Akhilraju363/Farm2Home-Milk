@@ -9,6 +9,7 @@ import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
 import { useLocation, useNavigate, Link as RouterLink } from 'react-router-dom'
 import { useDispatch } from 'react-redux'
+import loginHeroImage from '../../assets/images/login-hero.png'
 import type { AppDispatch } from '../../store/store'
 import { setCredentials } from '../../store/slices/authSlice'
 import { authService } from '../../services/authService'
@@ -86,7 +87,9 @@ export function LoginPage() {
           justifyContent: 'space-between',
           p: 4,
           color: '#fff',
-          backgroundImage: 'linear-gradient(160deg, #4a7052 0%, #2f4f37 55%, #16281a 100%)',
+          backgroundImage: `linear-gradient(180deg, rgba(20,35,22,0.55) 0%, rgba(20,35,22,0.1) 30%, rgba(20,35,22,0.05) 55%, rgba(15,28,18,0.9) 100%), url(${loginHeroImage})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

@@ -3,10 +3,15 @@ package com.farm2home.inventory.service;
 import com.farm2home.common.export.ExportFormat;
 import com.farm2home.common.web.storage.FileStorageService;
 import com.farm2home.inventory.domain.entity.Product;
+import com.farm2home.inventory.domain.entity.ProductCategory;
+import com.farm2home.inventory.domain.enums.ProductStockStatus;
+import com.farm2home.inventory.domain.enums.ProductUnit;
+import com.farm2home.inventory.domain.repository.ProductCategoryRepository;
 import com.farm2home.inventory.domain.repository.ProductRepository;
 import com.farm2home.inventory.dto.request.CreateProductRequest;
 import com.farm2home.inventory.dto.request.UpdateProductRequest;
 import com.farm2home.inventory.dto.response.ProductResponse;
+import com.farm2home.inventory.exception.InventoryException;
 import com.farm2home.inventory.exception.ResourceNotFoundException;
 import com.farm2home.inventory.mapper.ProductMapper;
 import com.farm2home.inventory.service.impl.ProductServiceImpl;
@@ -40,32 +45,39 @@ import static org.mockito.Mockito.*;
 class ProductServiceImplTest {
 
     @Mock private ProductRepository repository;
+    @Mock private ProductCategoryRepository categoryRepository;
     @Mock private ProductMapper mapper;
     @Mock private FileStorageService fileStorageService;
 
     @InjectMocks private ProductServiceImpl service;
 
     private final UUID productId = UUID.randomUUID();
+    private final UUID categoryId = UUID.randomUUID();
 
     private Product buildProduct() {
         return Product.builder()
-                .id(productId).name("Full Cream Milk").price(new BigDecimal("80.00"))
-                .active(true).deleted(false).build();
+                .id(productId).name("Full Cream Milk").price(new BigDecimal("80.00")).unit(ProductUnit.L)
+                .stockQuantity(0).minimumStockQuantity(0).active(true).deleted(false).build();
+    }
+
+    private ProductCategory buildCategory() {
+        return ProductCategory.builder().id(categoryId).name("Milk").active(true).deleted(false).build();
     }
 
     private ProductResponse buildResponse() {
         return ProductResponse.builder().id(productId).name("Full Cream Milk")
-                .price(new BigDecimal("80.00")).active(true).build();
+                .price(new BigDecimal("80.00")).unit("L").active(true).build();
     }
 
     @Nested @DisplayName("create()")
     class Create {
         @Test
-        @DisplayName("valid request → saves product")
+        @DisplayName("valid request, no category → saves product with default stock 0")
         void happyPath() {
             CreateProductRequest req = new CreateProductRequest();
             req.setName("Full Cream Milk");
             req.setPrice(new BigDecimal("80.00"));
+            req.setUnit(ProductUnit.L);
             Product entity = buildProduct();
             when(mapper.toEntity(req)).thenReturn(entity);
             when(repository.save(entity)).thenReturn(entity);
@@ -74,7 +86,50 @@ class ProductServiceImplTest {
             ProductResponse result = service.create(req);
 
             assertThat(result.getName()).isEqualTo("Full Cream Milk");
+            assertThat(entity.getStockQuantity()).isZero();
+            assertThat(entity.getMinimumStockQuantity()).isZero();
+            assertThat(entity.getCategory()).isNull();
             verify(repository).save(entity);
+            verifyNoInteractions(categoryRepository);
+        }
+
+        @Test
+        @DisplayName("valid categoryId → resolves and sets active category")
+        void withValidCategory_resolvesCategory() {
+            CreateProductRequest req = new CreateProductRequest();
+            req.setName("Full Cream Milk");
+            req.setPrice(new BigDecimal("80.00"));
+            req.setUnit(ProductUnit.L);
+            req.setCategoryId(categoryId);
+            req.setStockQuantity(50);
+            req.setMinimumStockQuantity(10);
+            Product entity = buildProduct();
+            ProductCategory category = buildCategory();
+            when(mapper.toEntity(req)).thenReturn(entity);
+            when(categoryRepository.findByIdAndActiveTrueAndDeletedFalse(categoryId)).thenReturn(Optional.of(category));
+            when(repository.save(entity)).thenReturn(entity);
+            when(mapper.toResponse(entity)).thenReturn(buildResponse());
+
+            service.create(req);
+
+            assertThat(entity.getCategory()).isEqualTo(category);
+            assertThat(entity.getStockQuantity()).isEqualTo(50);
+            assertThat(entity.getMinimumStockQuantity()).isEqualTo(10);
+        }
+
+        @Test
+        @DisplayName("unknown/inactive categoryId → throws InventoryException, never saves")
+        void withInvalidCategory_throws() {
+            CreateProductRequest req = new CreateProductRequest();
+            req.setName("Full Cream Milk");
+            req.setPrice(new BigDecimal("80.00"));
+            req.setUnit(ProductUnit.L);
+            req.setCategoryId(categoryId);
+            when(mapper.toEntity(req)).thenReturn(buildProduct());
+            when(categoryRepository.findByIdAndActiveTrueAndDeletedFalse(categoryId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.create(req)).isInstanceOf(InventoryException.class);
+            verify(repository, never()).save(any());
         }
     }
 
@@ -140,6 +195,55 @@ class ProductServiceImplTest {
 
             verify(mapper).updateEntityFromRequest(req, entity);
             verify(repository).save(entity);
+            verifyNoInteractions(categoryRepository);
+        }
+
+        @Test
+        @DisplayName("categoryId provided → resolves and reassigns category")
+        void withCategoryId_reassignsCategory() {
+            Product entity = buildProduct();
+            ProductCategory category = buildCategory();
+            UpdateProductRequest req = new UpdateProductRequest();
+            req.setCategoryId(categoryId);
+            when(repository.findByIdAndDeletedFalse(productId)).thenReturn(Optional.of(entity));
+            when(categoryRepository.findByIdAndActiveTrueAndDeletedFalse(categoryId)).thenReturn(Optional.of(category));
+            when(repository.save(entity)).thenReturn(entity);
+            when(mapper.toResponse(entity)).thenReturn(buildResponse());
+
+            service.update(productId, req);
+
+            assertThat(entity.getCategory()).isEqualTo(category);
+        }
+
+        @Test
+        @DisplayName("categoryId omitted → category left unchanged")
+        void withoutCategoryId_leavesCategoryUnchanged() {
+            Product entity = buildProduct();
+            ProductCategory existingCategory = buildCategory();
+            entity.setCategory(existingCategory);
+            UpdateProductRequest req = new UpdateProductRequest();
+            req.setPrice(new BigDecimal("85.00"));
+            when(repository.findByIdAndDeletedFalse(productId)).thenReturn(Optional.of(entity));
+            when(repository.save(entity)).thenReturn(entity);
+            when(mapper.toResponse(entity)).thenReturn(buildResponse());
+
+            service.update(productId, req);
+
+            assertThat(entity.getCategory()).isEqualTo(existingCategory);
+            verifyNoInteractions(categoryRepository);
+        }
+
+        @Test
+        @DisplayName("unknown/inactive categoryId → throws InventoryException, never saves")
+        void withInvalidCategory_throws() {
+            Product entity = buildProduct();
+            UpdateProductRequest req = new UpdateProductRequest();
+            req.setCategoryId(categoryId);
+            when(repository.findByIdAndDeletedFalse(productId)).thenReturn(Optional.of(entity));
+            when(categoryRepository.findByIdAndActiveTrueAndDeletedFalse(categoryId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.update(productId, req)).isInstanceOf(InventoryException.class);
+            verify(repository, never()).save(any());
         }
     }
 
@@ -190,7 +294,8 @@ class ProductServiceImplTest {
             when(mapper.toResponse(product)).thenReturn(buildResponse());
 
             Page<ProductResponse> result = service.search(
-                    "milk", LocalDate.now().minusDays(7), LocalDate.now(), true, PageRequest.of(0, 20));
+                    "milk", LocalDate.now().minusDays(7), LocalDate.now(), true, null, null, null,
+                    PageRequest.of(0, 20));
 
             assertThat(result.getTotalElements()).isEqualTo(1);
             assertThat(result.getContent().get(0).getId()).isEqualTo(productId);
@@ -202,9 +307,24 @@ class ProductServiceImplTest {
             var page = new PageImpl<Product>(List.of(), PageRequest.of(0, 20), 0);
             when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
 
-            Page<ProductResponse> result = service.search("   ", null, null, null, PageRequest.of(0, 20));
+            Page<ProductResponse> result = service.search(
+                    "   ", null, null, null, null, null, null, PageRequest.of(0, 20));
 
             assertThat(result.getTotalElements()).isZero();
+        }
+
+        @Test
+        @DisplayName("categoryId + stockStatus + available all combine into one query")
+        void categoryStockAvailableFiltersCombine() {
+            Product product = buildProduct();
+            var page = new PageImpl<>(List.of(product), PageRequest.of(0, 20), 1);
+            when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+            when(mapper.toResponse(product)).thenReturn(buildResponse());
+
+            Page<ProductResponse> result = service.search(
+                    null, null, null, null, categoryId, ProductStockStatus.IN_STOCK, true, PageRequest.of(0, 20));
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
         }
 
         @Test
@@ -215,7 +335,8 @@ class ProductServiceImplTest {
             when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
             when(mapper.toResponse(product)).thenReturn(buildResponse());
 
-            Page<ProductResponse> result = service.search(null, null, null, null, PageRequest.of(0, 20));
+            Page<ProductResponse> result = service.search(
+                    null, null, null, null, null, null, null, PageRequest.of(0, 20));
 
             assertThat(result.getTotalElements()).isEqualTo(1);
         }
@@ -235,7 +356,7 @@ class ProductServiceImplTest {
             when(repository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(firstPage, emptyPage);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            service.export(ExportFormat.CSV, out, "milk", null, null, true, "name", true);
+            service.export(ExportFormat.CSV, out, "milk", null, null, true, null, null, null, "name", true);
 
             String content = out.toString(java.nio.charset.StandardCharsets.UTF_8);
             assertThat(content).contains("Name").contains("Full Cream Milk");
@@ -248,10 +369,10 @@ class ProductServiceImplTest {
                     .thenReturn(new PageImpl<Product>(List.of()));
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            service.export(ExportFormat.CSV, out, null, null, null, null, "name", false);
+            service.export(ExportFormat.CSV, out, null, null, null, null, null, null, null, "name", false);
 
             String content = out.toString(java.nio.charset.StandardCharsets.UTF_8);
-            assertThat(content.trim()).isEqualTo("Name,Category,Price,Active,Created At");
+            assertThat(content.trim()).isEqualTo("Name,Category,Price,Unit,Stock Quantity,Active,Created At");
         }
     }
 }

@@ -53,6 +53,35 @@ class JwtAuthenticationFilterTest {
             verify(chain).filter(exchange);
             verifyNoInteractions(jwtUtil);
         }
+
+        @Test
+        @DisplayName("payments webhook path → passes through with no token (Razorpay can't attach a JWT; its own HMAC signature is the real auth)")
+        void paymentsWebhookPath_passesThroughWithoutToken() {
+            MockServerWebExchange exchange = MockServerWebExchange.from(
+                    MockServerHttpRequest.post("/api/v1/payments/webhook"));
+
+            filter.filter(exchange, chain).block();
+
+            verify(chain).filter(exchange);
+            verifyNoInteractions(jwtUtil);
+        }
+    }
+
+    @Nested
+    @DisplayName("payments callback path")
+    class PaymentsCallbackPath {
+
+        @Test
+        @DisplayName("callback path → still requires a token (it has no signature verification of its own, unlike webhook)")
+        void callbackPath_stillRequiresToken() {
+            MockServerWebExchange exchange = MockServerWebExchange.from(
+                    MockServerHttpRequest.post("/api/v1/payments/callback"));
+
+            filter.filter(exchange, chain).block();
+
+            assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+            verifyNoInteractions(chain);
+        }
     }
 
     @Nested

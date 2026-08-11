@@ -63,14 +63,18 @@ public class KafkaConfig {
 
     @Bean
     public ProducerFactory<String, OrderEvent> orderProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(Map.of(
-                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
-                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class,
-                ProducerConfig.ACKS_CONFIG, "all",
-                ProducerConfig.RETRIES_CONFIG, 3,
-                JsonSerializer.ADD_TYPE_INFO_HEADERS, false
-        ));
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
+        props.put(ProducerConfig.RETRIES_CONFIG, 3);
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+        // Without this, send() blocks synchronously (up to the 60s default) waiting for cluster
+        // metadata when no broker is reachable, throwing before whenComplete() ever sees it -
+        // see OrderEventProducer's try/catch, which exists for exactly this failure mode.
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 3000);
+        return new DefaultKafkaProducerFactory<>(props);
     }
 
     @Bean

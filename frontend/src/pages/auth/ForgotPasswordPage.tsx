@@ -6,6 +6,7 @@ import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
 import { Link as RouterLink } from 'react-router-dom'
 import { authService } from '../../services/authService'
+import forgotPasswordHeroImage from '../../assets/images/forgot-password-hero.png'
 
 const MOBILE_PATTERN = /^[6-9]\d{9}$/
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -62,7 +63,9 @@ export function ForgotPasswordPage() {
           justifyContent: 'space-between',
           p: 4,
           color: '#fff',
-          backgroundImage: 'linear-gradient(160deg, #4a7052 0%, #2f4f37 55%, #16281a 100%)',
+          backgroundImage: `linear-gradient(180deg, rgba(15,35,20,0.15) 0%, rgba(10,25,14,0.85) 100%), url(${forgotPasswordHeroImage})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

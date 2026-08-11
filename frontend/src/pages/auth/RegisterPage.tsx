@@ -12,19 +12,20 @@ import {
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate, Link as RouterLink } from 'react-router-dom'
 import { useDispatch } from 'react-redux'
+import milkPourImage from '../../assets/images/milk-pour.png'
+import farmFieldImage from '../../assets/images/farm-field-milk.png'
 import type { AppDispatch } from '../../store/store'
 import { setCredentials } from '../../store/slices/authSlice'
 import { authService } from '../../services/authService'
 import { customerService } from '../../services/customerService'
+import { indiaLocationService } from '../../services/indiaLocationService'
 import { tokenStorage } from '../../services/tokenStorage'
 
 const TOTAL_STEPS = 4
 const RESEND_COOLDOWN_SECONDS = 60
-
-const STATES = ['Maharashtra', 'Karnataka', 'Delhi', 'Tamil Nadu', 'Telangana', 'Gujarat', 'West Bengal', 'Uttar Pradesh']
-const CITIES = ['Mumbai', 'Pune', 'Bengaluru', 'New Delhi', 'Chennai', 'Hyderabad', 'Ahmedabad', 'Kolkata', 'Lucknow']
 
 const MILK_TYPES = [
   { value: 'COW', label: 'Cow', icon: <Pets fontSize="small" /> },
@@ -51,6 +52,7 @@ interface StepPanel {
   subtext: string
   badgeStyle: 'card' | 'inline'
   badges: PanelBadge[]
+  image?: string
 }
 
 const stepPanels: Record<number, StepPanel> = {
@@ -62,6 +64,7 @@ const stepPanels: Record<number, StepPanel> = {
       { icon: <VerifiedUser color="success" fontSize="small" />, title: 'Purity Guaranteed', caption: 'Zero preservatives added.' },
       { icon: <LocalShipping color="success" fontSize="small" />, title: 'Before 7 AM', caption: 'Timely morning delivery.' },
     ],
+    image: farmFieldImage,
   },
   2: {
     heading: 'Fresh from our fields to your doorstep.',
@@ -80,6 +83,7 @@ const stepPanels: Record<number, StepPanel> = {
       { icon: <LocalFlorist fontSize="small" />, title: '100%', caption: 'ORGANIC' },
       { icon: <Schedule fontSize="small" />, title: '24h', caption: 'DELIVERY' },
     ],
+    image: milkPourImage,
   },
   4: {
     heading: 'Digital Freshness Delivered',
@@ -92,10 +96,16 @@ const stepPanels: Record<number, StepPanel> = {
 }
 
 const personalDetailsSchema = yup.object({
-  fullName: yup
+  firstName: yup
     .string()
-    .required('Full name is required')
-    .matches(/^\S+\s+\S+/, 'Enter your first and last name'),
+    .required('First name is required')
+    .min(2, 'Min 2 characters')
+    .max(50, 'Max 50 characters'),
+  lastName: yup
+    .string()
+    .required('Last name is required')
+    .min(2, 'Min 2 characters')
+    .max(50, 'Max 50 characters'),
   mobile: yup.string()
     .matches(/^\d{10}$/, 'Mobile number must be exactly 10 digits')
     .matches(/^[6-9]/, 'Enter a valid Indian mobile number')
@@ -113,16 +123,23 @@ const personalDetailsSchema = yup.object({
 
 type PersonalDetails = yup.InferType<typeof personalDetailsSchema>
 
-const addressDetailsSchema = yup.object({
+// Only the free-text fields are validated through react-hook-form/yup - State/District/City are
+// controlled selects sourced from the backend (see LocationSelect below), validated separately
+// since their "value" is a location id, not the display name eventually submitted.
+const addressFieldsSchema = yup.object({
   houseNo: yup.string().required('House/Flat No. is required'),
   street: yup.string().required('Street/Landmark is required'),
   area: yup.string().required('Area/Locality is required'),
-  city: yup.string().required('Select a city'),
   pincode: yup.string().matches(/^\d{6}$/, 'Enter a valid 6-digit pincode').required('Pincode is required'),
-  state: yup.string().required('Select a state'),
 })
 
-type AddressDetails = yup.InferType<typeof addressDetailsSchema>
+type AddressFields = yup.InferType<typeof addressFieldsSchema>
+
+interface AddressDetails extends AddressFields {
+  state: string
+  district: string
+  city: string
+}
 
 interface MilkPreferences {
   milkType: (typeof MILK_TYPES)[number]['value']
@@ -162,14 +179,24 @@ function PersonalDetailsStep({
 
   return (
     <Box component="form" onSubmit={handleSubmit(onNext)} noValidate>
-      <TextField
-        label="Full Name"
-        fullWidth
-        margin="normal"
-        error={!!errors.fullName}
-        helperText={errors.fullName?.message}
-        {...register('fullName')}
-      />
+      <Box sx={{ display: 'flex', gap: 2 }}>
+        <TextField
+          label="First Name"
+          fullWidth
+          margin="normal"
+          error={!!errors.firstName}
+          helperText={errors.firstName?.message}
+          {...register('firstName')}
+        />
+        <TextField
+          label="Last Name"
+          fullWidth
+          margin="normal"
+          error={!!errors.lastName}
+          helperText={errors.lastName?.message}
+          {...register('lastName')}
+        />
+      </Box>
 
       <Box sx={{ display: 'flex', gap: 2 }}>
         <TextField
@@ -256,6 +283,67 @@ function PersonalDetailsStep({
   )
 }
 
+interface LocationSelectItem {
+  id: string
+  name: string
+}
+
+/** One cascading State/District/City dropdown. Values are always the backend's own location id -
+ *  never a hardcoded string - and the three loading/empty/error states are shown explicitly
+ *  rather than silently rendering an empty or fake-looking list. */
+function LocationSelect({
+  label, value, onChange, disabled, disabledReason, items, isLoading, isError, onRetry, showRequiredError,
+}: {
+  label: string
+  value: string
+  onChange: (id: string) => void
+  disabled: boolean
+  disabledReason?: string
+  items: LocationSelectItem[]
+  isLoading: boolean
+  isError: boolean
+  onRetry: () => void
+  showRequiredError: boolean
+}) {
+  const empty = !isLoading && !isError && items.length === 0
+  const fieldDisabled = disabled || isLoading || isError || empty
+
+  let helperText: React.ReactNode = ' '
+  if (disabled) helperText = disabledReason
+  else if (isLoading) helperText = `Loading ${label.toLowerCase()}s...`
+  else if (isError) {
+    helperText = (
+      <>
+        {`Unable to load ${label.toLowerCase()}s. `}
+        <Typography component="span" variant="caption" color="primary.main" fontWeight={700}
+          sx={{ cursor: 'pointer' }} onClick={onRetry}>
+          Retry
+        </Typography>
+      </>
+    )
+  } else if (empty) helperText = `No ${label.toLowerCase()}s available`
+  else if (showRequiredError) helperText = `Select a ${label.toLowerCase()}`
+
+  return (
+    <TextField
+      select
+      fullWidth
+      margin="normal"
+      label={label}
+      value={fieldDisabled ? '' : value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={fieldDisabled}
+      error={showRequiredError && !disabled && !isLoading}
+      helperText={helperText}
+      SelectProps={{ displayEmpty: true }}
+    >
+      {items.map((item) => (
+        <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>
+      ))}
+    </TextField>
+  )
+}
+
 function AddressDetailsStep({
   warning, onBack, onNext,
 }: {
@@ -266,10 +354,58 @@ function AddressDetailsStep({
   const {
     register, handleSubmit,
     formState: { errors },
-  } = useForm<AddressDetails>({ resolver: yupResolver(addressDetailsSchema) })
+  } = useForm<AddressFields>({ resolver: yupResolver(addressFieldsSchema) })
+
+  const [stateId, setStateId] = useState('')
+  const [districtId, setDistrictId] = useState('')
+  const [cityId, setCityId] = useState('')
+  const [locationTouched, setLocationTouched] = useState(false)
+
+  const statesQuery = useQuery({
+    queryKey: ['indiaLocations', 'states'],
+    queryFn: () => indiaLocationService.getStates(),
+  })
+  const states = statesQuery.data?.data.data ?? []
+
+  const districtsQuery = useQuery({
+    queryKey: ['indiaLocations', 'districts', stateId],
+    queryFn: () => indiaLocationService.getDistricts(stateId),
+    enabled: Boolean(stateId),
+  })
+  const districts = districtsQuery.data?.data.data ?? []
+
+  const citiesQuery = useQuery({
+    queryKey: ['indiaLocations', 'cities', districtId],
+    queryFn: () => indiaLocationService.getCities(districtId),
+    enabled: Boolean(districtId),
+  })
+  const cities = citiesQuery.data?.data.data ?? []
+
+  const handleStateChange = (id: string) => {
+    setStateId(id)
+    setDistrictId('')
+    setCityId('')
+  }
+
+  const handleDistrictChange = (id: string) => {
+    setDistrictId(id)
+    setCityId('')
+  }
+
+  const locationComplete = Boolean(stateId && districtId && cityId)
+
+  const submit = (fields: AddressFields) => {
+    setLocationTouched(true)
+    if (!locationComplete) return
+    const state = states.find((s) => s.id === stateId)
+    const district = districts.find((d) => d.id === districtId)
+    const city = cities.find((c) => c.id === cityId)
+    if (!state || !district || !city) return
+    onNext({ ...fields, state: state.name, district: district.name, city: city.name })
+  }
 
   return (
-    <Box component="form" onSubmit={handleSubmit(onNext)} noValidate>
+    <Box component="form" onSubmit={handleSubmit(submit)} noValidate>
       <Typography variant="h6" fontWeight={700} mb={0.5}>
         Where should we deliver?
       </Typography>
@@ -279,7 +415,7 @@ function AddressDetailsStep({
 
       {warning && <Alert severity="warning" sx={{ mb: 2 }}>{warning}</Alert>}
 
-      <Box sx={{ display: 'flex', gap: 2 }}>
+      <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
         <TextField
           label="House / Flat No."
           fullWidth
@@ -307,45 +443,55 @@ function AddressDetailsStep({
         {...register('area')}
       />
 
-      <Box sx={{ display: 'flex', gap: 2 }}>
-        <TextField
-          select
+      <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
+        <LocationSelect
+          label="State"
+          value={stateId}
+          onChange={handleStateChange}
+          disabled={false}
+          items={states}
+          isLoading={statesQuery.isLoading}
+          isError={statesQuery.isError}
+          onRetry={() => statesQuery.refetch()}
+          showRequiredError={locationTouched && !stateId}
+        />
+        <LocationSelect
+          label="District"
+          value={districtId}
+          onChange={handleDistrictChange}
+          disabled={!stateId}
+          disabledReason="Select a state first"
+          items={districts}
+          isLoading={districtsQuery.isLoading}
+          isError={districtsQuery.isError}
+          onRetry={() => districtsQuery.refetch()}
+          showRequiredError={locationTouched && Boolean(stateId) && !districtId}
+        />
+      </Box>
+
+      <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
+        <LocationSelect
           label="City"
-          fullWidth
-          margin="normal"
-          defaultValue=""
-          error={!!errors.city}
-          helperText={errors.city?.message}
-          {...register('city')}
-        >
-          {CITIES.map((city) => (
-            <MenuItem key={city} value={city}>{city}</MenuItem>
-          ))}
-        </TextField>
+          value={cityId}
+          onChange={setCityId}
+          disabled={!districtId}
+          disabledReason="Select a district first"
+          items={cities}
+          isLoading={citiesQuery.isLoading}
+          isError={citiesQuery.isError}
+          onRetry={() => citiesQuery.refetch()}
+          showRequiredError={locationTouched && Boolean(districtId) && !cityId}
+        />
         <TextField
           label="Pincode"
           fullWidth
           margin="normal"
+          inputProps={{ inputMode: 'numeric', maxLength: 6 }}
           error={!!errors.pincode}
           helperText={errors.pincode?.message}
           {...register('pincode')}
         />
       </Box>
-
-      <TextField
-        select
-        label="State"
-        fullWidth
-        margin="normal"
-        defaultValue=""
-        error={!!errors.state}
-        helperText={errors.state?.message}
-        {...register('state')}
-      >
-        {STATES.map((state) => (
-          <MenuItem key={state} value={state}>{state}</MenuItem>
-        ))}
-      </TextField>
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
         <Button onClick={onBack} startIcon={<ArrowBack />} color="primary">
@@ -580,11 +726,10 @@ export function RegisterPage() {
   const handlePersonalDetailsNext = async (data: PersonalDetails) => {
     setError('')
     setSubmitting(true)
-    const [firstName, ...rest] = data.fullName.trim().split(/\s+/)
     try {
       const res = await authService.register({
-        firstName,
-        lastName: rest.join(' '),
+        firstName: data.firstName,
+        lastName: data.lastName,
         mobile: data.mobile,
         email: data.email || undefined,
         password: data.password,
@@ -609,6 +754,7 @@ export function RegisterPage() {
         addressLine2: address.area,
         city: address.city,
         state: address.state,
+        district: address.district,
         pincode: address.pincode,
       })
     } catch {
@@ -640,9 +786,29 @@ export function RegisterPage() {
     authService.sendOtp({ identifier: personalDetails.mobile, otpType: 'REGISTRATION' }).catch(() => {})
   }
 
+  // Steps 2-4 no longer show a left-side step-navigation sidebar (removed) - the header below is
+  // shown at every step/breakpoint now, since it used to be carried by that sidebar on md+.
+  const stepHeader = step !== 4 && (
+    <>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.5 }}>
+        <Typography variant="subtitle2" fontWeight={700} color="primary.main">
+          Step {step} of {TOTAL_STEPS}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {stepLabel}
+        </Typography>
+      </Box>
+      <LinearProgress
+        variant="determinate"
+        value={(step / TOTAL_STEPS) * 100}
+        sx={{ height: 4, borderRadius: 2, mb: 3 }}
+      />
+    </>
+  )
+
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: '#f2f7f3', display: 'flex', flexDirection: 'column' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', px: 3, py: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', px: 4, py: 2, width: '100%' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Agriculture sx={{ color: 'primary.main' }} />
           <Typography variant="h6" fontWeight={700} color="primary.main">
@@ -651,109 +817,102 @@ export function RegisterPage() {
         </Box>
       </Box>
 
-      <Box sx={{ flex: 1, display: 'flex', gap: 4, px: 3, pb: 3, flexDirection: { xs: 'column', md: 'row' } }}>
-        <Box sx={{ flex: 1, maxWidth: { md: 460 } }}>
-          <Box
-            sx={{
-              position: 'relative',
-              borderRadius: 3,
-              overflow: 'hidden',
-              minHeight: 340,
-              display: 'flex',
-              alignItems: 'flex-end',
-              p: 3,
-              backgroundImage: 'linear-gradient(160deg, #6d8f6a 0%, #3f6b45 55%, #1f3d24 100%)',
-              color: '#fff',
-            }}
-          >
-            <Box sx={{ width: '100%' }}>
-              <Typography variant="h5" fontWeight={700} lineHeight={1.25}>
-                {panel.heading}
-              </Typography>
-              <Typography variant="body2" sx={{ mt: 1, opacity: 0.9 }}>
-                {panel.subtext}
-              </Typography>
+      <Box sx={{
+          flex: 1, display: 'flex', gap: 4, px: 4, py: { xs: 0, md: 3 }, pb: 3,
+          flexDirection: { xs: 'column', md: 'row' },
+          width: '100%',
+        }}>
+          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <Box
+              sx={{
+                position: 'relative',
+                borderRadius: 3,
+                overflow: 'hidden',
+                flex: 1,
+                minHeight: 340,
+                display: 'flex',
+                alignItems: 'flex-end',
+                p: 3,
+                backgroundImage: panel.image
+                  ? `linear-gradient(180deg, rgba(15,35,20,0.15) 0%, rgba(10,25,14,0.85) 100%), url(${panel.image})`
+                  : 'linear-gradient(160deg, #6d8f6a 0%, #3f6b45 55%, #1f3d24 100%)',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                color: '#fff',
+              }}
+            >
+              <Box sx={{ width: '100%' }}>
+                <Typography variant="h5" fontWeight={700} lineHeight={1.25}>
+                  {panel.heading}
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 1, opacity: 0.9 }}>
+                  {panel.subtext}
+                </Typography>
 
-              {panel.badgeStyle === 'inline' && (
-                <Box sx={{ display: 'flex', gap: 3, mt: 2 }}>
-                  {panel.badges.map((badge) => (
-                    <Box key={badge.title} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      {badge.icon}
-                      <Box>
-                        <Typography variant="subtitle1" fontWeight={700} lineHeight={1}>{badge.title}</Typography>
-                        <Typography variant="caption" sx={{ opacity: 0.85, letterSpacing: 0.5 }}>{badge.caption}</Typography>
+                {panel.badgeStyle === 'inline' && (
+                  <Box sx={{ display: 'flex', gap: 3, mt: 2 }}>
+                    {panel.badges.map((badge) => (
+                      <Box key={badge.title} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        {badge.icon}
+                        <Box>
+                          <Typography variant="subtitle1" fontWeight={700} lineHeight={1}>{badge.title}</Typography>
+                          <Typography variant="caption" sx={{ opacity: 0.85, letterSpacing: 0.5 }}>{badge.caption}</Typography>
+                        </Box>
                       </Box>
-                    </Box>
-                  ))}
-                </Box>
-              )}
+                    ))}
+                  </Box>
+                )}
+              </Box>
             </Box>
+
+            {panel.badgeStyle === 'card' && (
+              <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                {panel.badges.map((badge) => (
+                  <Paper key={badge.title} variant="outlined" sx={{ flex: 1, p: 1.5, bgcolor: '#ffffff' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {badge.icon}
+                      <Typography variant="subtitle2" fontWeight={700}>
+                        {badge.title}
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      {badge.caption}
+                    </Typography>
+                  </Paper>
+                ))}
+              </Box>
+            )}
           </Box>
 
-          {panel.badgeStyle === 'card' && (
-            <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-              {panel.badges.map((badge) => (
-                <Paper key={badge.title} variant="outlined" sx={{ flex: 1, p: 1.5, bgcolor: '#ffffff' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {badge.icon}
-                    <Typography variant="subtitle2" fontWeight={700}>
-                      {badge.title}
-                    </Typography>
-                  </Box>
-                  <Typography variant="caption" color="text.secondary">
-                    {badge.caption}
-                  </Typography>
-                </Paper>
-              ))}
-            </Box>
-          )}
-        </Box>
+          <Paper sx={{ flex: 1, p: 4, borderRadius: 3, bgcolor: '#ffffff' }}>
+            {stepHeader}
 
-        <Paper sx={{ flex: 1, p: 4, borderRadius: 3, bgcolor: '#ffffff', maxWidth: { md: 480 } }}>
-          {step !== 4 && (
-            <>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.5 }}>
-                <Typography variant="subtitle2" fontWeight={700} color="primary.main">
-                  Step {step} of {TOTAL_STEPS}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {stepLabel}
-                </Typography>
-              </Box>
-              <LinearProgress
-                variant="determinate"
-                value={(step / TOTAL_STEPS) * 100}
-                sx={{ height: 4, borderRadius: 2, mb: 3 }}
+            {step === 1 && (
+              <PersonalDetailsStep
+                defaultValues={personalDetails}
+                error={error}
+                submitting={submitting}
+                onNext={handlePersonalDetailsNext}
               />
-            </>
-          )}
-
-          {step === 1 && (
-            <PersonalDetailsStep
-              defaultValues={personalDetails}
-              error={error}
-              submitting={submitting}
-              onNext={handlePersonalDetailsNext}
-            />
-          )}
-          {step === 2 && (
-            <AddressDetailsStep warning={addressWarning} onBack={() => setStep(1)} onNext={handleAddressDetailsNext} />
-          )}
-          {step === 3 && (
-            <MilkPreferencesStep onBack={() => setStep(2)} onNext={handleMilkPreferencesNext} />
-          )}
-          {step === 4 && personalDetails && (
-            <VerificationStep
-              mobile={personalDetails.mobile}
-              error={error}
-              submitting={submitting}
-              onVerify={handleVerify}
-              onResend={handleResend}
-              onBack={() => setStep(3)}
-            />
-          )}
-        </Paper>
-      </Box>
+            )}
+            {step === 2 && (
+              <AddressDetailsStep warning={addressWarning} onBack={() => setStep(1)} onNext={handleAddressDetailsNext} />
+            )}
+            {step === 3 && (
+              <MilkPreferencesStep onBack={() => setStep(2)} onNext={handleMilkPreferencesNext} />
+            )}
+            {step === 4 && personalDetails && (
+              <VerificationStep
+                mobile={personalDetails.mobile}
+                error={error}
+                submitting={submitting}
+                onVerify={handleVerify}
+                onResend={handleResend}
+                onBack={() => setStep(3)}
+              />
+            )}
+          </Paper>
+        </Box>
 
       <Box sx={{ textAlign: 'center', py: 2 }}>
         <Typography variant="caption" color="text.secondary">

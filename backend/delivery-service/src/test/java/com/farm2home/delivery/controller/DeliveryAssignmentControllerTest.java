@@ -59,12 +59,14 @@ class DeliveryAssignmentControllerTest {
     private final UUID assignmentId = UUID.randomUUID();
     private final UUID partnerUserId = UUID.randomUUID();
 
+    // GatewayHeaderAuthFilter grants unprefixed authorities (matching the other services'
+    // convention), so this mirrors that - no "ROLE_" prefix.
     private UsernamePasswordAuthenticationToken authFor(UUID userId, boolean admin) {
         UserPrincipal principal = new UserPrincipal(userId, "9876543210",
                 admin ? Set.of("FARM_MANAGER") : Set.of("DELIVERY_PARTNER"));
         var authorities = admin
-                ? List.of(new SimpleGrantedAuthority("ROLE_FARM_MANAGER"))
-                : List.of(new SimpleGrantedAuthority("ROLE_DELIVERY_PARTNER"));
+                ? List.of(new SimpleGrantedAuthority("FARM_MANAGER"))
+                : List.of(new SimpleGrantedAuthority("DELIVERY_PARTNER"));
         return new UsernamePasswordAuthenticationToken(principal, null, authorities);
     }
 
@@ -119,6 +121,20 @@ class DeliveryAssignmentControllerTest {
             mockMvc.perform(get("/api/v1/delivery/assignments").with(authentication(authFor(partnerUserId, false))))
                     .andExpect(status().isOk());
         }
+
+        @Test
+        @DisplayName("delivery manager → isAdmin=true (isAdmin() broadened to include DELIVERY_MANAGER)")
+        void deliveryManager_isAdminTrue() throws Exception {
+            UUID managerId = UUID.randomUUID();
+            UserPrincipal principal = new UserPrincipal(managerId, "9876543210", Set.of("DELIVERY_MANAGER"));
+            var auth = new UsernamePasswordAuthenticationToken(principal, null,
+                    List.of(new SimpleGrantedAuthority("ROLE_DELIVERY_MANAGER")));
+            when(assignmentService.findAll(eq(managerId), eq(true), any()))
+                    .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+            mockMvc.perform(get("/api/v1/delivery/assignments").with(authentication(auth)))
+                    .andExpect(status().isOk());
+        }
     }
 
     @Nested
@@ -165,9 +181,8 @@ class DeliveryAssignmentControllerTest {
     @DisplayName("GET /api/v1/delivery/assignments/summary")
     class Summary {
 
-        // The summary endpoint uses hasAnyAuthority(...) (matched against raw role strings,
-        // no ROLE_ prefix) rather than hasAnyRole(...) like the rest of this controller, so
-        // it needs its own authority builder distinct from authFor() above.
+        // Separate from authFor() since this test doesn't need a UserPrincipal, just a bare
+        // authority to check against this endpoint's hasAnyAuthority(...) restriction.
         private UsernamePasswordAuthenticationToken authorityFor(String authority) {
             UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210", Set.of(authority));
             return new UsernamePasswordAuthenticationToken(principal, null,
@@ -199,8 +214,7 @@ class DeliveryAssignmentControllerTest {
     @DisplayName("GET /api/v1/delivery/assignments/reports")
     class GetReport {
 
-        // Same rationale as Summary above: this endpoint uses hasAnyAuthority(...) rather than
-        // hasAnyRole(...), so it needs its own authority builder distinct from authFor().
+        // Same rationale as Summary above - doesn't need a UserPrincipal, just a bare authority.
         private UsernamePasswordAuthenticationToken authorityFor(String authority) {
             UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210", Set.of(authority));
             return new UsernamePasswordAuthenticationToken(principal, null,
@@ -300,6 +314,38 @@ class DeliveryAssignmentControllerTest {
                             .param("granularity", "DAILY")
                             .with(authentication(authorityFor("DELIVERY_PARTNER"))))
                     .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/delivery/assignments/order/{orderId}")
+    class FindByOrder {
+
+        @Test
+        @DisplayName("admin → passes own userId and isAdmin=true")
+        void admin_isAdminTrue() throws Exception {
+            UUID orderId = UUID.randomUUID();
+            UUID adminId = UUID.randomUUID();
+            when(assignmentService.findByOrderId(eq(orderId), eq(adminId), eq(true)))
+                    .thenReturn(List.of(AssignmentResponse.builder().id(assignmentId).build()));
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/order/{orderId}", orderId)
+                            .with(authentication(authFor(adminId, true))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data[0].id").value(assignmentId.toString()));
+        }
+
+        @Test
+        @DisplayName("delivery partner → passes own userId and isAdmin=false")
+        void partner_ownIdNotAdmin() throws Exception {
+            UUID orderId = UUID.randomUUID();
+            when(assignmentService.findByOrderId(eq(orderId), eq(partnerUserId), eq(false)))
+                    .thenReturn(List.of());
+
+            mockMvc.perform(get("/api/v1/delivery/assignments/order/{orderId}", orderId)
+                            .with(authentication(authFor(partnerUserId, false))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data").isEmpty());
         }
     }
 }

@@ -303,6 +303,58 @@ class OrderServiceImplTest {
         }
     }
 
+    // ── FindBySubscription ──────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("findBySubscription()")
+    class FindBySubscription {
+
+        private final UUID subscriptionId = UUID.randomUUID();
+
+        @Test
+        @DisplayName("customer owns the subscription's orders → returns them")
+        void customerOwns() {
+            Order order = buildPendingOrder();
+            var page = new org.springframework.data.domain.PageImpl<>(List.of(order));
+            when(orderRepository.findAllBySubscriptionIdAndCustomerIdAndDeletedFalse(
+                    eq(subscriptionId), eq(customerId), any())).thenReturn(page);
+            when(orderMapper.toResponse(order)).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            Page<OrderResponse> result = service.findBySubscription(
+                    subscriptionId, customerId, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isEqualTo(1);
+            verify(orderRepository, never()).findAllBySubscriptionIdAndDeletedFalse(any(), any());
+        }
+
+        @Test
+        @DisplayName("subscription belongs to a different customer → empty page, not an error")
+        void strangerGetsEmptyPage() {
+            when(orderRepository.findAllBySubscriptionIdAndCustomerIdAndDeletedFalse(
+                    eq(subscriptionId), eq(customerId), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+
+            Page<OrderResponse> result = service.findBySubscription(
+                    subscriptionId, customerId, org.springframework.data.domain.Pageable.unpaged());
+
+            assertThat(result.getTotalElements()).isZero();
+        }
+
+        @Test
+        @DisplayName("admin (null customerId) → queries without customer filter")
+        void adminAccess() {
+            Order order = buildPendingOrder();
+            var page = new org.springframework.data.domain.PageImpl<>(List.of(order));
+            when(orderRepository.findAllBySubscriptionIdAndDeletedFalse(eq(subscriptionId), any())).thenReturn(page);
+            when(orderMapper.toResponse(order)).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.findBySubscription(subscriptionId, null, org.springframework.data.domain.Pageable.unpaged());
+
+            verify(orderRepository).findAllBySubscriptionIdAndDeletedFalse(eq(subscriptionId), any());
+            verify(orderRepository, never()).findAllBySubscriptionIdAndCustomerIdAndDeletedFalse(any(), any(), any());
+        }
+    }
+
     // ── UpdateStatus ─────────────────────────────────────────────────────────────
 
     @Nested

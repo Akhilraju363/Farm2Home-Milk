@@ -36,7 +36,7 @@ public class DeliveryRouteController {
     private final DeliveryRouteServiceImpl routeService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Create a delivery route (admin)",
             description = "routeCode is stored upper-cased regardless of the casing submitted, and must be "
                     + "unique among non-deleted routes - a duplicate is rejected with a 400. The new route is "
@@ -125,7 +125,7 @@ public class DeliveryRouteController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Update route (admin)",
             description = "Partial update - only non-null fields are applied (see UpdateRouteRequest); "
                     + "routeCode cannot be changed via this endpoint. Bean-validation constraints (field "
@@ -165,7 +165,7 @@ public class DeliveryRouteController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Soft-delete route (admin)",
             description = "Marks the route as deleted (route.deleted = true) so it drops out of GET / and "
                     + "GET /{id}. This is a soft delete only - the row is not removed, and despite the prior "

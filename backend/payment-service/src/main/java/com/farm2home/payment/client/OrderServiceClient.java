@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.UUID;
 
 @Component
@@ -31,6 +32,10 @@ public class OrderServiceClient {
                 .headers(h -> h.addAll(headerForwarder.forwardable()))
                 .retrieve()
                 .bodyToMono(new ParameterizedTypeReference<ApiResponse<OrderStatusResponse>>() { })
-                .map(ApiResponse::getData);
+                .map(ApiResponse::getData)
+                // Without this, a slow/unreachable order-service (or a stuck Eureka lb://
+                // resolution) leaves initiate()'s .block() waiting indefinitely - see
+                // PaymentServiceImpl.verifyOrderIsPayable, which maps this to a friendly error.
+                .timeout(Duration.ofSeconds(5));
     }
 }

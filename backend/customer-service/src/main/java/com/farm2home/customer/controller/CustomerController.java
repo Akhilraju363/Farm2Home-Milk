@@ -14,6 +14,7 @@ import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.enums.CustomerStatus;
 import com.farm2home.customer.dto.request.CreateAddressRequest;
+import com.farm2home.customer.dto.request.UpdateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
 import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
@@ -42,6 +43,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -74,24 +76,29 @@ public class CustomerController {
     @GetMapping("/{id}")
     @Operation(summary = "Get customer profile by ID",
             description = "Returns a single customer's profile. Soft-deleted customers are never returned "
-                    + "(404, same as an unknown id).")
+                    + "(404, same as an unknown id). Callers may only fetch their own profile unless they hold "
+                    + "SUPER_ADMIN/DELIVERY_MANAGER - a mismatched id gets the same 404 as an unknown one, never "
+                    + "a 403 that would confirm the id exists.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Customer retrieved"),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                description = "No customer with this id (or it is soft-deleted)", content = @Content)
+                description = "No customer with this id, it is soft-deleted, or it belongs to someone else",
+                content = @Content)
     })
-    public ResponseEntity<ApiResponse<CustomerResponse>> findById(@PathVariable UUID id) {
-        return ResponseEntity.ok(ApiResponse.success("Customer retrieved successfully", customerService.findById(id)));
+    public ResponseEntity<ApiResponse<CustomerResponse>> findById(@PathVariable UUID id,
+                                                                    @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Customer retrieved successfully", customerService.findById(id, principal)));
     }
 
     @PutMapping("/{id}")
     @Operation(summary = "Update customer profile",
             description = "Partial update of a customer's own profile fields (firstName, lastName, email, "
                     + "status). Any field left null in the request body is left unchanged - this is not a "
-                    + "full replace. Fields such as mobile and customerCode are immutable and not settable here.")
+                    + "full replace. Fields such as mobile and customerCode are immutable and not settable here. "
+                    + "Callers may only update their own profile unless they hold SUPER_ADMIN/DELIVERY_MANAGER.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Customer updated"),
@@ -101,11 +108,13 @@ public class CustomerController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                description = "No customer with this id (or it is soft-deleted)", content = @Content)
+                description = "No customer with this id, it is soft-deleted, or it belongs to someone else",
+                content = @Content)
     })
     public ResponseEntity<ApiResponse<CustomerResponse>> update(@PathVariable UUID id,
-                                                     @Valid @RequestBody UpdateCustomerRequest request) {
-        return ResponseEntity.ok(ApiResponse.success("Customer updated successfully", customerService.update(id, request)));
+                                                     @Valid @RequestBody UpdateCustomerRequest request,
+                                                     @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Customer updated successfully", customerService.update(id, request, principal)));
     }
 
     @DeleteMapping("/{id}")
@@ -138,7 +147,8 @@ public class CustomerController {
             description = "Stores the uploaded file and overwrites profileImageUrl on the customer's profile; "
                     + "any previous image at the old path is not deleted. The file is validated for non-empty "
                     + "content, an allowed content type, and a maximum size (see FileStorageService/"
-                    + "FileStorageProperties for the configured allow-list and byte limit).")
+                    + "FileStorageProperties for the configured allow-list and byte limit). Callers may only "
+                    + "upload their own image unless they hold SUPER_ADMIN/DELIVERY_MANAGER.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Profile image stored; returns the customer with the new profileImageUrl"),
@@ -148,14 +158,16 @@ public class CustomerController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                description = "No customer with this id (or it is soft-deleted)", content = @Content)
+                description = "No customer with this id, it is soft-deleted, or it belongs to someone else",
+                content = @Content)
     })
     public ResponseEntity<ApiResponse<CustomerResponse>> uploadProfileImage(
             @PathVariable UUID id,
             @Parameter(description = "Image file to store (see FileStorageProperties for allowed content types and max size)")
-            @RequestParam("file") MultipartFile file) {
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(ApiResponse.success("Profile image uploaded successfully",
-                customerService.uploadProfileImage(id, file)));
+                customerService.uploadProfileImage(id, file, principal)));
     }
 
     @PostMapping("/me/addresses")
@@ -186,6 +198,114 @@ public class CustomerController {
                 .body(ApiResponse.success("Address saved successfully", customerService.addAddress(principal.userId(), request)));
     }
 
+    @GetMapping("/{id}/addresses")
+    @Operation(summary = "List a customer's saved addresses",
+            description = "Returns every non-deleted delivery address for the given customer, most-recently-"
+                    + "added order is not guaranteed. Callers may only list their own addresses unless they "
+                    + "hold SUPER_ADMIN/DELIVERY_MANAGER.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Addresses retrieved (possibly empty)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No customer with this id, it is soft-deleted, or it belongs to someone else",
+                content = @Content)
+    })
+    public ResponseEntity<ApiResponse<List<AddressResponse>>> getAddresses(
+            @PathVariable UUID id, @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Addresses retrieved successfully", customerService.getAddresses(id, principal)));
+    }
+
+    @PostMapping("/{id}/addresses")
+    @Operation(summary = "Add a delivery address for a customer",
+            description = "Admin/ownership-scoped counterpart to POST /me/addresses - lets an authorized admin "
+                    + "add an address on behalf of a specific customer. The first address added for a customer "
+                    + "becomes their default automatically; later ones don't. Callers may only add to their own "
+                    + "profile unless they hold SUPER_ADMIN/DELIVERY_MANAGER.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201",
+                description = "Address saved"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "Validation failed (missing city/state/address line, or pincode not 6 digits)",
+                content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No customer with this id, it is soft-deleted, or it belongs to someone else",
+                content = @Content)
+    })
+    public ResponseEntity<ApiResponse<AddressResponse>> addAddressForCustomer(
+            @PathVariable UUID id, @Valid @RequestBody CreateAddressRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Address saved successfully", customerService.addAddressScoped(id, request, principal)));
+    }
+
+    @PutMapping("/{id}/addresses/{addressId}")
+    @Operation(summary = "Update a customer's delivery address",
+            description = "Partial update - any field left null in the request body is left unchanged. "
+                    + "Callers may only update their own addresses unless they hold SUPER_ADMIN/DELIVERY_MANAGER.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Address updated"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "Validation failed (e.g. pincode not 6 digits)", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No matching customer or address (or either belongs to someone else)",
+                content = @Content)
+    })
+    public ResponseEntity<ApiResponse<AddressResponse>> updateAddress(
+            @PathVariable UUID id, @PathVariable UUID addressId,
+            @Valid @RequestBody UpdateAddressRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Address updated successfully",
+                customerService.updateAddress(id, addressId, request, principal)));
+    }
+
+    @DeleteMapping("/{id}/addresses/{addressId}")
+    @Operation(summary = "Delete a customer's delivery address",
+            description = "Soft-deletes the address; it stops appearing in GET /{id}/addresses. Callers may "
+                    + "only delete their own addresses unless they hold SUPER_ADMIN/DELIVERY_MANAGER.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Address deleted"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No matching customer or address (or either belongs to someone else)",
+                content = @Content)
+    })
+    public ResponseEntity<ApiResponse<Void>> deleteAddress(
+            @PathVariable UUID id, @PathVariable UUID addressId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        customerService.deleteAddress(id, addressId, principal);
+        return ResponseEntity.ok(ApiResponse.success("Address deleted successfully", null));
+    }
+
+    @PatchMapping("/{id}/addresses/{addressId}/default")
+    @Operation(summary = "Set a customer's default delivery address",
+            description = "Marks this address as the customer's default and unsets the flag on every other "
+                    + "one of their addresses, so exactly one stays default. Callers may only change their own "
+                    + "addresses unless they hold SUPER_ADMIN/DELIVERY_MANAGER.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Default address updated"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No matching customer or address (or either belongs to someone else)",
+                content = @Content)
+    })
+    public ResponseEntity<ApiResponse<AddressResponse>> setDefaultAddress(
+            @PathVariable UUID id, @PathVariable UUID addressId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Default address updated successfully",
+                customerService.setDefaultAddress(id, addressId, principal)));
+    }
+
     @GetMapping("/summary")
     @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_SUPER_ADMIN + "', '" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_DELIVERY_MANAGER + "')")
     @Operation(summary = "Get customer summary metrics for the dashboard",
@@ -204,10 +324,13 @@ public class CustomerController {
     }
 
     @GetMapping("/search")
-    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_SUPER_ADMIN + "', '" + SecurityConstants.ROLE_DELIVERY_MANAGER + "')")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_SUPER_ADMIN + "', '" + SecurityConstants.ROLE_DELIVERY_MANAGER
+            + "', '" + SecurityConstants.ROLE_FARM_MANAGER + "')")
     @Operation(summary = "Search customers",
             description = "Keyword search across name/mobile/email/customer code, plus optional date range "
-                    + "and status filters. All filters are optional and combine with AND.")
+                    + "and status filters. All filters are optional and combine with AND. FARM_MANAGER included "
+                    + "(alongside SUPER_ADMIN/DELIVERY_MANAGER) so they can look up a customer while creating/"
+                    + "managing a subscription on that customer's behalf - see UserPrincipal.isAdmin().")
     public ResponseEntity<ApiResponse<Page<CustomerResponse>>> search(
             @Parameter(description = "Matches name, mobile, email, or customer code") @RequestParam(required = false) String keyword,
             @Parameter(description = "Created date range start (inclusive)") @RequestParam(required = false)

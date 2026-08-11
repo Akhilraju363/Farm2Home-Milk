@@ -87,6 +87,14 @@ logs/
 # ========================
 uploads/*/*
 !uploads/*/.gitkeep
+# Each service's own local file-storage working directory (runtime-created, not the tracked
+# top-level uploads/ placeholder structure above) - never commit uploaded content.
+backend/*/uploads/
+
+# ========================
+# Scratch / working files
+# ========================
+.scratch/
 
 # ========================
 # Test / Coverage
