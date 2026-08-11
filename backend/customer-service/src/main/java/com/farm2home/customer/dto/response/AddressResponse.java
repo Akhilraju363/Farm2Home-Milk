@@ -20,6 +20,8 @@ public class AddressResponse {
     private String city;
     @Schema(example = "Maharashtra")
     private String state;
+    @Schema(example = "Mumbai Suburban")
+    private String district;
     @Schema(example = "400001")
     private String pincode;
     private boolean defaultAddress;

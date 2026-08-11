@@ -1,0 +1,51 @@
+server:
+  port: 8094
+
+spring:
+  application:
+    name: invoice-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=invoice
+    username: farm2home
+    password: farm2home@123
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        default_schema: invoice
+  flyway:
+    enabled: true
+    schemas: invoice
+    create-schemas: true
+    locations: classpath:db/migration
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eurekaSecret@localhost:8761/eureka
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.farm2home.invoice: DEBUG

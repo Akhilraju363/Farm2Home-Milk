@@ -20,8 +20,10 @@ import com.farm2home.customer.domain.entity.CustomerAddress;
 import com.farm2home.customer.domain.enums.CustomerStatus;
 import com.farm2home.customer.domain.repository.CustomerAddressRepository;
 import com.farm2home.customer.domain.repository.CustomerRepository;
+import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.repository.CustomerSpecifications;
 import com.farm2home.customer.dto.request.CreateAddressRequest;
+import com.farm2home.customer.dto.request.UpdateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
 import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
@@ -60,8 +62,8 @@ public class CustomerServiceImpl {
     private final CustomerAddressMapper addressMapper;
 
     @Transactional(readOnly = true)
-    public CustomerResponse findById(UUID id) {
-        return mapper.toResponse(getCustomer(id));
+    public CustomerResponse findById(UUID id, UserPrincipal principal) {
+        return mapper.toResponse(getCustomerScoped(id, principal));
     }
 
     @Transactional(readOnly = true)
@@ -76,16 +78,16 @@ public class CustomerServiceImpl {
 
     @Transactional
     @Audited(action = AuditAction.UPDATE, entityType = "Customer")
-    public CustomerResponse update(UUID id, UpdateCustomerRequest request) {
-        Customer customer = getCustomer(id);
+    public CustomerResponse update(UUID id, UpdateCustomerRequest request, UserPrincipal principal) {
+        Customer customer = getCustomerScoped(id, principal);
         mapper.updateEntityFromRequest(request, customer);
         return mapper.toResponse(repository.save(customer));
     }
 
     @Transactional
     @Audited(action = AuditAction.UPLOAD, entityType = "Customer")
-    public CustomerResponse uploadProfileImage(UUID id, MultipartFile file) {
-        Customer customer = getCustomer(id);
+    public CustomerResponse uploadProfileImage(UUID id, MultipartFile file, UserPrincipal principal) {
+        Customer customer = getCustomerScoped(id, principal);
         String relativePath = fileStorageService.store(file, UPLOAD_CATEGORY);
         customer.setProfileImageUrl("/uploads/" + relativePath);
         return mapper.toResponse(repository.save(customer));
@@ -108,6 +110,18 @@ public class CustomerServiceImpl {
                 .orElseThrow(() -> new ResourceNotFoundException("Customer not found: " + id));
     }
 
+    /** Same lookup as getCustomer(), plus an ownership check: admins (SUPER_ADMIN/DELIVERY_MANAGER,
+     *  see UserPrincipal.isAdmin()) may access any customer; everyone else only their own record.
+     *  A non-owner gets the identical 404 as a truly unknown id - never a 403, which would confirm
+     *  the id exists (same convention as notification-service's markAsRead ownership check). */
+    private Customer getCustomerScoped(UUID id, UserPrincipal principal) {
+        Customer customer = getCustomer(id);
+        if (!principal.isAdmin() && !id.equals(principal.userId())) {
+            throw new ResourceNotFoundException("Customer not found: " + id);
+        }
+        return customer;
+    }
+
     /** Self-service address creation. Note the customer row this depends on is created
      *  asynchronously (CustomerEventConsumer, via Kafka) after auth-service's register() call —
      *  callers hitting this immediately after registering may see a brief 404 until that event is
@@ -119,6 +133,69 @@ public class CustomerServiceImpl {
         CustomerAddress address = addressMapper.toEntity(request);
         address.setCustomerId(customer.getId());
         return addressMapper.toResponse(addressRepository.save(address));
+    }
+
+    @Transactional(readOnly = true)
+    public List<AddressResponse> getAddresses(UUID customerId, UserPrincipal principal) {
+        getCustomerScoped(customerId, principal);
+        return addressRepository.findAllByCustomerIdAndDeletedFalse(customerId).stream()
+                .map(addressMapper::toResponse)
+                .toList();
+    }
+
+    /** Admin/ownership-scoped counterpart to {@link #addAddress} (which is self-only, customer id
+     *  taken from the token) - lets an authorized admin add an address on behalf of a specific
+     *  customer via the {id}-based routes, matching findById/update/uploadProfileImage's pattern.
+     *  The very first address for a customer is automatically the default; later ones are not,
+     *  unlike the entity's own default (every field defaults to true) - addAddress above is left
+     *  untouched, so this only applies to addresses created through this scoped path. */
+    @Transactional
+    @Audited(action = AuditAction.CREATE, entityType = "CustomerAddress")
+    public AddressResponse addAddressScoped(UUID customerId, CreateAddressRequest request, UserPrincipal principal) {
+        Customer customer = getCustomerScoped(customerId, principal);
+        CustomerAddress address = addressMapper.toEntity(request);
+        address.setCustomerId(customer.getId());
+        address.setDefaultAddress(!addressRepository.existsByCustomerIdAndDeletedFalse(customerId));
+        return addressMapper.toResponse(addressRepository.save(address));
+    }
+
+    @Transactional
+    @Audited(action = AuditAction.UPDATE, entityType = "CustomerAddress")
+    public AddressResponse updateAddress(UUID customerId, UUID addressId, UpdateAddressRequest request, UserPrincipal principal) {
+        getCustomerScoped(customerId, principal);
+        CustomerAddress address = getAddressScoped(customerId, addressId);
+        addressMapper.updateEntityFromRequest(request, address);
+        return addressMapper.toResponse(addressRepository.save(address));
+    }
+
+    @Transactional
+    @Audited(action = AuditAction.DELETE, entityType = "CustomerAddress")
+    public void deleteAddress(UUID customerId, UUID addressId, UserPrincipal principal) {
+        getCustomerScoped(customerId, principal);
+        CustomerAddress address = getAddressScoped(customerId, addressId);
+        address.setDeleted(true);
+        addressRepository.save(address);
+    }
+
+    /** Unsets defaultAddress on every other live address for the customer so exactly one stays
+     *  default - the entity's own field default (true) doesn't otherwise guarantee that. */
+    @Transactional
+    @Audited(action = AuditAction.UPDATE, entityType = "CustomerAddress")
+    public AddressResponse setDefaultAddress(UUID customerId, UUID addressId, UserPrincipal principal) {
+        getCustomerScoped(customerId, principal);
+        List<CustomerAddress> addresses = addressRepository.findAllByCustomerIdAndDeletedFalse(customerId);
+        CustomerAddress target = addresses.stream()
+                .filter(a -> a.getId().equals(addressId))
+                .findFirst()
+                .orElseThrow(() -> new ResourceNotFoundException("Address not found: " + addressId));
+        addresses.forEach(a -> a.setDefaultAddress(a.getId().equals(addressId)));
+        addressRepository.saveAll(addresses);
+        return addressMapper.toResponse(target);
+    }
+
+    private CustomerAddress getAddressScoped(UUID customerId, UUID addressId) {
+        return addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Address not found: " + addressId));
     }
 
     @Transactional(readOnly = true)

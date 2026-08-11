@@ -10,6 +10,7 @@ import com.farm2home.auth.domain.repository.UserRepository;
 import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
 import com.farm2home.auth.exception.AuthException;
+import com.farm2home.auth.exception.DuplicateResourceException;
 import com.farm2home.auth.exception.ResourceNotFoundException;
 import com.farm2home.auth.kafka.CustomerEventProducer;
 import com.farm2home.auth.mapper.UserMapper;
@@ -58,10 +59,10 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByMobileAndDeletedFalse(request.getMobile())) {
-            throw new AuthException("Mobile number is already registered.");
+            throw new DuplicateResourceException("Mobile number is already registered.");
         }
         if (request.getEmail() != null && userRepository.existsByEmailAndDeletedFalse(request.getEmail())) {
-            throw new AuthException("Email address is already registered.");
+            throw new DuplicateResourceException("Email address is already registered.");
         }
 
         var customerRole = roleRepository.findByNameAndDeletedFalse(RoleType.CUSTOMER)
@@ -78,8 +79,7 @@ public class AuthServiceImpl implements AuthService {
 
         user = userRepository.save(user);
 
-        customerEventProducer.publishCustomerCreated(user,
-                request.getFirstName() + " " + request.getLastName());
+        customerEventProducer.publishCustomerCreated(user, request.getFirstName(), request.getLastName());
 
         // Send OTP for mobile verification
         otpService.generateAndSend(request.getMobile(), OtpType.REGISTRATION);

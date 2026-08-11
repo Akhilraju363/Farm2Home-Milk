@@ -18,4 +18,8 @@ public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpec
     Page<Product> findAllByDeletedFalse(Pageable pageable);
 
     Page<Product> findAllByActiveTrueAndDeletedFalse(Pageable pageable);
+
+    /** Used to block deleting a ProductCategory that's still assigned to at least one live
+     *  product - see ProductCategoryServiceImpl.delete(). */
+    boolean existsByCategory_IdAndDeletedFalse(UUID categoryId);
 }

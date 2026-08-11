@@ -42,6 +42,11 @@ public class CustomerAddress {
     @Column(name = "state", nullable = false, length = 100)
     private String state;
 
+    // Nullable: added after city/state, backfilled only for addresses saved through the
+    // location-dropdown-driven registration Address step - older addresses simply have no district.
+    @Column(name = "district", length = 100)
+    private String district;
+
     @Column(name = "pincode", nullable = false, length = 10)
     private String pincode;
 

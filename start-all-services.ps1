@@ -412,8 +412,12 @@ $microservices = @(
     @{ Name = 'customer-service';      Port = 8082 },
     @{ Name = 'subscription-service';  Port = 8083 },
     @{ Name = 'farm-service';          Port = 8087 },
+    @{ Name = 'invoice-service';       Port = 8094 },
     @{ Name = 'inventory-service';     Port = 8089 },
-    @{ Name = 'production-service';    Port = 8088 },
+    # LOCAL-ONLY override, deliberately not committed upstream: 8091, not the documented
+    # default 8088, because this machine's Docker Desktop backend (com.docker.backend)
+    # permanently occupies 8088.
+    @{ Name = 'production-service';    Port = 8091; ExtraJavaArgs = @('-Dserver.port=8091') },
     @{ Name = 'order-service';         Port = 8084 },
     @{ Name = 'payment-service';       Port = 8085 },
     @{ Name = 'delivery-service';      Port = 8086 },
@@ -440,7 +444,10 @@ if ($failedServices.Count -gt 0) {
 }
 
 Write-Section 'Step 5/6: Starting API Gateway'
-$gatewayOk = Start-BackendService -Name 'api-gateway' -Port 8080 -TimeoutSeconds 90
+# LOCAL-ONLY override, deliberately not committed upstream: 8095, not the documented default
+# 8080, because this machine's Oracle TNS Listener (OracleXETNSListener) permanently occupies
+# 8080. frontend/vite.config.ts's dev proxy target has the matching local-only override.
+$gatewayOk = Start-BackendService -Name 'api-gateway' -Port 8095 -TimeoutSeconds 90 -ExtraJavaArgs @('-Dserver.port=8095')
 if (-not $gatewayOk) {
     Write-Host "`nAPI Gateway failed to start." -ForegroundColor Red
     exit 5
@@ -453,7 +460,7 @@ if (-not $frontendOk) {
 }
 
 Write-Section 'All Services Started Successfully'
-Write-Host "  API Gateway : http://localhost:8080"
+Write-Host "  API Gateway : http://localhost:8095"
 Write-Host "  Frontend    : http://localhost:3000"
 Write-Host "  Eureka      : http://localhost:8761"
 Write-Host "  Logs        : $LogsDir"

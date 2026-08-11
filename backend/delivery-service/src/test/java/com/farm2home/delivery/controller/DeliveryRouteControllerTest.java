@@ -51,12 +51,14 @@ class DeliveryRouteControllerTest {
 
     private final UUID routeId = UUID.randomUUID();
 
+    // GatewayHeaderAuthFilter grants unprefixed authorities (matching the other services'
+    // convention), so this mirrors that - no "ROLE_" prefix.
     private UsernamePasswordAuthenticationToken authFor(boolean admin) {
         UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
                 admin ? Set.of("FARM_MANAGER") : Set.of("CUSTOMER"));
         var authorities = admin
-                ? List.of(new SimpleGrantedAuthority("ROLE_FARM_MANAGER"))
-                : List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER"));
+                ? List.of(new SimpleGrantedAuthority("FARM_MANAGER"))
+                : List.of(new SimpleGrantedAuthority("CUSTOMER"));
         return new UsernamePasswordAuthenticationToken(principal, null, authorities);
     }
 

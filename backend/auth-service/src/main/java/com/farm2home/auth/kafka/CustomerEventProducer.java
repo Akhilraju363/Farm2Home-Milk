@@ -28,11 +28,13 @@ public class CustomerEventProducer {
      *  happens, the customer-service profile this event would have created is simply delayed
      *  until Kafka is back and the event can be retried/resent. */
     @Async("kafkaEventExecutor")
-    public void publishCustomerCreated(User user, String customerName) {
+    public void publishCustomerCreated(User user, String firstName, String lastName) {
         CustomerEvent event = CustomerEvent.builder()
                 .eventType(EmailTemplateConstants.EVENT_CUSTOMER_CREATED)
                 .customerId(user.getId())
-                .customerName(customerName)
+                .customerName(firstName + " " + lastName)
+                .firstName(firstName)
+                .lastName(lastName)
                 .mobile(user.getMobile())
                 .email(user.getEmail())
                 .occurredAt(LocalDateTime.now())

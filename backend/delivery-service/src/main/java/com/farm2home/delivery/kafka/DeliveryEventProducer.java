@@ -32,12 +32,19 @@ public class DeliveryEventProducer {
                 .occurredAt(LocalDateTime.now())
                 .build();
 
-        kafkaTemplate.send(TOPIC, assignment.getOrderId().toString(), event)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Failed to publish delivery event [{}] for order {}: {}",
-                                eventType, assignment.getOrderId(), ex.getMessage());
-                    }
-                });
+        // send() can throw synchronously (e.g. on metadata-wait timeout when no broker is
+        // reachable) before ever returning the future that whenComplete() observes.
+        try {
+            kafkaTemplate.send(TOPIC, assignment.getOrderId().toString(), event)
+                    .whenComplete((result, ex) -> {
+                        if (ex != null) {
+                            log.error("Failed to publish delivery event [{}] for order {}: {}",
+                                    eventType, assignment.getOrderId(), ex.getMessage());
+                        }
+                    });
+        } catch (Exception ex) {
+            log.error("Failed to publish delivery event [{}] for order {}: {}",
+                    eventType, assignment.getOrderId(), ex.getMessage());
+        }
     }
 }

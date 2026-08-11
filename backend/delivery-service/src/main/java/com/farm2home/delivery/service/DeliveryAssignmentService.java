@@ -32,7 +32,13 @@ public interface DeliveryAssignmentService {
 
     Page<AssignmentResponse> findAll(UUID partnerId, boolean isAdmin, Pageable pageable);
 
-    List<AssignmentResponse> findByOrderId(UUID orderId);
+    /** Admin sees every assignment for the order; a DELIVERY_PARTNER sees only assignments that
+     *  are theirs (empty list otherwise); any other caller (e.g. CUSTOMER) gets an empty list -
+     *  ownership can't be verified against the order itself here (delivery-service has no
+     *  cross-service call to order-service, and DeliveryAssignment.customerId is only populated
+     *  for auto-assignments, null for manual ones), so this endpoint intentionally isn't exposed
+     *  to customers at all rather than risk a false allow. */
+    List<AssignmentResponse> findByOrderId(UUID orderId, UUID callerId, boolean isAdmin);
 
     DeliverySummaryResponse getSummary();
 

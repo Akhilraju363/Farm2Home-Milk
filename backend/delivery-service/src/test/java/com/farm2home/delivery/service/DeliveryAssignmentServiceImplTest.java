@@ -10,6 +10,8 @@ import com.farm2home.delivery.domain.repository.DeliveryRouteRepository;
 import com.farm2home.delivery.dto.request.DelayAssignmentRequest;
 import com.farm2home.delivery.dto.request.ManualAssignRequest;
 import com.farm2home.delivery.dto.request.UpdateAssignmentStatusRequest;
+import com.farm2home.delivery.client.OrderDetailResponse;
+import com.farm2home.delivery.client.OrderServiceClient;
 import com.farm2home.delivery.client.PaymentServiceClient;
 import com.farm2home.delivery.dto.response.AssignmentResponse;
 import com.farm2home.delivery.exception.DeliveryException;
@@ -59,6 +61,7 @@ class DeliveryAssignmentServiceImplTest {
     @Mock private DeliveryEventProducer eventProducer;
     @Mock private AuditLogService auditLogService;
     @Mock private PaymentServiceClient paymentServiceClient;
+    @Mock private OrderServiceClient orderServiceClient;
 
     @InjectMocks private DeliveryAssignmentServiceImpl service;
 
@@ -102,6 +105,11 @@ class DeliveryAssignmentServiceImplTest {
             when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
             when(routeRepository.findByIdAndDeletedFalse(routeId)).thenReturn(Optional.of(buildRoute()));
             when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            OrderDetailResponse order = new OrderDetailResponse();
+            order.setId(orderId);
+            order.setOrderNumber("ORD-2026-100042");
+            order.setCustomerId(UUID.randomUUID());
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(order));
             DeliveryAssignment saved = buildAssignment(AssignmentStatus.ASSIGNED);
             when(assignmentRepository.save(any())).thenReturn(saved);
             when(mapper.toAssignmentResponse(saved)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
@@ -114,6 +122,8 @@ class DeliveryAssignmentServiceImplTest {
             AssignmentResponse result = service.manualAssign(req);
 
             assertThat(result.getStatus()).isEqualTo("ASSIGNED");
+            verify(assignmentRepository).save(argThat(a ->
+                    order.getCustomerId().equals(a.getCustomerId()) && "ORD-2026-100042".equals(a.getOrderNumber())));
             verify(eventProducer).publishDeliveryEvent(saved, "DELIVERY_ASSIGNED");
             verify(auditLogService).record(argThat(entry ->
                     entry.getAction().equals(com.farm2home.common.core.audit.AuditAction.ASSIGN)
@@ -514,6 +524,97 @@ class DeliveryAssignmentServiceImplTest {
 
             assertThatThrownBy(() -> service.findAll(partnerUserId, false, PageRequest.of(0, 20)))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("findByOrderId()")
+    class FindByOrderId {
+
+        @Test
+        @DisplayName("admin → sees every assignment for the order, unscoped by partner")
+        void admin_seesAll() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.ASSIGNED);
+            when(assignmentRepository.findAllByOrderId(orderId)).thenReturn(List.of(assignment));
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
+
+            List<AssignmentResponse> result = service.findByOrderId(orderId, UUID.randomUUID(), true);
+
+            assertThat(result).hasSize(1);
+            verify(partnerRepository, never()).findByUserIdAndDeletedFalse(any());
+        }
+
+        @Test
+        @DisplayName("owning delivery partner → sees the assignment")
+        void owningPartner_seesOwnAssignment() {
+            DeliveryAssignment assignment = buildAssignment(AssignmentStatus.ASSIGNED);
+            when(assignmentRepository.findAllByOrderId(orderId)).thenReturn(List.of(assignment));
+            when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.of(buildPartner()));
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
+
+            List<AssignmentResponse> result = service.findByOrderId(orderId, partnerUserId, false);
+
+            assertThat(result).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("a different delivery partner (not assigned to this order) → empty list, not an error")
+        void nonOwningPartner_seesEmptyList() {
+            UUID otherPartnerUserId = UUID.randomUUID();
+            DeliveryPartner otherPartner = DeliveryPartner.builder()
+                    .id(UUID.randomUUID()).userId(otherPartnerUserId).name("Someone Else").mobile("9000000000").build();
+            when(assignmentRepository.findAllByOrderId(orderId)).thenReturn(List.of(buildAssignment(AssignmentStatus.ASSIGNED)));
+            when(partnerRepository.findByUserIdAndDeletedFalse(otherPartnerUserId)).thenReturn(Optional.of(otherPartner));
+
+            List<AssignmentResponse> result = service.findByOrderId(orderId, otherPartnerUserId, false);
+
+            assertThat(result).isEmpty();
+            verify(mapper, never()).toAssignmentResponse(any());
+        }
+
+        @Test
+        @DisplayName("caller with no DeliveryPartner profile, not the order's customer either → empty list, not an error")
+        void noPartnerProfile_notTheCustomer_seesEmptyList() {
+            UUID randomCallerId = UUID.randomUUID();
+            when(assignmentRepository.findAllByOrderId(orderId)).thenReturn(List.of(buildAssignment(AssignmentStatus.ASSIGNED)));
+            when(partnerRepository.findByUserIdAndDeletedFalse(randomCallerId)).thenReturn(Optional.empty());
+
+            List<AssignmentResponse> result = service.findByOrderId(orderId, randomCallerId, false);
+
+            assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("the order's own customer → sees the assignment (customerId now reliably populated)")
+        void owningCustomer_seesAssignment() {
+            UUID customerId = UUID.randomUUID();
+            DeliveryAssignment assignment = DeliveryAssignment.builder()
+                    .id(assignId).orderId(orderId).customerId(customerId)
+                    .deliveryPartner(buildPartner()).route(buildRoute()).status(AssignmentStatus.ASSIGNED).build();
+            when(assignmentRepository.findAllByOrderId(orderId)).thenReturn(List.of(assignment));
+            when(partnerRepository.findByUserIdAndDeletedFalse(customerId)).thenReturn(Optional.empty());
+            when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
+
+            List<AssignmentResponse> result = service.findByOrderId(orderId, customerId, false);
+
+            assertThat(result).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("a different customer (not this order's owner) → empty list, IDOR denied")
+        void otherCustomer_seesEmptyList() {
+            UUID realCustomerId = UUID.randomUUID();
+            UUID otherCustomerId = UUID.randomUUID();
+            DeliveryAssignment assignment = DeliveryAssignment.builder()
+                    .id(assignId).orderId(orderId).customerId(realCustomerId)
+                    .deliveryPartner(buildPartner()).route(buildRoute()).status(AssignmentStatus.ASSIGNED).build();
+            when(assignmentRepository.findAllByOrderId(orderId)).thenReturn(List.of(assignment));
+            when(partnerRepository.findByUserIdAndDeletedFalse(otherCustomerId)).thenReturn(Optional.empty());
+
+            List<AssignmentResponse> result = service.findByOrderId(orderId, otherCustomerId, false);
+
+            assertThat(result).isEmpty();
+            verify(mapper, never()).toAssignmentResponse(any());
         }
     }
 

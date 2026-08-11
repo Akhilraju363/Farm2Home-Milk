@@ -31,14 +31,24 @@ public class PaymentEventProducer {
                 .occurredAt(LocalDateTime.now())
                 .build();
 
-        kafkaTemplate.send(TOPIC, payment.getOrderId().toString(), event)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Failed to publish payment event [{}] for order {}: {}",
-                                eventType, payment.getOrderId(), ex.getMessage());
-                    } else {
-                        log.debug("Published payment event [{}] for order {}", eventType, payment.getOrderId());
-                    }
-                });
+        // send() can throw synchronously (e.g. on metadata-wait timeout when no broker is
+        // reachable) before ever returning the future that whenComplete() observes. This
+        // producer is invoked from an @Async listener (see PaymentEventListener), so an
+        // uncaught exception here wouldn't corrupt the already-committed Payment row - but it
+        // would still leave an unhandled exception on the async executor and skip the log below.
+        try {
+            kafkaTemplate.send(TOPIC, payment.getOrderId().toString(), event)
+                    .whenComplete((result, ex) -> {
+                        if (ex != null) {
+                            log.error("Failed to publish payment event [{}] for order {}: {}",
+                                    eventType, payment.getOrderId(), ex.getMessage());
+                        } else {
+                            log.debug("Published payment event [{}] for order {}", eventType, payment.getOrderId());
+                        }
+                    });
+        } catch (Exception ex) {
+            log.error("Failed to publish payment event [{}] for order {}: {}",
+                    eventType, payment.getOrderId(), ex.getMessage());
+        }
     }
 }

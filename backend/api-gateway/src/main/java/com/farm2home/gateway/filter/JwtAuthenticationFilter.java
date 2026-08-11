@@ -38,6 +38,18 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         ApiConstants.API_V1 + "/auth/send-otp",
         ApiConstants.API_V1 + "/auth/verify-otp",
         ApiConstants.API_V1 + "/auth/refresh-token",
+        // Razorpay calls this directly and cannot attach our JWT - safe to expose because the
+        // payload's own HMAC-SHA256 signature (RazorpaySignature, checked before anything else
+        // in PaymentServiceImpl.handleWebhook) is the real authentication here, not JWT.
+        // Deliberately NOT adding /payments/callback alongside it: that endpoint performs no
+        // signature/secret verification at all (see PaymentController's own doc comment on it -
+        // "manual/legacy... to simulate gateway outcomes under the mock provider, local
+        // dev/tests") and updates a payment purely from a guessable paymentReference. Making it
+        // public here would let anyone on the internet flip any payment to SUCCESS/FAILED with
+        // zero authentication. It stays behind the gateway's normal JWT requirement (any
+        // authenticated caller can still reach it, same as before this fix - only truly
+        // anonymous access is what's newly blocked here for /webhook and only /webhook).
+        ApiConstants.API_V1 + "/payments/webhook",
         "/swagger-ui",
         "/api-docs",
         "/actuator/health",

@@ -1,28 +1,56 @@
 import axiosClient from './axiosClient'
-import type { Order } from '../types/order.types'
+import type {
+  CreateOrderRequest, Order, OrderSearchParams, UpdateOrderStatusRequest,
+} from '../types/order.types'
 import type { ApiResponse, PageResponse } from '../types/common.types'
 
 const BASE = '/orders'
 
 export const orderService = {
-  getAll: (params: { page?: number; size?: number; status?: string; orderDate?: string }) =>
-    axiosClient.get<PageResponse<Order>>(BASE, { params: { page: 0, size: 20, ...params } }),
-
-  // Correctly typed as ApiResponse<PageResponse<Order>> (unlike getAll above, whose generic
-  // omits the ApiResponse envelope) - used where the extra .data unwrap actually matters, e.g.
-  // the dashboard's most-recent-orders list.
-  getRecent: (size = 5) =>
-    axiosClient.get<ApiResponse<PageResponse<Order>>>(BASE, { params: { page: 0, size, sort: 'orderDate,desc' } }),
+  // GET /orders/search (not the plain list endpoint) is used for every list fetch - keyword/
+  // status/milkType/date-range/customerId (admin-only) filters all live there. Non-admin callers
+  // are scoped server-side to their own orders regardless of the customerId param.
+  search: (params: OrderSearchParams) =>
+    axiosClient.get<ApiResponse<PageResponse<Order>>>(`${BASE}/search`, {
+      params: { page: 0, size: 20, sort: 'orderDate,desc', ...params },
+    }),
 
   getById: (id: string) =>
-    axiosClient.get<Order>(`${BASE}/${id}`),
+    axiosClient.get<ApiResponse<Order>>(`${BASE}/${id}`),
 
-  create: (data: Partial<Order>) =>
-    axiosClient.post<Order>(BASE, data),
+  // Used by the dashboard's recent-orders list, one request, not per row.
+  getRecent: (size = 5) =>
+    axiosClient.get<ApiResponse<PageResponse<Order>>>(`${BASE}/search`, {
+      params: { page: 0, size, sort: 'orderDate,desc' },
+    }),
+
+  // Used by Customer Details, one request per view, not per row.
+  getByCustomer: (customerId: string, size = 5) =>
+    axiosClient.get<ApiResponse<PageResponse<Order>>>(BASE, {
+      params: { customerId, page: 0, size, sort: 'orderDate,desc' },
+    }),
+
+  // GET /orders/subscription/{subscriptionId} - every order the daily subscription-order job has
+  // generated for one subscription. Used by Subscription Details, one request, not per row.
+  // Ownership-checked server-side: a non-owner gets an empty page, not an error.
+  getBySubscription: (subscriptionId: string, size = 10) =>
+    axiosClient.get<ApiResponse<PageResponse<Order>>>(`${BASE}/subscription/${subscriptionId}`, {
+      params: { page: 0, size },
+    }),
+
+  create: (data: CreateOrderRequest) =>
+    axiosClient.post<ApiResponse<Order>>(BASE, data),
+
+  updateStatus: (id: string, data: UpdateOrderStatusRequest) =>
+    axiosClient.patch<ApiResponse<Order>>(`${BASE}/${id}/status`, data),
 
   cancel: (id: string) =>
-    axiosClient.put(`${BASE}/${id}/cancel`),
+    axiosClient.delete<ApiResponse<void>>(`${BASE}/${id}`),
 
-  search: (keyword: string) =>
-    axiosClient.get<ApiResponse<PageResponse<Order>>>(`${BASE}/search`, { params: { keyword, size: 5 } }),
+  export: async (params: OrderSearchParams & { format: 'CSV' | 'EXCEL' | 'PDF' }) => {
+    const res = await axiosClient.get(`${BASE}/export`, { params, responseType: 'blob' })
+    const disposition = res.headers['content-disposition'] as string | undefined
+    const filename = disposition?.match(/filename="?([^"]+)"?/)?.[1] ?? `orders.${params.format.toLowerCase()}`
+    return { blob: res.data as Blob, filename }
+  },
 }

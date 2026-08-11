@@ -8,14 +8,22 @@ import com.farm2home.common.core.reports.CustomerReportRow;
 import com.farm2home.common.core.reports.CustomerReportSummary;
 import com.farm2home.common.core.reports.ReportPage;
 import com.farm2home.common.export.ExportFormat;
+import com.farm2home.common.core.constants.SecurityConstants;
 import com.farm2home.common.web.storage.FileStorageService;
+import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.entity.Customer;
+import com.farm2home.customer.domain.entity.CustomerAddress;
 import com.farm2home.customer.domain.enums.CustomerStatus;
+import com.farm2home.customer.domain.repository.CustomerAddressRepository;
 import com.farm2home.customer.domain.repository.CustomerRepository;
+import com.farm2home.customer.dto.request.CreateAddressRequest;
+import com.farm2home.customer.dto.request.UpdateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
+import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
 import com.farm2home.customer.exception.CustomerException;
 import com.farm2home.customer.exception.ResourceNotFoundException;
+import com.farm2home.customer.mapper.CustomerAddressMapper;
 import com.farm2home.customer.mapper.CustomerMapper;
 import com.farm2home.customer.service.impl.CustomerServiceImpl;
 import org.junit.jupiter.api.DisplayName;
@@ -48,10 +56,20 @@ class CustomerServiceImplTest {
     @Mock private CustomerRepository repository;
     @Mock private CustomerMapper mapper;
     @Mock private FileStorageService fileStorageService;
+    @Mock private CustomerAddressRepository addressRepository;
+    @Mock private CustomerAddressMapper addressMapper;
 
     @InjectMocks private CustomerServiceImpl service;
 
     private final UUID customerId = UUID.randomUUID();
+    private final UUID addressId = UUID.randomUUID();
+    private final UserPrincipal ownerPrincipal = new UserPrincipal(customerId, "9876543210", java.util.Set.of("CUSTOMER"));
+    private final UserPrincipal adminPrincipal = new UserPrincipal(UUID.randomUUID(), "9000000001", java.util.Set.of(SecurityConstants.ROLE_SUPER_ADMIN));
+    private final UserPrincipal strangerPrincipal = new UserPrincipal(UUID.randomUUID(), "9111111111", java.util.Set.of("CUSTOMER"));
+    // FARM_MANAGER counts as admin here too - see UserPrincipal.isAdmin()'s comment for why
+    // (subscription-service treats FARM_MANAGER as admin, so they need to resolve a customer's
+    // name/mobile while managing that customer's subscriptions).
+    private final UserPrincipal farmManagerPrincipal = new UserPrincipal(UUID.randomUUID(), "9222222222", java.util.Set.of(SecurityConstants.ROLE_FARM_MANAGER));
 
     private Customer buildCustomer() {
         return Customer.builder()
@@ -65,22 +83,61 @@ class CustomerServiceImplTest {
                 .firstName("Kafka").lastName("Tester").mobile("9876543210").status("ACTIVE").build();
     }
 
+    private CustomerAddress buildAddress() {
+        return CustomerAddress.builder()
+                .id(addressId).customerId(customerId).addressLine1("402, Block A").city("Mumbai")
+                .state("Maharashtra").pincode("400001").defaultAddress(true).deleted(false).build();
+    }
+
+    private AddressResponse buildAddressResponse() {
+        return AddressResponse.builder().id(addressId).addressLine1("402, Block A").city("Mumbai")
+                .state("Maharashtra").pincode("400001").defaultAddress(true).build();
+    }
+
     @Nested @DisplayName("findById()")
     class FindById {
         @Test
-        @DisplayName("existing customer → returns response")
-        void found() {
+        @DisplayName("caller is the owner → returns response")
+        void ownerCanAccess() {
             when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
             when(mapper.toResponse(any())).thenReturn(buildResponse());
 
-            assertThat(service.findById(customerId).getId()).isEqualTo(customerId);
+            assertThat(service.findById(customerId, ownerPrincipal).getId()).isEqualTo(customerId);
+        }
+
+        @Test
+        @DisplayName("caller is SUPER_ADMIN, not the owner → returns response")
+        void adminCanAccessAnyCustomer() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(mapper.toResponse(any())).thenReturn(buildResponse());
+
+            assertThat(service.findById(customerId, adminPrincipal).getId()).isEqualTo(customerId);
+        }
+
+        @Test
+        @DisplayName("caller is FARM_MANAGER, not the owner → returns response")
+        void farmManagerCanAccessAnyCustomer() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(mapper.toResponse(any())).thenReturn(buildResponse());
+
+            assertThat(service.findById(customerId, farmManagerPrincipal).getId()).isEqualTo(customerId);
+        }
+
+        @Test
+        @DisplayName("caller is neither the owner nor an admin → 404, same as an unknown id")
+        void strangerGetsNotFound() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+
+            assertThatThrownBy(() -> service.findById(customerId, strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(mapper, never()).toResponse(any());
         }
 
         @Test
         @DisplayName("missing customer → throws ResourceNotFoundException")
         void notFound_throws() {
             when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.empty());
-            assertThatThrownBy(() -> service.findById(customerId))
+            assertThatThrownBy(() -> service.findById(customerId, ownerPrincipal))
                     .isInstanceOf(ResourceNotFoundException.class);
         }
     }
@@ -102,7 +159,7 @@ class CustomerServiceImplTest {
     @Nested @DisplayName("update()")
     class Update {
         @Test
-        @DisplayName("existing customer → applies changes and saves")
+        @DisplayName("owner updates their own profile → applies changes and saves")
         void happyPath() {
             Customer entity = buildCustomer();
             UpdateCustomerRequest req = new UpdateCustomerRequest();
@@ -111,10 +168,24 @@ class CustomerServiceImplTest {
             when(repository.save(entity)).thenReturn(entity);
             when(mapper.toResponse(entity)).thenReturn(buildResponse());
 
-            service.update(customerId, req);
+            service.update(customerId, req, ownerPrincipal);
 
             verify(mapper).updateEntityFromRequest(req, entity);
             verify(repository).save(entity);
+        }
+
+        @Test
+        @DisplayName("caller is neither the owner nor an admin → 404, no changes applied")
+        void strangerCannotUpdate() {
+            Customer entity = buildCustomer();
+            UpdateCustomerRequest req = new UpdateCustomerRequest();
+            req.setEmail("hijacked@example.com");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(entity));
+
+            assertThatThrownBy(() -> service.update(customerId, req, strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(mapper, never()).updateEntityFromRequest(any(), any());
+            verify(repository, never()).save(any());
         }
     }
 
@@ -172,7 +243,7 @@ class CustomerServiceImplTest {
     @Nested @DisplayName("uploadProfileImage()")
     class UploadProfileImage {
         @Test
-        @DisplayName("valid file → stores and sets profileImageUrl")
+        @DisplayName("owner uploads their own image → stores and sets profileImageUrl")
         void happyPath() {
             Customer entity = buildCustomer();
             MockMultipartFile file = new MockMultipartFile("file", "me.jpg", "image/jpeg", new byte[]{1, 2, 3});
@@ -181,10 +252,23 @@ class CustomerServiceImplTest {
             when(repository.save(entity)).thenReturn(entity);
             when(mapper.toResponse(entity)).thenReturn(buildResponse());
 
-            service.uploadProfileImage(customerId, file);
+            service.uploadProfileImage(customerId, file, ownerPrincipal);
 
             assertThat(entity.getProfileImageUrl()).isEqualTo("/uploads/customers/uuid.jpg");
             verify(repository).save(entity);
+        }
+
+        @Test
+        @DisplayName("caller is neither the owner nor an admin → 404, nothing stored")
+        void strangerCannotUpload() {
+            Customer entity = buildCustomer();
+            MockMultipartFile file = new MockMultipartFile("file", "me.jpg", "image/jpeg", new byte[]{1, 2, 3});
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(entity));
+
+            assertThatThrownBy(() -> service.uploadProfileImage(customerId, file, strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(fileStorageService, never()).store(any(), any());
+            verify(repository, never()).save(any());
         }
     }
 
@@ -340,6 +424,184 @@ class CustomerServiceImplTest {
 
             assertThat(result.getPoints()).isEmpty();
             verify(repository).findCustomerGrowth("month", null, null);
+        }
+    }
+
+    @Nested @DisplayName("getAddresses()")
+    class GetAddresses {
+        @Test
+        @DisplayName("owner → returns their addresses")
+        void ownerCanAccess() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findAllByCustomerIdAndDeletedFalse(customerId)).thenReturn(List.of(buildAddress()));
+            when(addressMapper.toResponse(any())).thenReturn(buildAddressResponse());
+
+            assertThat(service.getAddresses(customerId, ownerPrincipal)).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("stranger → 404, same as an unknown customer")
+        void strangerGetsNotFound() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+
+            assertThatThrownBy(() -> service.getAddresses(customerId, strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(addressRepository, never()).findAllByCustomerIdAndDeletedFalse(any());
+        }
+    }
+
+    @Nested @DisplayName("addAddressScoped()")
+    class AddAddressScoped {
+        @Test
+        @DisplayName("first address for the customer → becomes the default")
+        void firstAddress_becomesDefault() {
+            CreateAddressRequest req = new CreateAddressRequest();
+            CustomerAddress entity = buildAddress();
+            entity.setDefaultAddress(false);
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressMapper.toEntity(req)).thenReturn(entity);
+            when(addressRepository.existsByCustomerIdAndDeletedFalse(customerId)).thenReturn(false);
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.addAddressScoped(customerId, req, ownerPrincipal);
+
+            assertThat(entity.isDefaultAddress()).isTrue();
+        }
+
+        @Test
+        @DisplayName("customer already has an address → new one is not the default")
+        void laterAddress_notDefault() {
+            CreateAddressRequest req = new CreateAddressRequest();
+            CustomerAddress entity = buildAddress();
+            entity.setDefaultAddress(true);
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressMapper.toEntity(req)).thenReturn(entity);
+            when(addressRepository.existsByCustomerIdAndDeletedFalse(customerId)).thenReturn(true);
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.addAddressScoped(customerId, req, ownerPrincipal);
+
+            assertThat(entity.isDefaultAddress()).isFalse();
+        }
+
+        @Test
+        @DisplayName("stranger → 404, nothing saved")
+        void strangerCannotAdd() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+
+            assertThatThrownBy(() -> service.addAddressScoped(customerId, new CreateAddressRequest(), strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(addressRepository, never()).save(any());
+        }
+    }
+
+    @Nested @DisplayName("updateAddress()")
+    class UpdateAddress {
+        @Test
+        @DisplayName("owner updates their own address → applies changes and saves")
+        void happyPath() {
+            CustomerAddress entity = buildAddress();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setCity("Pune");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            verify(addressMapper).updateEntityFromRequest(req, entity);
+            verify(addressRepository).save(entity);
+        }
+
+        @Test
+        @DisplayName("stranger → 404, no changes applied")
+        void strangerCannotUpdate() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+
+            assertThatThrownBy(() -> service.updateAddress(customerId, addressId, new UpdateAddressRequest(), strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(addressRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("address belongs to a different customer → 404")
+        void addressBelongsToAnotherCustomer_notFound() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.updateAddress(customerId, addressId, new UpdateAddressRequest(), ownerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+    }
+
+    @Nested @DisplayName("deleteAddress()")
+    class DeleteAddress {
+        @Test
+        @DisplayName("owner deletes their own address → sets deleted=true")
+        void happyPath() {
+            CustomerAddress entity = buildAddress();
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+
+            service.deleteAddress(customerId, addressId, ownerPrincipal);
+
+            assertThat(entity.isDeleted()).isTrue();
+            verify(addressRepository).save(entity);
+        }
+
+        @Test
+        @DisplayName("stranger → 404, nothing deleted")
+        void strangerCannotDelete() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+
+            assertThatThrownBy(() -> service.deleteAddress(customerId, addressId, strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(addressRepository, never()).save(any());
+        }
+    }
+
+    @Nested @DisplayName("setDefaultAddress()")
+    class SetDefaultAddress {
+        @Test
+        @DisplayName("unsets every other address's default flag, sets the target's")
+        void happyPath() {
+            CustomerAddress target = buildAddress();
+            target.setDefaultAddress(false);
+            CustomerAddress other = CustomerAddress.builder()
+                    .id(UUID.randomUUID()).customerId(customerId).addressLine1("Other").city("Pune")
+                    .state("Maharashtra").pincode("411001").defaultAddress(true).deleted(false).build();
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findAllByCustomerIdAndDeletedFalse(customerId)).thenReturn(List.of(target, other));
+            when(addressMapper.toResponse(target)).thenReturn(buildAddressResponse());
+
+            service.setDefaultAddress(customerId, addressId, ownerPrincipal);
+
+            assertThat(target.isDefaultAddress()).isTrue();
+            assertThat(other.isDefaultAddress()).isFalse();
+            verify(addressRepository).saveAll(List.of(target, other));
+        }
+
+        @Test
+        @DisplayName("address not found among the customer's addresses → 404")
+        void addressNotFound_throws() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findAllByCustomerIdAndDeletedFalse(customerId)).thenReturn(List.of());
+
+            assertThatThrownBy(() -> service.setDefaultAddress(customerId, addressId, ownerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("stranger → 404")
+        void strangerCannotSetDefault() {
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+
+            assertThatThrownBy(() -> service.setDefaultAddress(customerId, addressId, strangerPrincipal))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(addressRepository, never()).saveAll(any());
         }
     }
 }

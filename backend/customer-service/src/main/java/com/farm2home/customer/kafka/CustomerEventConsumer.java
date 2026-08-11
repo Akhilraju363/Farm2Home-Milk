@@ -42,14 +42,13 @@ public class CustomerEventConsumer {
                 return;
             }
 
-            String[] nameParts = splitName(event.getCustomerName());
             String customerCode = String.format("CUST-%06d", repository.nextCustomerCodeSeq());
 
             Customer customer = Customer.builder()
                     .id(event.getCustomerId())
                     .customerCode(customerCode)
-                    .firstName(nameParts[0])
-                    .lastName(nameParts[1])
+                    .firstName(orFallback(event.getFirstName(), "Customer"))
+                    .lastName(orFallback(event.getLastName(), "Customer"))
                     .mobile(event.getMobile())
                     .email(event.getEmail())
                     .build();
@@ -68,13 +67,7 @@ public class CustomerEventConsumer {
         }
     }
 
-    private String[] splitName(String fullName) {
-        if (!StringUtils.hasText(fullName)) {
-            return new String[]{"Customer", "Customer"};
-        }
-        int spaceIdx = fullName.indexOf(' ');
-        return spaceIdx < 0
-                ? new String[]{fullName, fullName}
-                : new String[]{fullName.substring(0, spaceIdx), fullName.substring(spaceIdx + 1)};
+    private String orFallback(String value, String fallback) {
+        return StringUtils.hasText(value) ? value : fallback;
     }
 }

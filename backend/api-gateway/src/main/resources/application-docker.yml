@@ -23,7 +23,7 @@ spring:
         - id: customer-service
           uri: http://customer-service:8082
           predicates:
-            - Path=/api/v1/customers/**,/uploads/customers/**
+            - Path=/api/v1/customers/**,/uploads/customers/**,/api/v1/locations/**
           filters:
             - name: CircuitBreaker
               args:
@@ -68,7 +68,7 @@ spring:
         - id: payment-service
           uri: http://payment-service:8085
           predicates:
-            - Path=/api/v1/payments/**
+            - Path=/api/v1/payments/**,/api/v1/wallets/**
           filters:
             - name: CircuitBreaker
               args:

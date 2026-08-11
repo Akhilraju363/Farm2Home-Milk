@@ -1,5 +1,6 @@
 package com.farm2home.inventory.domain.entity;
 
+import com.farm2home.inventory.domain.enums.ProductUnit;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedBy;
@@ -30,14 +31,31 @@ public class Product {
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "category", length = 50)
-    private String category;
+    // Relational, not free-text - see ProductCategory. Nullable: a product may be uncategorized,
+    // matching the previous free-text column's own optionality.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
+    private ProductCategory category;
 
     @Column(name = "price", nullable = false, precision = 8, scale = 2)
     private BigDecimal price;
 
     @Column(name = "image_url", length = 255)
     private String imageUrl;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "unit", nullable = false, length = 10)
+    private ProductUnit unit;
+
+    // Native to Product - deliberately NOT a reference to InventoryItem (farm-supply stock is a
+    // different concept). See V5__add_product_category_and_stock.sql for the rationale.
+    @Column(name = "stock_quantity", nullable = false)
+    @Builder.Default
+    private Integer stockQuantity = 0;
+
+    @Column(name = "minimum_stock_quantity", nullable = false)
+    @Builder.Default
+    private Integer minimumStockQuantity = 0;
 
     @Column(name = "is_active", nullable = false)
     @Builder.Default

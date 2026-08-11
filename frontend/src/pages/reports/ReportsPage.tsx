@@ -41,17 +41,20 @@ export function ReportsPage() {
 
   const { data: ordersData } = useQuery({
     queryKey: ['reports', 'orders', from, to],
-    queryFn: () => orderService.getAll({ size: 500 }),
+    queryFn: () => orderService.search({ size: 500 }),
   })
 
   const { data: subsData } = useQuery({
     queryKey: ['reports', 'subs'],
-    queryFn: () => subscriptionService.getAll({ size: 1 }),
+    queryFn: () => subscriptionService.search({ size: 1 }),
   })
 
   const { data: paymentsData } = useQuery({
     queryKey: ['reports', 'payments', from, to],
-    queryFn: () => paymentService.getAll({ size: 500, status: 'SUCCESS' }),
+    // GET /payments has no status filter (only /payments/reports does, and that's admin-only -
+    // this page is open to every role) - fetch the caller's visible payments and filter to
+    // SUCCESS client-side instead of asking the server to do it.
+    queryFn: () => paymentService.getAll({ size: 500 }),
   })
 
   // Production chart
@@ -61,23 +64,24 @@ export function ReportsPage() {
     records: d.recordCount,
   }))
 
-  // Revenue by method
+  // Revenue by method (SUCCESS payments only - filtered client-side, see query comment above)
+  const successPayments = (paymentsData?.data.data.content ?? []).filter((p) => p.paymentStatus === 'SUCCESS')
   const revenueByMethodMap: Record<string, number> = {}
-  for (const p of paymentsData?.data?.content ?? []) {
+  for (const p of successPayments) {
     revenueByMethodMap[p.paymentMethod] = (revenueByMethodMap[p.paymentMethod] ?? 0) + Number(p.amount)
   }
   const revenueByMethodData = Object.entries(revenueByMethodMap).map(([name, value]) => ({ name, value }))
 
   // Orders by type
   const orderTypeMap: Record<string, number> = {}
-  for (const o of ordersData?.data?.content ?? []) {
+  for (const o of ordersData?.data.data.content ?? []) {
     orderTypeMap[o.orderType] = (orderTypeMap[o.orderType] ?? 0) + 1
   }
   const orderTypeData = Object.entries(orderTypeMap).map(([name, value]) => ({ name, value }))
 
   // Order status over time (aggregate by day)
   const ordersByDateMap: Record<string, { delivered: number; cancelled: number; total: number }> = {}
-  for (const o of ordersData?.data?.content ?? []) {
+  for (const o of ordersData?.data.data.content ?? []) {
     const d = dayjs(o.orderDate).format('DD MMM')
     if (!ordersByDateMap[d]) ordersByDateMap[d] = { delivered: 0, cancelled: 0, total: 0 }
     ordersByDateMap[d].total++
@@ -89,9 +93,9 @@ export function ReportsPage() {
     .map(([date, v]) => ({ date, ...v }))
 
   // Summary totals
-  const totalRevenue = (paymentsData?.data?.content ?? []).reduce((s, p) => s + Number(p.amount), 0)
-  const totalOrders = ordersData?.data?.totalElements ?? 0
-  const totalSubs = subsData?.data?.totalElements ?? 0
+  const totalRevenue = successPayments.reduce((s, p) => s + Number(p.amount), 0)
+  const totalOrders = ordersData?.data.data.totalElements ?? 0
+  const totalSubs = subsData?.data.data.totalElements ?? 0
   const totalProduction = (productionData?.data ?? []).reduce((s, d) => s + Number(d.totalLiters), 0)
 
   return (

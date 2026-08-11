@@ -32,14 +32,28 @@ public class CommonWebAutoConfiguration {
     }
 
     /** Serves everything under app.upload.base-dir at /uploads/** - e.g. a file stored as
-     *  "customers/{uuid}.jpg" becomes reachable at GET /uploads/customers/{uuid}.jpg. */
+     *  "customers/{uuid}.jpg" becomes reachable at GET /uploads/customers/{uuid}.jpg.
+     *
+     *  The base directory is created eagerly, before the resource location is registered, rather
+     *  than relying on FileStorageService#store() to lazily create it on first upload. Spring's
+     *  static resource handler resolves/validates its location at context-startup time - if the
+     *  directory doesn't exist yet then (true for every service the first time anyone uploads a
+     *  file to a fresh checkout/deployment), later requests for files that genuinely exist 500
+     *  instead of 200 until the service is restarted. Reproduced live against farm-service: an
+     *  upload succeeded and returned a valid imageUrl, but GET-ing that same URL 500'd until a
+     *  restart, because backend/farm-service/uploads/ didn't exist when the app started. */
     @Bean
     public WebMvcConfigurer uploadResourceHandlerConfigurer(FileStorageProperties properties) {
+        java.nio.file.Path baseDir = java.nio.file.Path.of(properties.getBaseDir());
+        try {
+            java.nio.file.Files.createDirectories(baseDir);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException("Failed to create upload base directory: " + baseDir, e);
+        }
+        String location = baseDir.toAbsolutePath().toUri().toString();
         return new WebMvcConfigurer() {
             @Override
             public void addResourceHandlers(ResourceHandlerRegistry registry) {
-                String location = java.nio.file.Path.of(properties.getBaseDir())
-                        .toAbsolutePath().toUri().toString();
                 registry.addResourceHandler("/uploads/**").addResourceLocations(location);
             }
         };

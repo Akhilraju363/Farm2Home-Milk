@@ -542,6 +542,13 @@ public class PaymentServiceImpl implements PaymentService {
             throw new ResourceNotFoundException("Order not found: " + orderId);
         } catch (WebClientException ex) {
             throw new PaymentException("Could not verify order status right now. Please try again.");
+        } catch (RuntimeException ex) {
+            // Covers the 5s .timeout() on OrderServiceClient.getOrder() - Mono.block() wraps its
+            // checked TimeoutException in a RuntimeException, so it doesn't match WebClientException.
+            if (ex.getCause() instanceof java.util.concurrent.TimeoutException) {
+                throw new PaymentException("Could not verify order status right now. Please try again.");
+            }
+            throw ex;
         }
         if (order == null) {
             throw new ResourceNotFoundException("Order not found: " + orderId);

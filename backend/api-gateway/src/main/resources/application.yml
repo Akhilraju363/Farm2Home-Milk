@@ -30,7 +30,9 @@ spring:
         - id: customer-service
           uri: lb://customer-service
           predicates:
-            - Path=/api/v1/customers/**,/uploads/customers/**
+            # Location reference data (LocationController) lives in customer-service too - same
+            # backend, same resilience config, just a second path prefix on the same route.
+            - Path=/api/v1/customers/**,/uploads/customers/**,/api/v1/locations/**
           filters:
             - name: CircuitBreaker
               args:
@@ -78,7 +80,9 @@ spring:
         - id: payment-service
           uri: lb://payment-service
           predicates:
-            - Path=/api/v1/payments/**
+            # Wallet lives in payment-service's own module (WalletController) - same backend,
+            # same resilience config, just a second path prefix on the same route.
+            - Path=/api/v1/payments/**,/api/v1/wallets/**
           filters:
             - name: CircuitBreaker
               args:
@@ -122,6 +126,22 @@ spring:
             - name: Resilience4jBulkhead
               args:
                 name: farmServiceBH
+
+        - id: invoice-service
+          uri: lb://invoice-service
+          predicates:
+            - Path=/api/v1/invoices/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: invoiceServiceCB
+                fallbackUri: forward:/fallback/invoice-service
+            - name: Resilience4jRateLimiter
+              args:
+                name: invoiceServiceRL
+            - name: Resilience4jBulkhead
+              args:
+                name: invoiceServiceBH
 
         - id: production-service
           uri: lb://production-service
@@ -262,6 +282,7 @@ resilience4j:
       paymentServiceCB: { base-config: default }
       deliveryServiceCB: { base-config: default }
       farmServiceCB: { base-config: default }
+      invoiceServiceCB: { base-config: default }
       productionServiceCB: { base-config: default }
       inventoryServiceCB: { base-config: default }
       notificationServiceCB: { base-config: default }
@@ -284,6 +305,7 @@ resilience4j:
       paymentServiceCB: { base-config: default }
       deliveryServiceCB: { base-config: default }
       farmServiceCB: { base-config: default }
+      invoiceServiceCB: { base-config: default }
       productionServiceCB: { base-config: default }
       inventoryServiceCB: { base-config: default }
       notificationServiceCB: { base-config: default }
@@ -307,6 +329,7 @@ resilience4j:
       paymentServiceRL: { base-config: default }
       deliveryServiceRL: { base-config: default }
       farmServiceRL: { base-config: default }
+      invoiceServiceRL: { base-config: default }
       productionServiceRL: { base-config: default }
       inventoryServiceRL: { base-config: default }
       notificationServiceRL: { base-config: default }
@@ -328,6 +351,7 @@ resilience4j:
       paymentServiceBH: { base-config: default }
       deliveryServiceBH: { base-config: default }
       farmServiceBH: { base-config: default }
+      invoiceServiceBH: { base-config: default }
       productionServiceBH: { base-config: default }
       inventoryServiceBH: { base-config: default }
       notificationServiceBH: { base-config: default }

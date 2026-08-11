@@ -20,7 +20,12 @@ public class CustomerEvent {
     /** CUSTOMER_CREATED */
     private String eventType;
     private UUID customerId;
+    // Kept for consumers that only need a display name (e.g. notification-service's welcome
+    // email template) - customer-service itself uses firstName/lastName below instead of
+    // splitting this, so registering with a multi-word last name round-trips exactly.
     private String customerName;
+    private String firstName;
+    private String lastName;
     private String mobile;
     private String email;
     private LocalDateTime occurredAt;

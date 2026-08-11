@@ -12,8 +12,4 @@ public record UserPrincipal(UUID userId, String mobile, Set<String> roles) {
                 || roles.contains(SecurityConstants.ROLE_DELIVERY_MANAGER)
                 || roles.contains(SecurityConstants.ROLE_SUPER_ADMIN);
     }
-
-    public boolean isDeliveryStaff() {
-        return roles.contains(SecurityConstants.ROLE_DELIVERY_MANAGER) || roles.contains(SecurityConstants.ROLE_DELIVERY_PARTNER);
-    }
 }

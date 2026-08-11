@@ -1,7 +1,5 @@
 package com.farm2home.delivery.kafka;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.farm2home.events.delivery.DeliveryEvent;
 import com.farm2home.events.order.OrderEvent;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -47,23 +45,22 @@ public class KafkaConfig {
 
     @Bean
     public ProducerFactory<String, DeliveryEvent> deliveryProducerFactory() {
-        return new DefaultKafkaProducerFactory<>(Map.of(
-                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,
-                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
-                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class,
-                ProducerConfig.ACKS_CONFIG, "all",
-                ProducerConfig.RETRIES_CONFIG, 3,
-                JsonSerializer.ADD_TYPE_INFO_HEADERS, false
-        ));
+        Map<String, Object> props = new java.util.HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);
+        props.put(ProducerConfig.ACKS_CONFIG, "all");
+        props.put(ProducerConfig.RETRIES_CONFIG, 3);
+        props.put(JsonSerializer.ADD_TYPE_INFO_HEADERS, false);
+        // Without this, send() blocks synchronously (up to the 60s default) waiting for cluster
+        // metadata when no broker is reachable, throwing before whenComplete() ever sees it -
+        // see DeliveryEventProducer's try/catch, which exists for exactly this failure mode.
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 3000);
+        return new DefaultKafkaProducerFactory<>(props);
     }
 
     @Bean
     public KafkaTemplate<String, DeliveryEvent> deliveryKafkaTemplate() {
         return new KafkaTemplate<>(deliveryProducerFactory());
-    }
-
-    @Bean
-    public ObjectMapper objectMapper() {
-        return new ObjectMapper().registerModule(new JavaTimeModule());
     }
 }

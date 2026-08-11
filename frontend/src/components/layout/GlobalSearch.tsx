@@ -47,7 +47,7 @@ export function GlobalSearch() {
   })
   const { data: orderData, isFetching: ordersLoading } = useQuery({
     queryKey: ['global-search', 'orders', debouncedQuery],
-    queryFn: () => orderService.search(debouncedQuery.trim()),
+    queryFn: () => orderService.search({ keyword: debouncedQuery.trim(), size: 5 }),
     enabled: searchReady,
   })
 
@@ -120,7 +120,7 @@ export function GlobalSearch() {
                     </Typography>
                     <List disablePadding dense>
                       {orders.map((o) => (
-                        <ListItemButton key={o.id} onClick={() => goTo('/orders')}>
+                        <ListItemButton key={o.id} onClick={() => goTo(`/orders/${o.id}`)}>
                           <ListItemText
                             primary={o.orderNumber}
                             secondary={formatCurrency(o.totalAmount)}

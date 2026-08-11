@@ -11,6 +11,7 @@ import com.farm2home.auth.domain.repository.UserRepository;
 import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
 import com.farm2home.auth.exception.AuthException;
+import com.farm2home.auth.exception.DuplicateResourceException;
 import com.farm2home.auth.exception.ResourceNotFoundException;
 import com.farm2home.auth.kafka.CustomerEventProducer;
 import com.farm2home.auth.mapper.UserMapper;
@@ -126,20 +127,20 @@ class AuthServiceImplTest {
         }
 
         @Test
-        @DisplayName("mobile already registered → throws AuthException")
+        @DisplayName("mobile already registered → throws DuplicateResourceException (409, not 401 - this isn't an auth failure)")
         void duplicateMobile_throws() {
             RegisterRequest req = new RegisterRequest();
             req.setMobile(mobile);
             when(userRepository.existsByMobileAndDeletedFalse(mobile)).thenReturn(true);
 
             assertThatThrownBy(() -> service.register(req))
-                    .isInstanceOf(AuthException.class)
+                    .isInstanceOf(DuplicateResourceException.class)
                     .hasMessageContaining("already registered");
             verify(userRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("email already registered → throws AuthException")
+        @DisplayName("email already registered → throws DuplicateResourceException (409, not 401 - this isn't an auth failure)")
         void duplicateEmail_throws() {
             RegisterRequest req = new RegisterRequest();
             req.setMobile(mobile);
@@ -148,7 +149,7 @@ class AuthServiceImplTest {
             when(userRepository.existsByEmailAndDeletedFalse("john@example.com")).thenReturn(true);
 
             assertThatThrownBy(() -> service.register(req))
-                    .isInstanceOf(AuthException.class)
+                    .isInstanceOf(DuplicateResourceException.class)
                     .hasMessageContaining("Email");
             verify(userRepository, never()).save(any());
         }

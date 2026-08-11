@@ -1,7 +1,6 @@
 package com.farm2home.order.config;
 
 import com.farm2home.common.core.constants.HeaderConstants;
-import com.farm2home.common.core.constants.SecurityConstants;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -48,7 +47,7 @@ public class GatewayHeaderAuthFilter extends OncePerRequestFilter {
                         .collect(Collectors.toSet());
 
                 List<SimpleGrantedAuthority> authorities = roles.stream()
-                        .map(r -> new SimpleGrantedAuthority(SecurityConstants.ROLE_PREFIX + r))
+                        .map(SimpleGrantedAuthority::new)
                         .toList();
 
                 UserPrincipal principal = new UserPrincipal(UUID.fromString(userId), mobile, roles);

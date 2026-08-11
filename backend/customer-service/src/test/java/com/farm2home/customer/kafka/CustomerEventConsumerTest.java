@@ -30,9 +30,10 @@ class CustomerEventConsumerTest {
 
     private final UUID customerId = UUID.randomUUID();
 
-    private CustomerEvent buildEvent(String eventType, String customerName) {
+    private CustomerEvent buildEvent(String eventType, String firstName, String lastName) {
         return CustomerEvent.builder()
-                .eventType(eventType).customerId(customerId).customerName(customerName)
+                .eventType(eventType).customerId(customerId)
+                .customerName(firstName + " " + lastName).firstName(firstName).lastName(lastName)
                 .mobile("9876543210").email("test@example.com").occurredAt(LocalDateTime.now())
                 .build();
     }
@@ -41,34 +42,38 @@ class CustomerEventConsumerTest {
     class Consume {
 
         @Test
-        @DisplayName("CUSTOMER_CREATED, new customer → creates profile with id = event.customerId")
+        @DisplayName("CUSTOMER_CREATED, new customer → creates profile with id = event.customerId, " +
+                "using the event's own firstName/lastName fields directly (not split from customerName)")
         void created_newCustomer_creates() {
             when(repository.existsByIdAndDeletedFalse(customerId)).thenReturn(false);
             when(repository.nextCustomerCodeSeq()).thenReturn(1000L);
 
-            consumer.consume(buildEvent("CUSTOMER_CREATED", "Kafka Tester"));
+            // Deliberately a last name that itself contains a space - would have been mangled by
+            // the old "split customerName on the first space" logic (firstName="Kafka",
+            // lastName="Van Der Tester" is only correct because we no longer split at all).
+            consumer.consume(buildEvent("CUSTOMER_CREATED", "Kafka", "Van Der Tester"));
 
             ArgumentCaptor<Customer> captor = ArgumentCaptor.forClass(Customer.class);
             verify(repository).save(captor.capture());
             Customer saved = captor.getValue();
             assertThat(saved.getId()).isEqualTo(customerId);
             assertThat(saved.getFirstName()).isEqualTo("Kafka");
-            assertThat(saved.getLastName()).isEqualTo("Tester");
+            assertThat(saved.getLastName()).isEqualTo("Van Der Tester");
             assertThat(saved.getCustomerCode()).isEqualTo("CUST-001000");
         }
 
         @Test
-        @DisplayName("single-word name → both firstName and lastName fall back to it")
-        void singleWordName_fallsBack() {
+        @DisplayName("blank firstName/lastName on the event → both fall back to \"Customer\"")
+        void blankName_fallsBack() {
             when(repository.existsByIdAndDeletedFalse(customerId)).thenReturn(false);
             when(repository.nextCustomerCodeSeq()).thenReturn(1000L);
 
-            consumer.consume(buildEvent("CUSTOMER_CREATED", "Cher"));
+            consumer.consume(buildEvent("CUSTOMER_CREATED", "", ""));
 
             ArgumentCaptor<Customer> captor = ArgumentCaptor.forClass(Customer.class);
             verify(repository).save(captor.capture());
-            assertThat(captor.getValue().getFirstName()).isEqualTo("Cher");
-            assertThat(captor.getValue().getLastName()).isEqualTo("Cher");
+            assertThat(captor.getValue().getFirstName()).isEqualTo("Customer");
+            assertThat(captor.getValue().getLastName()).isEqualTo("Customer");
         }
 
         @Test
@@ -76,7 +81,7 @@ class CustomerEventConsumerTest {
         void alreadyExists_skipped() {
             when(repository.existsByIdAndDeletedFalse(customerId)).thenReturn(true);
 
-            consumer.consume(buildEvent("CUSTOMER_CREATED", "Kafka Tester"));
+            consumer.consume(buildEvent("CUSTOMER_CREATED", "Kafka", "Tester"));
 
             verify(repository, never()).save(any());
         }
@@ -84,7 +89,7 @@ class CustomerEventConsumerTest {
         @Test
         @DisplayName("non-CUSTOMER_CREATED eventType → ignored")
         void otherEventType_ignored() {
-            consumer.consume(buildEvent("CUSTOMER_UPDATED", "Kafka Tester"));
+            consumer.consume(buildEvent("CUSTOMER_UPDATED", "Kafka", "Tester"));
 
             verify(repository, never()).save(any());
             verify(repository, never()).existsByIdAndDeletedFalse(any());

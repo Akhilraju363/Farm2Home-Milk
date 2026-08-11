@@ -74,12 +74,14 @@ class OrderControllerTest {
     private final UUID customerId = UUID.randomUUID();
     private final UUID orderId = UUID.randomUUID();
 
+    // GatewayHeaderAuthFilter grants unprefixed authorities (matching the other services'
+    // convention), so this mirrors that - no "ROLE_" prefix.
     private UsernamePasswordAuthenticationToken authFor(UUID userId, boolean admin) {
         UserPrincipal principal = new UserPrincipal(userId, "9876543210",
                 admin ? Set.of("FARM_MANAGER") : Set.of("CUSTOMER"));
         var authorities = admin
-                ? List.of(new SimpleGrantedAuthority("ROLE_FARM_MANAGER"))
-                : List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER"));
+                ? List.of(new SimpleGrantedAuthority("FARM_MANAGER"))
+                : List.of(new SimpleGrantedAuthority("CUSTOMER"));
         return new UsernamePasswordAuthenticationToken(principal, null, authorities);
     }
 
@@ -88,9 +90,8 @@ class OrderControllerTest {
                 .status(OrderStatus.PENDING.name()).totalAmount(new BigDecimal("80.00")).build();
     }
 
-    // getSummary() is gated with hasAnyAuthority(...) (unprefixed role names), unlike the other
-    // endpoints in this controller which rely on manual principal.isAdmin() checks - so the
-    // granted authority here must match exactly (no "ROLE_" prefix, unlike authFor() above).
+    // getSummary()/getReports() are gated with hasAnyAuthority(...) (unprefixed role names) -
+    // separate from authFor() since those tests don't need a UserPrincipal.
     private UsernamePasswordAuthenticationToken admin() {
         return new UsernamePasswordAuthenticationToken(
                 "9876543210", null, List.of(new SimpleGrantedAuthority(SecurityConstants.ROLE_FARM_MANAGER)));
@@ -207,6 +208,40 @@ class OrderControllerTest {
                             .with(authentication(authFor(customerId, false))))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.id").value(orderId.toString()));
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/orders/subscription/{subscriptionId}")
+    class GetBySubscription {
+
+        private final UUID subscriptionId = UUID.randomUUID();
+
+        @Test
+        @DisplayName("customer → filtered to own userId, not just the subscriptionId")
+        void customer_filteredToOwnId() throws Exception {
+            when(orderService.findBySubscription(eq(subscriptionId), eq(customerId), any()))
+                    .thenReturn(new PageImpl<>(new java.util.ArrayList<>(List.of(buildResponse())),
+                            PageRequest.of(0, 20), 1));
+
+            mockMvc.perform(get("/api/v1/orders/subscription/{subscriptionId}", subscriptionId)
+                            .with(authentication(authFor(customerId, false))))
+                    .andExpect(status().isOk());
+
+            verify(orderService).findBySubscription(eq(subscriptionId), eq(customerId), any());
+        }
+
+        @Test
+        @DisplayName("admin → unfiltered (null customerId)")
+        void admin_noFilter() throws Exception {
+            when(orderService.findBySubscription(eq(subscriptionId), eq(null), any()))
+                    .thenReturn(new PageImpl<>(new java.util.ArrayList<>(), PageRequest.of(0, 20), 0));
+
+            mockMvc.perform(get("/api/v1/orders/subscription/{subscriptionId}", subscriptionId)
+                            .with(authentication(authFor(UUID.randomUUID(), true))))
+                    .andExpect(status().isOk());
+
+            verify(orderService).findBySubscription(eq(subscriptionId), eq(null), any());
         }
     }
 
