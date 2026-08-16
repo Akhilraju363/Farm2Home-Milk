@@ -71,6 +71,15 @@ class DeliveryAssignmentServiceImplTest {
     private final UUID assignId    = UUID.randomUUID();
     private final UUID partnerUserId = UUID.randomUUID();
 
+    // partnerActiveDeliveries is computed live on every AssignmentResponse this service builds
+    // (DeliveryAssignmentServiceImpl.toResponse) - unstubbed by default here (0), since none of
+    // these tests care about its exact value; PartnerSelectionServiceImplTest covers the real
+    // workload-counting logic itself.
+    @org.junit.jupiter.api.BeforeEach
+    void stubWorkloadDefault() {
+        lenient().when(assignmentRepository.countByDeliveryPartner_IdAndStatusIn(any(), any())).thenReturn(0L);
+    }
+
     private DeliveryRoute buildRoute() {
         return DeliveryRoute.builder().id(routeId).routeName("Route A")
                 .routeCode("RTA").area("Banjara Hills").city("Hyderabad").pincode("500034").build();
@@ -93,23 +102,35 @@ class DeliveryAssignmentServiceImplTest {
                 .status(status.name()).build();
     }
 
+    private OrderDetailResponse buildOrder(String status, UUID deliveryRouteId) {
+        OrderDetailResponse order = new OrderDetailResponse();
+        order.setId(orderId);
+        order.setOrderNumber("ORD-2026-100042");
+        order.setCustomerId(UUID.randomUUID());
+        order.setStatus(status);
+        order.setDeliveryRouteId(deliveryRouteId);
+        return order;
+    }
+
     // ── ManualAssign ─────────────────────────────────────────────────────────────
+    // The order's own automatically-selected route (order.deliveryRouteId, set by
+    // order-service - see OrderServiceImpl.verifyDeliveryEligibility) is authoritative by
+    // default; ManualAssignRequest.routeId is an explicit admin override only. Route resolution
+    // now happens AFTER the order lookup/eligibility check (it needs the order's own route), so
+    // every test that reaches that point must stub orderServiceClient.getOrder() first.
 
     @Nested
     @DisplayName("manualAssign()")
     class ManualAssign {
 
         @Test
-        @DisplayName("valid request → creates assignment and publishes DELIVERY_ASSIGNED event")
-        void happyPath() {
+        @DisplayName("no override → uses the order's own automatically-selected route")
+        void routeAutoSelectedFromOrder() {
             when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
-            when(routeRepository.findByIdAndDeletedFalse(routeId)).thenReturn(Optional.of(buildRoute()));
             when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
-            OrderDetailResponse order = new OrderDetailResponse();
-            order.setId(orderId);
-            order.setOrderNumber("ORD-2026-100042");
-            order.setCustomerId(UUID.randomUUID());
+            OrderDetailResponse order = buildOrder("PENDING", routeId);
             when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(order));
+            when(routeRepository.findByIdAndDeletedFalse(routeId)).thenReturn(Optional.of(buildRoute()));
             DeliveryAssignment saved = buildAssignment(AssignmentStatus.ASSIGNED);
             when(assignmentRepository.save(any())).thenReturn(saved);
             when(mapper.toAssignmentResponse(saved)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
@@ -117,13 +138,14 @@ class DeliveryAssignmentServiceImplTest {
             ManualAssignRequest req = new ManualAssignRequest();
             req.setOrderId(orderId);
             req.setDeliveryPartnerId(partnerId);
-            req.setRouteId(routeId);
+            // routeId deliberately left null - not a customer/admin-submitted value here.
 
             AssignmentResponse result = service.manualAssign(req);
 
             assertThat(result.getStatus()).isEqualTo("ASSIGNED");
             verify(assignmentRepository).save(argThat(a ->
-                    order.getCustomerId().equals(a.getCustomerId()) && "ORD-2026-100042".equals(a.getOrderNumber())));
+                    order.getCustomerId().equals(a.getCustomerId()) && "ORD-2026-100042".equals(a.getOrderNumber())
+                            && routeId.equals(a.getRoute().getId())));
             verify(eventProducer).publishDeliveryEvent(saved, "DELIVERY_ASSIGNED");
             verify(auditLogService).record(argThat(entry ->
                     entry.getAction().equals(com.farm2home.common.core.audit.AuditAction.ASSIGN)
@@ -131,10 +153,51 @@ class DeliveryAssignmentServiceImplTest {
         }
 
         @Test
+        @DisplayName("explicit override → takes precedence over the order's own route")
+        void explicitOverride_takesPrecedence() {
+            UUID orderOwnRoute = UUID.randomUUID();
+            UUID overrideRoute = routeId;
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
+            when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(buildOrder("PENDING", orderOwnRoute)));
+            when(routeRepository.findByIdAndDeletedFalse(overrideRoute)).thenReturn(Optional.of(buildRoute()));
+            DeliveryAssignment saved = buildAssignment(AssignmentStatus.ASSIGNED);
+            when(assignmentRepository.save(any())).thenReturn(saved);
+            when(mapper.toAssignmentResponse(saved)).thenReturn(buildResponse(AssignmentStatus.ASSIGNED));
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+            req.setRouteId(overrideRoute);
+
+            service.manualAssign(req);
+
+            verify(assignmentRepository).save(argThat(a -> overrideRoute.equals(a.getRoute().getId())));
+            verify(routeRepository, never()).findByIdAndDeletedFalse(orderOwnRoute);
+        }
+
+        @Test
+        @DisplayName("order has no route and none overridden → throws BusinessException (422), nothing saved")
+        void noRouteAnywhere_throwsBusinessException() {
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
+            when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(buildOrder("PENDING", null)));
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+
+            assertThatThrownBy(() -> service.manualAssign(req))
+                    .isInstanceOf(com.farm2home.common.web.exception.BusinessException.class)
+                    .hasMessageContaining("No active delivery route is available");
+            verify(assignmentRepository, never()).save(any());
+            verify(routeRepository, never()).findByIdAndDeletedFalse(any());
+        }
+
+        @Test
         @DisplayName("order already assigned → throws DeliveryException")
         void duplicateAssignment_throws() {
             when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
-            when(routeRepository.findByIdAndDeletedFalse(routeId)).thenReturn(Optional.of(buildRoute()));
             when(assignmentRepository.existsByOrderId(orderId)).thenReturn(true);
 
             ManualAssignRequest req = new ManualAssignRequest();
@@ -160,6 +223,98 @@ class DeliveryAssignmentServiceImplTest {
 
             assertThatThrownBy(() -> service.manualAssign(req))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("route not found → throws ResourceNotFoundException")
+        void routeNotFound_throws() {
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
+            when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(buildOrder("PENDING", null)));
+            when(routeRepository.findByIdAndDeletedFalse(routeId)).thenReturn(Optional.empty());
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+            req.setRouteId(routeId);
+
+            assertThatThrownBy(() -> service.manualAssign(req))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("inactive delivery partner → throws ConflictException, nothing saved")
+        void inactivePartner_throwsConflict() {
+            DeliveryPartner inactivePartner = DeliveryPartner.builder()
+                    .id(partnerId).userId(partnerUserId).name("Ravi Kumar").mobile("9876543210").active(false).build();
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(inactivePartner));
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+            req.setRouteId(routeId);
+
+            assertThatThrownBy(() -> service.manualAssign(req))
+                    .isInstanceOf(com.farm2home.common.web.exception.ConflictException.class)
+                    .hasMessageContaining("not currently active");
+            verify(assignmentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("inactive route → throws ConflictException, nothing saved")
+        void inactiveRoute_throwsConflict() {
+            DeliveryRoute inactiveRoute = DeliveryRoute.builder()
+                    .id(routeId).routeName("Route A").routeCode("RTA").area("Banjara Hills").city("Hyderabad")
+                    .pincode("500034").active(false).build();
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
+            when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(buildOrder("PENDING", null)));
+            when(routeRepository.findByIdAndDeletedFalse(routeId)).thenReturn(Optional.of(inactiveRoute));
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+            req.setRouteId(routeId);
+
+            assertThatThrownBy(() -> service.manualAssign(req))
+                    .isInstanceOf(com.farm2home.common.web.exception.ConflictException.class)
+                    .hasMessageContaining("not currently active");
+            verify(assignmentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("order does not exist → throws ResourceNotFoundException, nothing saved")
+        void orderNotFound_throws() {
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
+            when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.empty());
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+            req.setRouteId(routeId);
+
+            assertThatThrownBy(() -> service.manualAssign(req))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(assignmentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("order exists but is not PENDING → throws DeliveryException, nothing saved")
+        void orderNotEligible_throws() {
+            when(partnerRepository.findByIdAndDeletedFalse(partnerId)).thenReturn(Optional.of(buildPartner()));
+            when(assignmentRepository.existsByOrderId(orderId)).thenReturn(false);
+            when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(buildOrder("CANCELLED", routeId)));
+
+            ManualAssignRequest req = new ManualAssignRequest();
+            req.setOrderId(orderId);
+            req.setDeliveryPartnerId(partnerId);
+            req.setRouteId(routeId);
+
+            assertThatThrownBy(() -> service.manualAssign(req))
+                    .isInstanceOf(DeliveryException.class)
+                    .hasMessageContaining("not eligible for delivery assignment");
+            verify(assignmentRepository, never()).save(any());
         }
     }
 
@@ -450,7 +605,7 @@ class DeliveryAssignmentServiceImplTest {
             when(mapper.toAssignmentResponse(assignment)).thenReturn(buildResponse(AssignmentStatus.DELIVERED));
 
             Page<AssignmentResponse> result = service.search(null, true, "Ravi", LocalDate.now().minusDays(7),
-                    LocalDate.now(), AssignmentStatus.DELIVERED, PageRequest.of(0, 20));
+                    LocalDate.now(), AssignmentStatus.DELIVERED, null, PageRequest.of(0, 20));
 
             assertThat(result.getTotalElements()).isEqualTo(1);
             assertThat(result.getContent().get(0).getId()).isEqualTo(assignId);
@@ -464,7 +619,7 @@ class DeliveryAssignmentServiceImplTest {
             when(assignmentRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
 
             Page<AssignmentResponse> result = service.search(partnerUserId, false, "  ", null, null, null,
-                    PageRequest.of(0, 20));
+                    null, PageRequest.of(0, 20));
 
             assertThat(result.getTotalElements()).isZero();
             verify(partnerRepository).findByUserIdAndDeletedFalse(partnerUserId);
@@ -475,8 +630,19 @@ class DeliveryAssignmentServiceImplTest {
         void nonAdmin_noPartnerProfile_throws() {
             when(partnerRepository.findByUserIdAndDeletedFalse(partnerUserId)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> service.search(partnerUserId, false, null, null, null, null, PageRequest.of(0, 20)))
+            assertThatThrownBy(() -> service.search(partnerUserId, false, null, null, null, null, null, PageRequest.of(0, 20)))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("autoAssigned=true is passed through as a real filter (admin dashboard's KPI counts)")
+        void autoAssignedFilter_applied() {
+            var page = new PageImpl<DeliveryAssignment>(List.of(), PageRequest.of(0, 1), 0);
+            when(assignmentRepository.findAll(any(Specification.class), any(PageRequest.class))).thenReturn(page);
+
+            service.search(null, true, null, null, null, null, true, PageRequest.of(0, 1));
+
+            verify(assignmentRepository).findAll(any(Specification.class), eq(PageRequest.of(0, 1)));
         }
     }
 

@@ -64,7 +64,12 @@ export function GlobalSearch() {
 
   return (
     <ClickAwayListener onClickAway={() => setOpen(false)}>
-      <Box ref={anchorRef} sx={{ position: 'relative', width: { xs: '100%', sm: 420 } }}>
+      {/* flexGrow (not width: '100%') on the xs breakpoint - this Box is itself a flex item
+          inside TopBar's Toolbar alongside the mobile menu icon/notification bell/theme toggle/
+          avatar; width: 100% ignored those siblings and forced the whole toolbar (and page) to
+          overflow horizontally on narrow viewports. minWidth: 0 lets it actually shrink below its
+          placeholder text's intrinsic width instead of forcing overflow. */}
+      <Box ref={anchorRef} sx={{ position: 'relative', minWidth: 0, flexGrow: { xs: 1, sm: 0 }, width: { sm: 420 } }}>
         <Paper
           variant="outlined"
           sx={{

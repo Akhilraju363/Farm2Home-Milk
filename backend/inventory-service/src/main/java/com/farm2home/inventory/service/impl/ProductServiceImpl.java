@@ -71,6 +71,27 @@ public class ProductServiceImpl {
         return mapper.toResponse(getProduct(id));
     }
 
+    /** Called by order-service at order-creation/checkout time to atomically reserve stock - see
+     *  ProductRepository.decrementStock for why a single UPDATE...WHERE is what actually makes
+     *  this race-safe under concurrent checkouts, not any locking done here. 404 if the product
+     *  doesn't exist at all; 409 if it exists but doesn't currently have enough stock (a real
+     *  conflict with concurrent state, not a malformed request - matches this codebase's
+     *  ConflictException convention, e.g. delivery-service's route-deletion guard). */
+    @Transactional
+    @Audited(action = AuditAction.UPDATE, entityType = "Product")
+    public ProductResponse decrementStock(UUID id, int quantity) {
+        // Confirms existence up front (a clean 404 for an unknown/deleted id) before attempting
+        // the atomic UPDATE below.
+        getProduct(id);
+        int updated = repository.decrementStock(id, quantity);
+        Product current = getProduct(id);
+        if (updated == 0) {
+            throw new com.farm2home.common.web.exception.ConflictException(
+                    "Only " + current.getStockQuantity() + " " + current.getName() + " available right now.");
+        }
+        return mapper.toResponse(current);
+    }
+
     @Transactional
     @Audited(action = AuditAction.UPDATE, entityType = "Product")
     public ProductResponse update(UUID id, UpdateProductRequest request) {

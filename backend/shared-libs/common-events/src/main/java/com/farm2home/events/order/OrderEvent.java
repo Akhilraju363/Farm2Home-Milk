@@ -26,6 +26,13 @@ public class OrderEvent {
     private String orderNumber;
     private UUID customerId;
     private UUID subscriptionId;
+    /** The route order-service already selected automatically for this order's delivery address
+     *  (Order.deliveryRouteId - see order-service's OrderServiceImpl.verifyDeliveryEligibility /
+     *  customer-service's DeliveryRouteSelectionServiceImpl, the sole authoritative route-selection
+     *  implementation). Null if no active route covered the address. delivery-service's
+     *  OrderEventConsumer uses this AS-IS for automatic partner assignment - it must never
+     *  re-derive or recalculate a route from anything else. */
+    private UUID deliveryRouteId;
     private LocalDate orderDate;
     private String orderType;
     private BigDecimal totalAmount;

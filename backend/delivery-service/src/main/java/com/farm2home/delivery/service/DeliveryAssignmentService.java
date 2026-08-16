@@ -34,10 +34,10 @@ public interface DeliveryAssignmentService {
 
     /** Admin sees every assignment for the order; a DELIVERY_PARTNER sees only assignments that
      *  are theirs (empty list otherwise); any other caller (e.g. CUSTOMER) gets an empty list -
-     *  ownership can't be verified against the order itself here (delivery-service has no
-     *  cross-service call to order-service, and DeliveryAssignment.customerId is only populated
-     *  for auto-assignments, null for manual ones), so this endpoint intentionally isn't exposed
-     *  to customers at all rather than risk a false allow. */
+     *  DeliveryAssignment.customerId is now reliably populated for both auto- and manually-created
+     *  assignments (see manualAssign()'s order-service backfill), but this endpoint still isn't
+     *  exposed to customers at all (no CUSTOMER-facing route in AppRoutes/Sidebar), matching
+     *  order/payment ownership's existing "no unverified cross-service trust" convention. */
     List<AssignmentResponse> findByOrderId(UUID orderId, UUID callerId, boolean isAdmin);
 
     DeliverySummaryResponse getSummary();
@@ -45,10 +45,13 @@ public interface DeliveryAssignmentService {
     ReportPage<DeliveryReportRow, DeliveryReportSummary> getReport(LocalDate dateFrom, LocalDate dateTo,
             AssignmentStatus status, List<UUID> orderIds, Pageable pageable);
 
-    /** Enterprise search: keyword (partner/route name or area/city) + status + date range filters.
-     *  Partner-scoped like findAll: non-admins only see their own assignments. */
+    /** Enterprise search: keyword (partner/route name or area/city) + status + date range +
+     *  autoAssigned filters. Partner-scoped like findAll: non-admins only see their own
+     *  assignments. autoAssigned is null-safe (omitted = both); used by the admin dashboard's
+     *  "Automatically assigned"/"Manually assigned" KPI counts via this same search().totalElements
+     *  pattern already used for per-status counts, not a bespoke count endpoint. */
     Page<AssignmentResponse> search(UUID partnerId, boolean isAdmin, String keyword, LocalDate dateFrom,
-            LocalDate dateTo, AssignmentStatus status, Pageable pageable);
+            LocalDate dateTo, AssignmentStatus status, Boolean autoAssigned, Pageable pageable);
 
     /** Delivery Performance: total/completed/failed delivery counts bucketed by the requested granularity. */
     TrendSeries<DeliveryPerformancePoint> getPerformanceTrend(Granularity granularity, LocalDate dateFrom, LocalDate dateTo);

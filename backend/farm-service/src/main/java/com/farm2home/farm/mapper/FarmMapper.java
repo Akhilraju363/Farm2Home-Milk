@@ -1,5 +1,6 @@
 package com.farm2home.farm.mapper;
 
+import com.farm2home.farm.domain.entity.BusinessSettings;
 import com.farm2home.farm.domain.entity.Cow;
 import com.farm2home.farm.domain.entity.Farm;
 import com.farm2home.farm.domain.entity.HealthRecord;
@@ -8,9 +9,11 @@ import com.farm2home.farm.dto.request.CreateCowRequest;
 import com.farm2home.farm.dto.request.CreateFarmRequest;
 import com.farm2home.farm.dto.request.CreateHealthRecordRequest;
 import com.farm2home.farm.dto.request.CreateVaccinationRequest;
+import com.farm2home.farm.dto.request.UpdateBusinessSettingsRequest;
 import com.farm2home.farm.dto.request.UpdateCowRequest;
 import com.farm2home.farm.dto.request.UpdateFarmRequest;
 import com.farm2home.farm.dto.request.UpdateVaccinationRequest;
+import com.farm2home.farm.dto.response.BusinessSettingsResponse;
 import com.farm2home.farm.dto.response.CowResponse;
 import com.farm2home.farm.dto.response.FarmResponse;
 import com.farm2home.farm.dto.response.HealthRecordResponse;
@@ -109,6 +112,13 @@ public interface FarmMapper {
     @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "deleted", ignore = true)
     void updateFarmFromRequest(UpdateFarmRequest request, @MappingTarget Farm farm);
+
+    BusinessSettingsResponse toBusinessSettingsResponse(BusinessSettings settings);
+
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    void updateBusinessSettingsFromRequest(UpdateBusinessSettingsRequest request, @MappingTarget BusinessSettings settings);
 
     @Condition
     default boolean hasText(String value) {

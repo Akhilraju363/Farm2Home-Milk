@@ -60,8 +60,15 @@ public class WalletServiceImpl implements WalletService {
     @Transactional
     @Audited(action = AuditAction.PAYMENT, entityType = "Wallet")
     public void debitForPayment(UUID customerId, BigDecimal amount, UUID paymentId) {
+        // Auto-create on first use, same as getWallet()/topUp() already do (findOrCreateWallet /
+        // the orElseGet above) - this previously threw "Wallet not found for customer" for any
+        // customer paying by WALLET for the first time ever, even though every other wallet entry
+        // point treats "no wallet row yet" as "a wallet with ₹0 balance", not an error. A fresh
+        // wallet has a zero balance, so the insufficient-balance check right below still correctly
+        // rejects the payment - just with an honest "Available: ₹0.00" instead of a confusing
+        // "not found".
         Wallet wallet = walletRepository.findByCustomerIdForUpdate(customerId)
-                .orElseThrow(() -> new InsufficientBalanceException("Wallet not found for customer"));
+                .orElseGet(() -> walletRepository.save(Wallet.builder().customerId(customerId).build()));
 
         if (wallet.getBalance().compareTo(amount) < 0) {
             throw new InsufficientBalanceException(

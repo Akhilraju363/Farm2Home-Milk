@@ -32,6 +32,7 @@ public interface DeliveryMapper {
     @Mapping(target = "deliveryPartnerMobile", expression = "java(assignment.getDeliveryPartner().getMobile())")
     @Mapping(target = "routeId",   expression = "java(assignment.getRoute().getId())")
     @Mapping(target = "routeCode", expression = "java(assignment.getRoute().getRouteCode())")
+    @Mapping(target = "routeName", expression = "java(assignment.getRoute().getRouteName())")
     @Mapping(target = "status",    expression = "java(assignment.getStatus().name())")
     AssignmentResponse toAssignmentResponse(DeliveryAssignment assignment);
 

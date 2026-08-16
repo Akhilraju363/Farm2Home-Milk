@@ -1,10 +1,10 @@
 import {
   Box, Paper, Typography, Chip, Button, Grid, Skeleton, Divider, IconButton, Alert, List,
-  ListItem, ListItemText, Stack, CircularProgress,
+  ListItem, ListItemText, Stack, CircularProgress, Rating,
 } from '@mui/material'
 import {
   ArrowBack, Cancel as CancelIcon, LocalShipping, CheckCircle, AssignmentTurnedIn, Person, Payment as PaymentIcon,
-  Receipt,
+  Receipt, StarBorder, Edit as EditIcon,
 } from '@mui/icons-material'
 import { useState } from 'react'
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom'
@@ -12,19 +12,22 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSnackbar } from 'notistack'
 import { ConfirmDialog } from '../../components/common/ConfirmDialog'
 import { PayNowDialog } from '../../components/payment/PayNowDialog'
+import { ReviewDialog } from '../../components/review/ReviewDialog'
 import { useAuth } from '../../hooks/useAuth'
 import { orderService } from '../../services/orderService'
 import { customerService } from '../../services/customerService'
-import { deliveryService } from '../../services/deliveryService'
+import { deliveryService, deliveryRouteService } from '../../services/deliveryService'
 import { paymentService } from '../../services/paymentService'
 import { invoiceService } from '../../services/invoiceService'
+import { reviewService } from '../../services/reviewService'
 import { formatCurrency, formatDate, formatDateTime, statusColor } from '../../utils/formatters'
 import {
-  MILK_TYPE_LABELS, ORDER_STATUS_LABELS, ORDER_STATUS_TRANSITIONS, ORDER_TYPE_LABELS,
+  orderItemLabel, ORDER_STATUS_LABELS, ORDER_STATUS_TRANSITIONS, ORDER_TYPE_LABELS,
 } from '../../types/order.types'
 import { ASSIGNMENT_STATUS_LABELS } from '../../types/delivery.types'
 import { PAYMENT_METHOD_LABELS, PAYMENT_STATUS_LABELS } from '../../types/payment.types'
 import type { OrderStatus } from '../../types/order.types'
+import type { Review } from '../../types/review.types'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -96,6 +99,19 @@ export function OrderDetailsPage() {
   })
   const assignment = deliveryRes?.data.data?.[0]
 
+  // The order's own automatically-selected route (Order.deliveryRouteId - set once at order
+  // creation, see OrderServiceImpl.verifyDeliveryEligibility) is independent of whether a
+  // DeliveryAssignment exists yet (see section 11's Order -> selectedDeliveryRoute design) - not
+  // sourced from the assignment, which may not exist. Resolved live here (not fabricated
+  // client-side) so its current active/inactive status is always accurate.
+  const { data: routeRes, isLoading: routeLoading } = useQuery({
+    queryKey: ['delivery', 'routes', order?.deliveryRouteId],
+    queryFn: () => deliveryRouteService.getById(order!.deliveryRouteId!),
+    enabled: Boolean(order?.deliveryRouteId) && canManage,
+    retry: false,
+  })
+  const route = routeRes?.data.data
+
   // GET /payments/order/{orderId} - every payment attempt for this order (an order can have more
   // than one if an earlier attempt failed). Self-scoped server-side (admin sees all, owner sees
   // their own), so this is safe to fetch for any viewer who can already see this order.
@@ -119,11 +135,30 @@ export function OrderDetailsPage() {
   })
   const invoice = invoiceRes?.data.data
 
+  // CUSTOMER-only: the caller's own reviews, filtered client-side to this order (the backend has
+  // no orderId filter on GET /reviews/my - see reviewService.findMy). Products don't map to a
+  // specific order line item (OrderItem only records a milkType, not a productId), so review
+  // eligibility here is scoped to "this delivered order, any catalog product" rather than a
+  // per-item action - the customer picks which product they're rating in ReviewDialog itself.
+  const { data: myReviewsRes } = useQuery({
+    queryKey: ['reviews', 'my'],
+    queryFn: () => reviewService.findMy(),
+    enabled: Boolean(id) && !canManage,
+    retry: false,
+  })
+  const orderReviews = (myReviewsRes?.data.data.content ?? []).filter((r) => r.orderId === id)
+
   const [payNowOpen, setPayNowOpen] = useState(false)
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false)
+  const [editingReview, setEditingReview] = useState<Review | null>(null)
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['orders', id] })
   const invalidatePayments = () => queryClient.invalidateQueries({ queryKey: ['payments', 'by-order', id] })
   const invalidateInvoice = () => queryClient.invalidateQueries({ queryKey: ['invoices', 'by-order', id] })
+  const invalidateReviews = () => queryClient.invalidateQueries({ queryKey: ['reviews', 'my'] })
+
+  const openRateDialog = () => { setEditingReview(null); setReviewDialogOpen(true) }
+  const openEditReviewDialog = (review: Review) => { setEditingReview(review); setReviewDialogOpen(true) }
 
   const statusMutation = useMutation({
     mutationFn: (status: OrderStatus) => orderService.updateStatus(id!, { status }),
@@ -295,8 +330,8 @@ export function OrderDetailsPage() {
               {order.items.map((item) => (
                 <ListItem key={item.id} disableGutters divider>
                   <ListItemText
-                    primary={MILK_TYPE_LABELS[item.milkType]}
-                    secondary={`${item.quantity} L × ${formatCurrency(item.unitPrice)}`}
+                    primary={orderItemLabel(item)}
+                    secondary={`${item.quantity}${item.milkType ? ' L' : ''} × ${formatCurrency(item.unitPrice)}`}
                   />
                   <Typography variant="body2" fontWeight={600}>{formatCurrency(item.totalPrice)}</Typography>
                 </ListItem>
@@ -306,6 +341,31 @@ export function OrderDetailsPage() {
               <Typography variant="subtitle2" fontWeight={700}>Total</Typography>
               <Typography variant="subtitle2" fontWeight={700}>{formatCurrency(order.totalAmount)}</Typography>
             </Box>
+
+            {/* Reviews are order-scoped, not per-item, since OrderItem only records a milkType
+                (not a productId) - see the reviewService.findMy comment above. */}
+            {!canManage && order.status === 'DELIVERED' && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                {orderReviews.length > 0 ? (
+                  <List disablePadding>
+                    {orderReviews.map((r) => (
+                      <ListItem key={r.id} disableGutters>
+                        <ListItemText
+                          primary={<Rating value={r.rating} size="small" readOnly />}
+                          secondary={r.productName ?? 'Product review'}
+                        />
+                        <Button size="small" startIcon={<EditIcon fontSize="small" />} onClick={() => openEditReviewDialog(r)}>
+                          Edit Review
+                        </Button>
+                      </ListItem>
+                    ))}
+                  </List>
+                ) : null}
+                <Button size="small" startIcon={<StarBorder />} onClick={openRateDialog} sx={{ mt: orderReviews.length > 0 ? 1 : 0 }}>
+                  Rate a Product
+                </Button>
+              </Box>
+            )}
           </Section>
         </Grid>
 
@@ -327,11 +387,29 @@ export function OrderDetailsPage() {
         {canManage && (
           <Grid item xs={12} md={6}>
             <Section title="Delivery">
+              <Field
+                label="Delivery Route"
+                value={
+                  routeLoading ? 'Loading…'
+                    : route ? `${route.routeName}`
+                    : order.deliveryRouteId ? 'Route unavailable' : 'Route not assigned'
+                }
+              />
+              {route && (
+                <>
+                  <Field label="Route Code" value={route.routeCode} />
+                  <Field label="Route Status" value={<Chip label={route.active ? 'Active' : 'Inactive'} size="small" color={route.active ? 'success' : 'default'} />} />
+                </>
+              )}
               {assignment ? (
                 <>
                   <Field
                     label="Assignment"
                     value={<RouterLink to={`/delivery/${assignment.id}`} style={{ color: 'inherit' }}>{assignment.routeCode} — {assignment.deliveryPartnerName}</RouterLink>}
+                  />
+                  <Field
+                    label="Assigned By"
+                    value={assignment.autoAssigned ? 'Automatically (least-loaded partner on route)' : 'Manually by an admin'}
                   />
                   <Field label="Status" value={ASSIGNMENT_STATUS_LABELS[assignment.status]} />
                   <Field label="Assigned At" value={formatDateTime(assignment.assignedAt)} />
@@ -398,6 +476,14 @@ export function OrderDetailsPage() {
         loading={cancelMutation.isPending}
         onConfirm={() => cancelMutation.mutate()}
         onClose={() => setCancelOpen(false)}
+      />
+
+      <ReviewDialog
+        open={reviewDialogOpen}
+        orderId={order.id}
+        review={editingReview}
+        onClose={() => setReviewDialogOpen(false)}
+        onSaved={() => { setReviewDialogOpen(false); invalidateReviews() }}
       />
     </Box>
   )

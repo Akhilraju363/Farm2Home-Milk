@@ -450,6 +450,43 @@ class CustomerServiceImplTest {
         }
     }
 
+    @Nested @DisplayName("addAddress()")
+    class AddAddress {
+        @Test
+        @DisplayName("first address for the customer -> becomes the default")
+        void firstAddress_becomesDefault() {
+            CreateAddressRequest req = new CreateAddressRequest();
+            CustomerAddress entity = buildAddress();
+            entity.setDefaultAddress(false);
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressMapper.toEntity(req)).thenReturn(entity);
+            when(addressRepository.existsByCustomerIdAndDeletedFalse(customerId)).thenReturn(false);
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.addAddress(customerId, req);
+
+            assertThat(entity.isDefaultAddress()).isTrue();
+        }
+
+        @Test
+        @DisplayName("customer already has an address -> new one is not the default (only one default row can ever exist)")
+        void laterAddress_notDefault() {
+            CreateAddressRequest req = new CreateAddressRequest();
+            CustomerAddress entity = buildAddress();
+            entity.setDefaultAddress(true);
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressMapper.toEntity(req)).thenReturn(entity);
+            when(addressRepository.existsByCustomerIdAndDeletedFalse(customerId)).thenReturn(true);
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.addAddress(customerId, req);
+
+            assertThat(entity.isDefaultAddress()).isFalse();
+        }
+    }
+
     @Nested @DisplayName("addAddressScoped()")
     class AddAddressScoped {
         @Test

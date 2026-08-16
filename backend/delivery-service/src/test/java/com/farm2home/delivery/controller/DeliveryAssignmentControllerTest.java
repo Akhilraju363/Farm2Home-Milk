@@ -255,7 +255,7 @@ class DeliveryAssignmentControllerTest {
         @Test
         @DisplayName("delivery partner → passes own userId and isAdmin=false")
         void partner_ownIdNotAdmin() throws Exception {
-            when(assignmentService.search(eq(partnerUserId), eq(false), any(), any(), any(), any(), any()))
+            when(assignmentService.search(eq(partnerUserId), eq(false), any(), any(), any(), any(), any(), any()))
                     .thenReturn(new PageImpl<>(List.of(AssignmentResponse.builder().id(assignmentId).build()),
                             PageRequest.of(0, 20), 1));
 
@@ -269,7 +269,7 @@ class DeliveryAssignmentControllerTest {
         @DisplayName("admin → passes own userId and isAdmin=true")
         void admin_isAdminTrue() throws Exception {
             UUID adminId = UUID.randomUUID();
-            when(assignmentService.search(eq(adminId), eq(true), any(), any(), any(), any(), any()))
+            when(assignmentService.search(eq(adminId), eq(true), any(), any(), any(), any(), any(), any()))
                     .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
             mockMvc.perform(get("/api/v1/delivery/assignments/search").with(authentication(authFor(adminId, true))))

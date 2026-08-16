@@ -5,9 +5,11 @@ import com.farm2home.common.core.constants.SecurityConstants;
 import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.delivery.dto.request.CreateRouteRequest;
 import com.farm2home.delivery.dto.request.UpdateRouteRequest;
+import com.farm2home.delivery.dto.request.UpdateRouteStatusRequest;
 import com.farm2home.delivery.dto.response.RouteResponse;
 import com.farm2home.delivery.service.impl.DeliveryRouteServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -39,7 +41,7 @@ public class DeliveryRouteController {
     @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Create a delivery route (admin)",
             description = "routeCode is stored upper-cased regardless of the casing submitted, and must be "
-                    + "unique among non-deleted routes - a duplicate is rejected with a 400. The new route is "
+                    + "unique among non-deleted routes - a duplicate is rejected with a 409. The new route is "
                     + "active by default.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201",
@@ -62,11 +64,13 @@ public class DeliveryRouteController {
                                 }"""))),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                 description = "Validation failure (missing/too-long routeName, routeCode, area, city, or an "
-                        + "out-of-range pincode), or routeCode already exists", content = @Content),
+                        + "out-of-range pincode)", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
-                description = "Caller lacks FARM_MANAGER/SUPER_ADMIN", content = @Content)
+                description = "Caller lacks FARM_MANAGER/SUPER_ADMIN", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                description = "routeCode already exists among non-deleted routes", content = @Content)
     })
     public ResponseEntity<ApiResponse<RouteResponse>> create(@Valid @RequestBody CreateRouteRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -90,6 +94,26 @@ public class DeliveryRouteController {
     public ResponseEntity<ApiResponse<Page<RouteResponse>>> findAll(
             @PageableDefault(size = ApiConstants.DEFAULT_PAGE_SIZE, sort = "routeCode") Pageable pageable) {
         return ResponseEntity.ok(ApiResponse.success("Routes retrieved successfully", routeService.findAll(pageable)));
+    }
+
+    @GetMapping("/search")
+    @Operation(summary = "Search routes",
+            description = "Paginated, filtered route list - keyword matches routeName/routeCode/area/city/"
+                    + "pincode (case-insensitive substring); active filters by the active flag when supplied "
+                    + "(true = only active routes, e.g. for the Assign Delivery route dropdown; omitted = both "
+                    + "active and inactive, e.g. for the admin Route Management table). Open to any "
+                    + "authenticated caller, same as GET /.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Routes retrieved (possibly empty)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<Page<RouteResponse>>> search(
+            @Parameter(description = "Matches routeName/routeCode/area/city/pincode") @RequestParam(required = false) String keyword,
+            @Parameter(description = "true = active only; omit for both active and inactive") @RequestParam(required = false) Boolean active,
+            @PageableDefault(size = ApiConstants.DEFAULT_PAGE_SIZE, sort = "routeCode") Pageable pageable) {
+        return ResponseEntity.ok(ApiResponse.success("Routes retrieved successfully", routeService.search(keyword, active, pageable)));
     }
 
     @GetMapping("/{id}")
@@ -164,13 +188,39 @@ public class DeliveryRouteController {
         return ResponseEntity.ok(ApiResponse.success("Route updated successfully", routeService.update(id, request)));
     }
 
+    @PatchMapping("/{id}/status")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @Operation(summary = "Activate/deactivate route (admin)",
+            description = "Focused single-purpose status toggle, matching the Assignment status-update "
+                    + "endpoint's shape - equivalent to PUT /{id} with only the active field set. An inactive "
+                    + "route cannot be selected for a new delivery assignment, but existing assignments that "
+                    + "already reference it are unaffected.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Route status updated"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "active is missing", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                description = "Caller lacks FARM_MANAGER/SUPER_ADMIN", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "Route not found or soft-deleted", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<RouteResponse>> updateStatus(@PathVariable UUID id,
+                                                @Valid @RequestBody UpdateRouteStatusRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Route status updated successfully", routeService.updateStatus(id, request)));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Soft-delete route (admin)",
             description = "Marks the route as deleted (route.deleted = true) so it drops out of GET / and "
                     + "GET /{id}. This is a soft delete only - the row is not removed, and despite the prior "
                     + "summary's wording (\"Deactivate and soft-delete\"), it does NOT touch the separate "
-                    + "`active` flag; DeliveryRouteServiceImpl.delete() sets deleted=true only.")
+                    + "`active` flag; DeliveryRouteServiceImpl.delete() sets deleted=true only. Rejected with "
+                    + "409 if the route is currently referenced by a non-terminal (ASSIGNED/OUT_FOR_DELIVERY) "
+                    + "delivery assignment - deactivate it instead (PATCH /{id}/status) if it should stop being "
+                    + "selectable without breaking that reference.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Route soft-deleted"),
@@ -179,7 +229,9 @@ public class DeliveryRouteController {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
                 description = "Caller lacks FARM_MANAGER/SUPER_ADMIN", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                description = "Route not found or already soft-deleted", content = @Content)
+                description = "Route not found or already soft-deleted", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                description = "Route is referenced by an active (ASSIGNED/OUT_FOR_DELIVERY) assignment", content = @Content)
     })
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable UUID id) {
         routeService.delete(id);

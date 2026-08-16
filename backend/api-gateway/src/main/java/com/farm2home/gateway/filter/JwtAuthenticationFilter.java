@@ -50,6 +50,11 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         // authenticated caller can still reach it, same as before this fix - only truly
         // anonymous access is what's newly blocked here for /webhook and only /webhook).
         ApiConstants.API_V1 + "/payments/webhook",
+        // DPDP data-rights/grievance intake - must be reachable by a data principal with no
+        // account. Deliberately the narrow /submit sub-path, not the base /data-rights-requests
+        // path also used by the admin list (GET) and triage (PATCH) endpoints, since this list
+        // matches by startsWith with no per-HTTP-method distinction.
+        ApiConstants.API_V1 + "/data-rights-requests/submit",
         "/swagger-ui",
         "/api-docs",
         "/actuator/health",

@@ -4,7 +4,7 @@ import {
 } from '@mui/material'
 import {
   Menu as MenuIcon, Logout, Notifications, DarkMode, LightMode,
-  Sms, Email, PhoneIphone,
+  Sms, Email, PhoneIphone, ShoppingCartOutlined,
 } from '@mui/icons-material'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -12,6 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../../hooks/useAuth'
 import { useThemeMode } from '../../contexts/ThemeModeContext'
 import { notificationService } from '../../services/notificationService'
+import { cartService } from '../../services/cartService'
 import { formatDateTime } from '../../utils/formatters'
 import type { NotificationChannel, NotificationStatus } from '../../types/notification.types'
 import { DRAWER_WIDTH } from './Sidebar'
@@ -110,13 +111,37 @@ function NotificationBell() {
   )
 }
 
+/** Quick-access cart affordance from anywhere in the app - CUSTOMER only, mirrors the Cart nav
+ *  item's own role gate (see Sidebar.tsx). Shares the exact same ['cart'] query key as CartPage/
+ *  ShopProductCard's add-to-cart mutations, so the badge count updates automatically whenever
+ *  those invalidate it - no separate polling needed. */
+function CartButton() {
+  const navigate = useNavigate()
+  const { data } = useQuery({
+    queryKey: ['cart'],
+    queryFn: () => cartService.getCart(),
+    staleTime: 30_000,
+  })
+  const itemCount = data?.data.data.itemCount ?? 0
+
+  return (
+    <Tooltip title="Cart">
+      <IconButton onClick={() => navigate('/cart')} size="small" sx={{ mr: 1 }}>
+        <Badge badgeContent={itemCount} color="error">
+          <ShoppingCartOutlined />
+        </Badge>
+      </IconButton>
+    </Tooltip>
+  )
+}
+
 interface Props {
   onMenuClick: () => void
   title: string
 }
 
 export function TopBar({ onMenuClick, title }: Props) {
-  const { user, logoutUser } = useAuth()
+  const { user, logoutUser, isCustomer } = useAuth()
   const { mode, toggleMode } = useThemeMode()
   const navigate = useNavigate()
   const [anchor, setAnchor] = useState<null | HTMLElement>(null)
@@ -155,6 +180,8 @@ export function TopBar({ onMenuClick, title }: Props) {
         <GlobalSearch />
 
         <Box sx={{ flexGrow: 1 }} />
+
+        {isCustomer() && <CartButton />}
 
         <NotificationBell />
 

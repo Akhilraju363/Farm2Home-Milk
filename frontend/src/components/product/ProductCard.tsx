@@ -33,7 +33,11 @@ export function ProductCard({ product, canWrite, onEdit, onToggleActive }: Props
             component="img"
             src={product.imageUrl}
             alt={product.name}
-            sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            // contain, not cover - a cover crop was cutting off the top/bottom/sides of whatever
+            // an admin actually uploaded (see the milk bottle image that prompted this fix).
+            // object-position centers it within the fixed-height box above so every card stays
+            // the same size regardless of the source image's own aspect ratio.
+            sx={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center' }}
           />
         ) : (
           <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

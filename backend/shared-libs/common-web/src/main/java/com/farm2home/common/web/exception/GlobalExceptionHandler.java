@@ -17,6 +17,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.time.OffsetDateTime;
 import java.util.stream.Collectors;
@@ -67,6 +68,17 @@ public class GlobalExceptionHandler {
         log.error("{} {} -> database error", request.getMethod(), request.getRequestURI(), ex);
         return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "DATABASE_ERROR",
                 "A database error occurred. Please try again later.", request);
+    }
+
+    // Has no @ResponseStatus of its own, so without this it fell through to handleUnexpected's
+    // generic 500 "An unexpected error occurred" - see CommonWebAutoConfiguration.
+    // multipartConfigElement's comment for why this should now be rare (the container limit sits
+    // above FileStorageService's own 5MB check), but a request that's still too large for the
+    // container gets a real, actionable message instead of an opaque one.
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        log.warn("{} {} -> upload too large: {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
+        return buildResponse(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "The uploaded file is too large.", request);
     }
 
     @ExceptionHandler(Exception.class)

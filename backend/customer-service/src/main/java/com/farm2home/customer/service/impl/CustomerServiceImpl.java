@@ -20,6 +20,9 @@ import com.farm2home.customer.domain.entity.CustomerAddress;
 import com.farm2home.customer.domain.enums.CustomerStatus;
 import com.farm2home.customer.domain.repository.CustomerAddressRepository;
 import com.farm2home.customer.domain.repository.CustomerRepository;
+import com.farm2home.customer.domain.repository.LocationCityRepository;
+import com.farm2home.customer.domain.repository.LocationDistrictRepository;
+import com.farm2home.customer.domain.repository.LocationStateRepository;
 import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.repository.CustomerSpecifications;
 import com.farm2home.customer.dto.request.CreateAddressRequest;
@@ -60,6 +63,9 @@ public class CustomerServiceImpl {
     private final FileStorageService fileStorageService;
     private final CustomerAddressRepository addressRepository;
     private final CustomerAddressMapper addressMapper;
+    private final LocationStateRepository locationStateRepository;
+    private final LocationDistrictRepository locationDistrictRepository;
+    private final LocationCityRepository locationCityRepository;
 
     @Transactional(readOnly = true)
     public CustomerResponse findById(UUID id, UserPrincipal principal) {
@@ -130,8 +136,17 @@ public class CustomerServiceImpl {
     @Audited(action = AuditAction.CREATE, entityType = "CustomerAddress")
     public AddressResponse addAddress(UUID customerId, CreateAddressRequest request) {
         Customer customer = getCustomer(customerId);
+        validateLocationHierarchyIfProvided(request);
         CustomerAddress address = addressMapper.toEntity(request);
         address.setCustomerId(customer.getId());
+        // Only the customer's first address becomes the default automatically - matches
+        // addAddressScoped's rule exactly (see its own doc comment). Without this, the entity's
+        // own field default (every field defaults to true) means every self-service address ever
+        // added becomes "default", leaving more than one default row per customer -
+        // DeliveryAvailabilityServiceImpl.getForCustomer's findByCustomerIdAndDefaultAddressTrue...
+        // lookup returns a single Optional, so a second default row throws
+        // IncorrectResultSizeDataAccessException there instead of a clean business error.
+        address.setDefaultAddress(!addressRepository.existsByCustomerIdAndDeletedFalse(customerId));
         return addressMapper.toResponse(addressRepository.save(address));
     }
 
@@ -153,6 +168,7 @@ public class CustomerServiceImpl {
     @Audited(action = AuditAction.CREATE, entityType = "CustomerAddress")
     public AddressResponse addAddressScoped(UUID customerId, CreateAddressRequest request, UserPrincipal principal) {
         Customer customer = getCustomerScoped(customerId, principal);
+        validateLocationHierarchyIfProvided(request);
         CustomerAddress address = addressMapper.toEntity(request);
         address.setCustomerId(customer.getId());
         address.setDefaultAddress(!addressRepository.existsByCustomerIdAndDeletedFalse(customerId));
@@ -166,6 +182,19 @@ public class CustomerServiceImpl {
         CustomerAddress address = getAddressScoped(customerId, addressId);
         addressMapper.updateEntityFromRequest(request, address);
         return addressMapper.toResponse(addressRepository.save(address));
+    }
+
+    /** New registration sends the selected State/District/City names from the database-backed
+     * cascade. Legacy management forms omit district and retain their historical free-text
+     * compatibility; they are deliberately not rejected or rewritten. */
+    private void validateLocationHierarchyIfProvided(CreateAddressRequest request) {
+        if (!StringUtils.hasText(request.getDistrict())) return;
+        var state = locationStateRepository.findByNameIgnoreCaseAndActiveTrue(request.getState())
+                .orElseThrow(() -> new CustomerException("Select an active state from Location Master."));
+        var district = locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(state.getId(), request.getDistrict())
+                .orElseThrow(() -> new CustomerException("Select a district that belongs to the chosen active state."));
+        locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(district.getId(), request.getCity())
+                .orElseThrow(() -> new CustomerException("Select a city that belongs to the chosen active district."));
     }
 
     @Transactional

@@ -13,10 +13,13 @@ import { SubscriptionsPage } from '../pages/subscriptions/SubscriptionsPage'
 import { SubscriptionDetailsPage } from '../pages/subscriptions/SubscriptionDetailsPage'
 import { OrdersPage } from '../pages/orders/OrdersPage'
 import { OrderDetailsPage } from '../pages/orders/OrderDetailsPage'
+import { CartPage } from '../pages/cart/CartPage'
+import { CheckoutPage } from '../pages/checkout/CheckoutPage'
 import { DeliveryDashboardPage } from '../pages/delivery/DeliveryDashboardPage'
 import { DeliveryDetailsPage } from '../pages/delivery/DeliveryDetailsPage'
 import { MyDeliveriesPage } from '../pages/delivery/MyDeliveriesPage'
 import { AdminTrackingPage } from '../pages/delivery/AdminTrackingPage'
+import { RouteManagementPage } from '../pages/delivery/RouteManagementPage'
 import { TrackingPage } from '../pages/orders/TrackingPage'
 import { PaymentsPage } from '../pages/payments/PaymentsPage'
 import { PaymentDetailsPage } from '../pages/payments/PaymentDetailsPage'
@@ -24,20 +27,46 @@ import { PaymentReportsPage } from '../pages/payments/PaymentReportsPage'
 import { PaymentAnalyticsPage } from '../pages/payments/PaymentAnalyticsPage'
 import { WalletPage } from '../pages/wallet/WalletPage'
 import { InventoryPage } from '../pages/inventory/InventoryPage'
-import { ProductsPage } from '../pages/products/ProductsPage'
-import { ProductDetailsPage } from '../pages/products/ProductDetailsPage'
+import { ProductsRouteSwitch } from '../pages/products/ProductsRouteSwitch'
+import { ProductDetailsRouteSwitch } from '../pages/products/ProductDetailsRouteSwitch'
 import { CategoriesPage } from '../pages/products/CategoriesPage'
 import { ProductionPage } from '../pages/production/ProductionPage'
 import { ReportsPage } from '../pages/reports/ReportsPage'
 import { NotificationsPage } from '../pages/notifications/NotificationsPage'
 import { FarmsPage } from '../pages/settings/FarmsPage'
+import { SettingsOverviewPage } from '../pages/settings/SettingsOverviewPage'
+import { LocationMasterOverviewPage } from '../pages/settings/LocationMasterOverviewPage'
+import { LocationMasterListPage } from '../pages/settings/LocationMasterListPage'
 import { InvoicesPage } from '../pages/invoices/InvoicesPage'
 import { InvoiceDetailsPage } from '../pages/invoices/InvoiceDetailsPage'
+import { PrivacyPolicyPage } from '../pages/legal/PrivacyPolicyPage'
+import { TermsPage } from '../pages/legal/TermsPage'
+import { DataRightsRequestPage } from '../pages/legal/DataRightsRequestPage'
+import { useAuth } from '../hooks/useAuth'
+import { getLandingRoute } from '../utils/roleLanding'
+
+/** Used for "/" and the catch-all "*" route - same role-based destination as the post-login/
+ *  post-registration redirect (see roleLanding.ts), so a CUSTOMER/DELIVERY_PARTNER landing here
+ *  via a bookmark or unknown URL doesn't hit the admin Dashboard either. Resolves to
+ *  getLandingRoute(undefined) === "/dashboard" while logged out, same as before - ProtectedRoute
+ *  still redirects an unauthenticated visitor to /login from there. */
+function RoleHomeRedirect() {
+  const { user } = useAuth()
+  return <Navigate to={getLandingRoute(user?.roles)} replace />
+}
 
 export function AppRoutes() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<RoleHomeRedirect />} />
+
+      {/* Legal/compliance pages - reachable whether or not the visitor is logged in (DPDP
+          requires the grievance/data-rights channel to work without an account), so these sit
+          outside both ProtectedRoute and MainLayout, same as the auth routes below. Not wrapped
+          in AuthThemeScope - they follow the app's normal light/dark toggle. */}
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/data-rights-request" element={<DataRightsRequestPage />} />
 
       {/* Public auth routes - always light-themed regardless of the app-wide dark mode toggle,
           see AuthThemeScope */}
@@ -75,6 +104,16 @@ export function AppRoutes() {
           <Route path="/orders"        element={<OrdersPage />} />
           <Route path="/orders/:id"    element={<OrderDetailsPage />} />
 
+          {/* Cart/Checkout are CUSTOMER-only - the backend's CartController/orders/checkout don't
+              themselves restrict by role (self-scoped to the caller's own id like Orders above),
+              but a cart only makes sense for a shopping customer, so this is proactively gated
+              here rather than relying on Sidebar visibility alone (see the explicit direct-URL
+              access requirement this satisfies). */}
+          <Route element={<RoleProtectedRoute allowedRoles={['CUSTOMER']} />}>
+            <Route path="/cart"     element={<CartPage />} />
+            <Route path="/checkout" element={<CheckoutPage />} />
+          </Route>
+
           {/* /delivery is the admin/ops dashboard - GET/PATCH assignment endpoints have no
               @PreAuthorize (self-scoped server-side), but a plain CUSTOMER hitting this would
               404 immediately (no DeliveryPartner profile), so it's proactively gated here to
@@ -95,6 +134,15 @@ export function AppRoutes() {
           <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER']} />}>
             <Route path="/delivery/tracking" element={<AdminTrackingPage />} />
           </Route>
+          {/* Route CRUD is FARM_MANAGER/SUPER_ADMIN only on the backend (DeliveryRouteController's
+              write endpoints) - narrower than Delivery/Delivery Tracking above, matching
+              DeliveryPartner management and manualAssign. A literal "/delivery/routes" path always
+              wins over the "/delivery/:id" dynamic route below regardless of declaration order
+              (React Router ranks static segments above params), so this doesn't need to be
+              declared before it. */}
+          <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER']} />}>
+            <Route path="/delivery/routes" element={<RouteManagementPage />} />
+          </Route>
           <Route path="/orders/:id/tracking" element={<TrackingPage />} />
           {/* Not role-gated, same self-service rationale as Subscriptions/Orders above -
               GET /payments and GET /wallets/** self-scope server-side for every role; a
@@ -108,28 +156,68 @@ export function AppRoutes() {
             <Route path="/payments/analytics" element={<PaymentAnalyticsPage />} />
           </Route>
           <Route path="/wallet"        element={<WalletPage />} />
-          <Route path="/inventory"     element={<InventoryPage />} />
 
-          {/* Product Management is a separate domain from Inventory (see product.types.ts) -
-              gated to the same admin roles as Notifications below, since it's an internal ops
-              screen, not something a plain CUSTOMER/DELIVERY_PARTNER account should reach even
-              though the backend itself allows any authenticated role to read products. */}
+          {/* Inventory (farm supplies: feed/medicine/equipment) is a separate domain from Product
+              Management (see product.types.ts) - gated to the same admin roles as Products below,
+              since it's an internal ops screen, not something a plain CUSTOMER/DELIVERY_PARTNER
+              account should reach even though the backend's list/search/export/get endpoints use
+              isAuthenticated() (any role). This matches the role set already required by this
+              module's own /summary, /transactions/reports, and /analytics/consumption-trend
+              endpoints (SUPER_ADMIN/FARM_MANAGER/DELIVERY_MANAGER). */}
           <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER']} />}>
-            <Route path="/products"            element={<ProductsPage />} />
-            <Route path="/products/categories" element={<CategoriesPage />} />
-            <Route path="/products/:id"        element={<ProductDetailsPage />} />
+            <Route path="/inventory" element={<InventoryPage />} />
           </Route>
 
-          <Route path="/production"    element={<ProductionPage />} />
-          <Route path="/reports"       element={<ReportsPage />} />
+          {/* /products and /products/:id are shared with the customer Shop (see
+              ProductsRouteSwitch/ProductDetailsRouteSwitch - CUSTOMER gets a read-only catalog
+              view, admin roles get the unchanged Product Management screen). DELIVERY_PARTNER is
+              still excluded, same rationale as Inventory above. Category management stays
+              admin-only in its own, narrower block below - there's no customer-facing reason to
+              reach /products/categories. */}
+          <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER', 'CUSTOMER']} />}>
+            <Route path="/products"     element={<ProductsRouteSwitch />} />
+            <Route path="/products/:id" element={<ProductDetailsRouteSwitch />} />
+          </Route>
+          <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER']} />}>
+            <Route path="/products/categories" element={<CategoriesPage />} />
+          </Route>
+
+          {/* Milk Production records are internal ops data - same rationale/role set as Inventory
+              above (list/get endpoints are isAuthenticated(), but /summary/today, /reports, and
+              /analytics/production-trend are already SUPER_ADMIN/FARM_MANAGER/DELIVERY_MANAGER
+              only on the backend). */}
+          <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER']} />}>
+            <Route path="/production" element={<ProductionPage />} />
+          </Route>
+
+          {/* Reports & Analytics aggregates cross-service business data (including company-wide
+              milk production via productionService.getDailySummary(), which is isAuthenticated()
+              on the backend with no per-customer scoping) - same admin role set as Payment
+              Reports/Analytics above, not self-service data like Orders/Payments/Subscriptions. */}
+          <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER']} />}>
+            <Route path="/reports" element={<ReportsPage />} />
+          </Route>
+
           <Route path="/notifications" element={<NotificationsPage />} />
 
-          {/* Admin Settings currently has exactly one real backend surface (FarmController) -
-              see the Admin Settings backend audit. GET /farm has no role restriction on the
+          {/* Admin Settings overview and Farm & Business: GET /farm has no role restriction on the
               backend, but this is an internal ops/settings screen, gated the same as
-              Products/Notifications above rather than exposed to every authenticated role. */}
+              Products/Notifications above. DELIVERY_MANAGER is included here (read-only within
+              FarmsPage itself via its own canWrite check) to preserve their existing documented
+              access - do not narrow this to match Location Master's stricter set below. */}
           <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER', 'DELIVERY_MANAGER']} />}>
-            <Route path="/settings/farms" element={<FarmsPage />} />
+            <Route path="/settings" element={<SettingsOverviewPage />} />
+            <Route path="/settings/farm-business" element={<FarmsPage />} />
+          </Route>
+
+          {/* Location Master (India state/district/city reference-data CRUD) is genuinely
+              SUPER_ADMIN/FARM_MANAGER only - matches LocationMasterController's own
+              @PreAuthorize, narrower than Farm & Business above. */}
+          <Route element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'FARM_MANAGER']} />}>
+            <Route path="/settings/location-master" element={<LocationMasterOverviewPage />} />
+            <Route path="/settings/location-master/states" element={<LocationMasterListPage type="states" />} />
+            <Route path="/settings/location-master/districts" element={<LocationMasterListPage type="districts" />} />
+            <Route path="/settings/location-master/cities" element={<LocationMasterListPage type="cities" />} />
           </Route>
 
           {/* Not role-gated, same self-service rationale as Payments/Orders above - GET
@@ -142,7 +230,7 @@ export function AppRoutes() {
         </Route>
       </Route>
 
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<RoleHomeRedirect />} />
     </Routes>
   )
 }

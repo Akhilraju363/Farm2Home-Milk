@@ -1,6 +1,8 @@
 import axiosClient from './axiosClient'
 import type { ApiResponse, PageResponse } from '../types/common.types'
-import type { CreateFarmRequest, Farm, FarmSearchParams, UpdateFarmRequest } from '../types/farm.types'
+import type {
+  BusinessSettings, CreateFarmRequest, Farm, FarmSearchParams, UpdateBusinessSettingsRequest, UpdateFarmRequest,
+} from '../types/farm.types'
 
 const BASE = '/farm'
 
@@ -34,4 +36,12 @@ export const farmService = {
       headers: { 'Content-Type': undefined },
     })
   },
+
+  // Farm2Home's own delivery origin + radius - GET is open to any authenticated caller, PUT is
+  // FARM_MANAGER/SUPER_ADMIN only (see FarmController#updateBusinessSettings).
+  getBusinessSettings: () =>
+    axiosClient.get<ApiResponse<BusinessSettings>>(`${BASE}/business-settings`),
+
+  updateBusinessSettings: (data: UpdateBusinessSettingsRequest) =>
+    axiosClient.put<ApiResponse<BusinessSettings>>(`${BASE}/business-settings`, data),
 }

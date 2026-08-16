@@ -15,7 +15,7 @@ import { useDebounced } from '../../hooks/useDebounced'
 import { orderService } from '../../services/orderService'
 import { downloadBlob } from '../../utils/download'
 import { formatCurrency, formatDate, statusColor } from '../../utils/formatters'
-import { MILK_TYPE_LABELS, MILK_TYPES, ORDER_STATUS_LABELS, ORDER_TYPE_LABELS } from '../../types/order.types'
+import { MILK_TYPE_LABELS, MILK_TYPES, ORDER_STATUS_LABELS, ORDER_TYPE_LABELS, orderItemLabel } from '../../types/order.types'
 import type { Order, OrderStatus } from '../../types/order.types'
 
 const PAGE_SIZE = 20
@@ -99,7 +99,7 @@ export function OrdersPage() {
     { field: 'orderType', headerName: 'Type', width: 120, renderCell: ({ value }) => ORDER_TYPE_LABELS[value as Order['orderType']] },
     {
       field: 'items', headerName: 'Items', width: 160, sortable: false,
-      renderCell: ({ value }) => (value as Order['items'])?.map((it) => MILK_TYPE_LABELS[it.milkType]).join(', ') || '—',
+      renderCell: ({ value }) => (value as Order['items'])?.map((it) => orderItemLabel(it)).join(', ') || '—',
     },
     { field: 'totalAmount', headerName: 'Amount', width: 110, renderCell: ({ value }) => formatCurrency(value as number) },
     {

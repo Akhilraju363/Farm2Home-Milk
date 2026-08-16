@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { ThemeModeProvider } from './contexts/ThemeModeContext'
 import { AppRoutes } from './routes/AppRoutes'
 import { LoadingScreen } from './components/common/LoadingScreen'
+import { ConsentBanner } from './components/consent/ConsentBanner'
 import { authService } from './services/authService'
 import { setCredentials } from './store/slices/authSlice'
 import type { AppDispatch, RootState } from './store/store'
@@ -35,7 +36,12 @@ function App() {
 
   return (
     <ThemeModeProvider>
-      {isBooting ? <LoadingScreen /> : <AppRoutes />}
+      {isBooting ? <LoadingScreen /> : (
+        <>
+          <AppRoutes />
+          <ConsentBanner />
+        </>
+      )}
     </ThemeModeProvider>
   )
 }

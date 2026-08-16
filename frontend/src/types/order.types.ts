@@ -3,6 +3,11 @@ export interface Order {
   orderNumber: string
   customerId: string
   subscriptionId?: string
+  // Automatically selected at order-creation time from the customer's delivery address (see
+  // customer-service's DeliveryRouteSelectionServiceImpl, the sole authoritative implementation)
+  // - never settable by the client. Null if no active route covered the address, or the order
+  // predates this feature - show "Route not assigned", not an error.
+  deliveryRouteId?: string | null
   orderDate: string
   orderType: OrderType
   status: OrderStatus
@@ -15,7 +20,12 @@ export interface Order {
 
 export interface OrderItem {
   id: string
-  milkType: MilkType
+  // Exactly one of milkType/productId is ever set - milkType is the legacy/subscription shape,
+  // productId is a real inventory-service catalog product (see ShopProductDetailsPage/
+  // BuyNowDialog). productName is snapshotted at order time by the backend.
+  milkType?: MilkType | null
+  productId?: string | null
+  productName?: string | null
   quantity: number
   unitPrice: number
   totalPrice: number
@@ -59,8 +69,17 @@ export const MILK_TYPE_LABELS: Record<MilkType, string> = {
   SKIMMED: 'Skimmed',
 }
 
+// Every list/table rendering an OrderItem's "what is this" label goes through here, so a
+// product-based item (milkType null, see OrderItem's comment) never hits a bare index lookup
+// into MILK_TYPE_LABELS and instead shows its own snapshotted productName.
+export function orderItemLabel(item: Pick<OrderItem, 'milkType' | 'productName'>): string {
+  return item.milkType ? MILK_TYPE_LABELS[item.milkType] : (item.productName ?? 'Product')
+}
+
 export interface CreateOrderItemRequest {
-  milkType: MilkType
+  // Specify exactly one - see OrderItem's comment above.
+  milkType?: MilkType
+  productId?: string
   quantity: number
 }
 
@@ -74,6 +93,12 @@ export interface CreateOrderRequest {
 export interface UpdateOrderStatusRequest {
   status: OrderStatus
   notes?: string
+}
+
+// Matches order-service's OrderSummaryResponse exactly (GET /orders/summary).
+export interface OrderSummary {
+  todaysOrders: number
+  pendingOrders: number
 }
 
 export interface OrderSearchParams {

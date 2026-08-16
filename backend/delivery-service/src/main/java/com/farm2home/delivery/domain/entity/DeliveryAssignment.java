@@ -48,6 +48,14 @@ public class DeliveryAssignment {
     @Builder.Default
     private AssignmentStatus status = AssignmentStatus.ASSIGNED;
 
+    // true only for OrderEventConsumer's automatic assignment; manualAssign() always leaves this
+    // false (the default) - see PartnerSelectionServiceImpl for the one authoritative selection
+    // algorithm both paths' route-matching/eligibility rules derive from conceptually, even though
+    // only the automatic path actually calls it (manualAssign lets an admin pick any partner).
+    @Column(name = "auto_assigned", nullable = false)
+    @Builder.Default
+    private boolean autoAssigned = false;
+
     @Column(name = "failure_reason", length = 255)
     private String failureReason;
 

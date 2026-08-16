@@ -2,9 +2,14 @@ package com.farm2home.delivery.dto.request;
 
 import com.farm2home.common.core.constants.ValidationConstants;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+
+import java.math.BigDecimal;
 
 @Data
 public class CreateRouteRequest {
@@ -39,4 +44,22 @@ public class CreateRouteRequest {
             requiredMode = Schema.RequiredMode.REQUIRED,
             minLength = ValidationConstants.PINCODE_MIN_LENGTH, maxLength = ValidationConstants.PINCODE_MAX_LENGTH)
     private String pincode;
+
+    @DecimalMin(value = "-90", message = "Center latitude must be between -90 and 90")
+    @DecimalMax(value = "90", message = "Center latitude must be between -90 and 90")
+    @Schema(description = "Center of this route's coverage circle, for automatic route selection "
+            + "(DeliveryRouteSelectionServiceImpl). Optional - a route missing this (or "
+            + "centerLongitude/radiusKm) is simply never chosen by the automatic algorithm, but "
+            + "remains selectable for manual assignment.", example = "13.67199825")
+    private BigDecimal centerLatitude;
+
+    @DecimalMin(value = "-180", message = "Center longitude must be between -180 and 180")
+    @DecimalMax(value = "180", message = "Center longitude must be between -180 and 180")
+    @Schema(description = "See centerLatitude.", example = "78.96885066")
+    private BigDecimal centerLongitude;
+
+    @Positive(message = "Coverage radius must be greater than 0")
+    @Schema(description = "Coverage radius in kilometers around (centerLatitude, centerLongitude). "
+            + "See centerLatitude.", example = "7.0")
+    private BigDecimal radiusKm;
 }

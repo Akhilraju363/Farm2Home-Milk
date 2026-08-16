@@ -11,6 +11,7 @@ import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.order.config.UserPrincipal;
 import com.farm2home.order.domain.enums.MilkType;
 import com.farm2home.order.domain.enums.OrderStatus;
+import com.farm2home.order.dto.request.CheckoutRequest;
 import com.farm2home.order.dto.request.CreateOrderRequest;
 import com.farm2home.order.dto.request.UpdateOrderStatusRequest;
 import com.farm2home.order.dto.response.GenerationResultResponse;
@@ -73,6 +74,26 @@ public class OrderController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success(
                         "Order created successfully", orderService.createManualOrder(request, customerId)));
+    }
+
+    @PostMapping("/checkout")
+    @Operation(summary = "Create an order from the caller's own cart",
+            description = "The customer purchase-flow entry point: reads the caller's own server-side Cart "
+                    + "(GET /cart) directly - carries no items/prices itself, so a tampered client can never "
+                    + "influence which products/quantities actually get ordered. Applies the exact same "
+                    + "price/stock/10km-delivery-eligibility checks as POST /orders, and clears the cart only "
+                    + "once the order is actually created.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "Order created, cart cleared"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Validation error (missing orderDate)", content = @io.swagger.v3.oas.annotations.media.Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401", description = "Missing or invalid bearer token", content = @io.swagger.v3.oas.annotations.media.Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422", description = "Cart is empty, delivery unavailable at this address, a cart item is no longer available, or lost a stock race")
+    })
+    public ResponseEntity<ApiResponse<OrderResponse>> checkout(
+            @Valid @RequestBody CheckoutRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Order created successfully", orderService.checkout(request, principal.userId())));
     }
 
     @GetMapping

@@ -2,8 +2,13 @@ package com.farm2home.delivery.dto.request;
 
 import com.farm2home.common.core.constants.ValidationConstants;
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
+
+import java.math.BigDecimal;
 
 /**
  * Partial update: every field is optional, and only non-null (DeliveryMapper additionally treats
@@ -39,4 +44,18 @@ public class UpdateRouteRequest {
             + "this is independent of soft-delete (DELETE /{id}) - GET / and GET /{id} do not "
             + "filter by this flag, only by soft-delete status.", example = "true")
     private Boolean active;
+
+    @DecimalMin(value = "-90", message = "Center latitude must be between -90 and 90")
+    @DecimalMax(value = "90", message = "Center latitude must be between -90 and 90")
+    @Schema(description = "New center latitude for automatic route selection. Omit/null to leave unchanged.", example = "13.67199825")
+    private BigDecimal centerLatitude;
+
+    @DecimalMin(value = "-180", message = "Center longitude must be between -180 and 180")
+    @DecimalMax(value = "180", message = "Center longitude must be between -180 and 180")
+    @Schema(description = "New center longitude. Omit/null to leave unchanged.", example = "78.96885066")
+    private BigDecimal centerLongitude;
+
+    @Positive(message = "Coverage radius must be greater than 0")
+    @Schema(description = "New coverage radius in kilometers. Omit/null to leave unchanged.", example = "7.0")
+    private BigDecimal radiusKm;
 }

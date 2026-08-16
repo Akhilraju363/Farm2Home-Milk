@@ -129,9 +129,13 @@ public class DeliveryAssignmentController {
     @GetMapping("/search")
     @Operation(summary = "Search assignments",
                description = "Keyword search across delivery partner name / route name / area / city, plus "
-                           + "optional date range and status filters (all combine with AND). Admin sees all; "
-                           + "non-admin callers are filtered the same way as GET / above (resolved to the "
-                           + "caller's own DeliveryPartner profile first).")
+                           + "optional date range, status, and autoAssigned filters (all combine with AND). "
+                           + "Admin sees all; non-admin callers are filtered the same way as GET / above "
+                           + "(resolved to the caller's own DeliveryPartner profile first). autoAssigned=true "
+                           + "matches assignments OrderEventConsumer created automatically; false matches "
+                           + "manualAssign()-created ones; omitted matches both - used by the admin dashboard's "
+                           + "\"Automatically assigned\"/\"Manually assigned\" KPI counts via this same "
+                           + "search().totalElements pattern already used for per-status counts.")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Assignments retrieved (possibly empty)"),
@@ -147,9 +151,10 @@ public class DeliveryAssignmentController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
             @RequestParam(required = false) AssignmentStatus status,
+            @RequestParam(required = false) Boolean autoAssigned,
             @PageableDefault(size = ApiConstants.DEFAULT_PAGE_SIZE, sort = "assignedAt") Pageable pageable) {
         return ResponseEntity.ok(ApiResponse.success("Assignments retrieved successfully", assignmentService.search(
-                principal.userId(), principal.isAdmin(), keyword, dateFrom, dateTo, status, pageable)));
+                principal.userId(), principal.isAdmin(), keyword, dateFrom, dateTo, status, autoAssigned, pageable)));
     }
 
     @GetMapping("/{id}")

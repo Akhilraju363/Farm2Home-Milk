@@ -35,9 +35,22 @@ public class AssignmentResponse {
     @Schema(description = "Delivery route's short code, denormalized at read time.", example = "NZ-01")
     private String routeCode;
 
+    @Schema(description = "Delivery route's display name, denormalized at read time.", example = "North Zone Route 1")
+    private String routeName;
+
     @Schema(description = "Current status: ASSIGNED, OUT_FOR_DELIVERY, DELIVERED, or FAILED. "
             + "See AssignmentStatus.canTransitionTo() for legal transitions.", example = "OUT_FOR_DELIVERY")
     private String status;
+
+    @Schema(description = "true if OrderEventConsumer created this automatically (least-loaded "
+            + "eligible partner on the order's own route); false if an admin created it via "
+            + "manualAssign (including an explicit route override).", example = "true")
+    private boolean autoAssigned;
+
+    @Schema(description = "The assigned partner's current count of non-terminal "
+            + "(ASSIGNED/OUT_FOR_DELIVERY) assignments, including this one - live, not a snapshot "
+            + "from assignment time.", example = "2")
+    private long partnerActiveDeliveries;
 
     @Schema(description = "When the order was assigned to the delivery partner.", example = "2026-07-30T09:15:00")
     private LocalDateTime assignedAt;

@@ -4,6 +4,7 @@ import com.farm2home.delivery.config.GatewayHeaderAuthFilter;
 import com.farm2home.delivery.config.SecurityConfig;
 import com.farm2home.delivery.config.UserPrincipal;
 import com.farm2home.delivery.dto.request.CreateRouteRequest;
+import com.farm2home.delivery.dto.request.UpdateRouteStatusRequest;
 import com.farm2home.delivery.dto.response.RouteResponse;
 import com.farm2home.delivery.service.impl.DeliveryRouteServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,12 +55,12 @@ class DeliveryRouteControllerTest {
     // GatewayHeaderAuthFilter grants unprefixed authorities (matching the other services'
     // convention), so this mirrors that - no "ROLE_" prefix.
     private UsernamePasswordAuthenticationToken authFor(boolean admin) {
-        UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210",
-                admin ? Set.of("FARM_MANAGER") : Set.of("CUSTOMER"));
-        var authorities = admin
-                ? List.of(new SimpleGrantedAuthority("FARM_MANAGER"))
-                : List.of(new SimpleGrantedAuthority("CUSTOMER"));
-        return new UsernamePasswordAuthenticationToken(principal, null, authorities);
+        return authForRole(admin ? "FARM_MANAGER" : "CUSTOMER");
+    }
+
+    private UsernamePasswordAuthenticationToken authForRole(String role) {
+        UserPrincipal principal = new UserPrincipal(UUID.randomUUID(), "9876543210", Set.of(role));
+        return new UsernamePasswordAuthenticationToken(principal, null, List.of(new SimpleGrantedAuthority(role)));
     }
 
     @Nested
@@ -86,8 +87,26 @@ class DeliveryRouteControllerTest {
         }
 
         @Test
-        @DisplayName("non-admin role → 403")
-        void nonAdmin_forbidden() throws Exception {
+        @DisplayName("SUPER_ADMIN role → 201")
+        void superAdmin_created() throws Exception {
+            CreateRouteRequest req = new CreateRouteRequest();
+            req.setRouteName("North Zone");
+            req.setRouteCode("NZ1");
+            req.setArea("North");
+            req.setCity("Metropolis");
+            req.setPincode("560001");
+            when(routeService.create(any())).thenReturn(RouteResponse.builder().id(routeId).routeCode("NZ1").build());
+
+            mockMvc.perform(post("/api/v1/delivery/routes")
+                            .with(authentication(authForRole("SUPER_ADMIN")))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isCreated());
+        }
+
+        @Test
+        @DisplayName("CUSTOMER role → 403")
+        void customer_forbidden() throws Exception {
             CreateRouteRequest req = new CreateRouteRequest();
             req.setRouteName("North Zone");
             req.setRouteCode("NZ1");
@@ -96,6 +115,101 @@ class DeliveryRouteControllerTest {
             req.setPincode("560001");
 
             mockMvc.perform(post("/api/v1/delivery/routes")
+                            .with(authentication(authFor(false)))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isForbidden());
+        }
+
+        @Test
+        @DisplayName("DELIVERY_PARTNER role → 403")
+        void deliveryPartner_forbidden() throws Exception {
+            CreateRouteRequest req = new CreateRouteRequest();
+            req.setRouteName("North Zone");
+            req.setRouteCode("NZ1");
+            req.setArea("North");
+            req.setCity("Metropolis");
+            req.setPincode("560001");
+
+            mockMvc.perform(post("/api/v1/delivery/routes")
+                            .with(authentication(authForRole("DELIVERY_PARTNER")))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isForbidden());
+        }
+
+        @Test
+        @DisplayName("DELIVERY_MANAGER role → 403 (route management is FARM_MANAGER/SUPER_ADMIN only, " +
+                "matching DeliveryPartnerController's write endpoints and manualAssign)")
+        void deliveryManager_forbidden() throws Exception {
+            CreateRouteRequest req = new CreateRouteRequest();
+            req.setRouteName("North Zone");
+            req.setRouteCode("NZ1");
+            req.setArea("North");
+            req.setCity("Metropolis");
+            req.setPincode("560001");
+
+            mockMvc.perform(post("/api/v1/delivery/routes")
+                            .with(authentication(authForRole("DELIVERY_MANAGER")))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/delivery/routes/search")
+    class Search {
+
+        @Test
+        @DisplayName("any authenticated user → 200")
+        void anyUser_ok() throws Exception {
+            when(routeService.search(any(), any(), any())).thenReturn(
+                    new PageImpl<>(List.of(RouteResponse.builder().id(routeId).build()), PageRequest.of(0, 20), 1));
+
+            mockMvc.perform(get("/api/v1/delivery/routes/search")
+                            .param("active", "true")
+                            .with(authentication(authFor(false))))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    @Nested
+    @DisplayName("PATCH /api/v1/delivery/routes/{id}/status")
+    class UpdateStatus {
+
+        @Test
+        @DisplayName("admin role → 200")
+        void admin_ok() throws Exception {
+            when(routeService.updateStatus(any(), any())).thenReturn(RouteResponse.builder().id(routeId).active(false).build());
+
+            UpdateRouteStatusRequest req = new UpdateRouteStatusRequest();
+            req.setActive(false);
+
+            mockMvc.perform(patch("/api/v1/delivery/routes/{id}/status", routeId)
+                            .with(authentication(authFor(true)))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
+        @DisplayName("missing active field → 400")
+        void missingActive_badRequest() throws Exception {
+            mockMvc.perform(patch("/api/v1/delivery/routes/{id}/status", routeId)
+                            .with(authentication(authFor(true)))
+                            .contentType("application/json")
+                            .content("{}"))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("non-admin role → 403")
+        void nonAdmin_forbidden() throws Exception {
+            UpdateRouteStatusRequest req = new UpdateRouteStatusRequest();
+            req.setActive(false);
+
+            mockMvc.perform(patch("/api/v1/delivery/routes/{id}/status", routeId)
                             .with(authentication(authFor(false)))
                             .contentType("application/json")
                             .content(objectMapper.writeValueAsString(req)))

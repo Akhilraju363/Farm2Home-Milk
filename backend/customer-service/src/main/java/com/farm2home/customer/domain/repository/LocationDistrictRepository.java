@@ -17,4 +17,10 @@ public interface LocationDistrictRepository extends JpaRepository<LocationDistri
      *  to a different state is never returned as "found" by this, so callers can't accidentally
      *  treat a district as valid for the wrong state's cascading dropdown. */
     Optional<LocationDistrict> findByIdAndActiveTrue(UUID id);
+    List<LocationDistrict> findAllByStateIdOrderByNameAsc(UUID stateId);
+    boolean existsByStateIdAndNameIgnoreCase(UUID stateId, String name);
+    boolean existsByStateIdAndNameIgnoreCaseAndIdNot(UUID stateId, String name, UUID id);
+    boolean existsByCodeIgnoreCase(String code);
+    boolean existsByStateIdAndActiveTrue(UUID stateId);
+    Optional<LocationDistrict> findByStateIdAndNameIgnoreCaseAndActiveTrue(UUID stateId, String name);
 }

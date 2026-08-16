@@ -1,7 +1,8 @@
 import axiosClient from './axiosClient'
 import type {
-  Assignment, AssignmentSearchParams, DelayAssignmentRequest, DeliveryRoute, DeliverySummary,
-  ManualAssignRequest, Partner, UpdateAssignmentStatusRequest,
+  Assignment, AssignmentSearchParams, CreateRouteRequest, DelayAssignmentRequest, DeliveryRoute,
+  DeliverySummary, ManualAssignRequest, Partner, RouteSearchParams, UpdateAssignmentStatusRequest,
+  UpdateRouteRequest, UpdateRouteStatusRequest,
 } from '../types/delivery.types'
 import type { ApiResponse, PageResponse } from '../types/common.types'
 
@@ -61,10 +62,32 @@ export const deliveryPartnerService = {
     axiosClient.get<ApiResponse<Partner>>(`/delivery/partners/${id}`),
 }
 
+const ROUTES_BASE = '/delivery/routes'
+
 export const deliveryRouteService = {
-  // Open to any authenticated caller (DeliveryRouteController.findAll has no @PreAuthorize).
-  search: (params: { page?: number; size?: number } = {}) =>
-    axiosClient.get<ApiResponse<PageResponse<DeliveryRoute>>>('/delivery/routes', {
+  // Open to any authenticated caller (DeliveryRouteController.search has no @PreAuthorize).
+  // Pass active: true for an active-only list (Assign Delivery's route dropdown); omit it for
+  // the admin Route Management table, which shows both active and inactive routes.
+  search: (params: RouteSearchParams = {}) =>
+    axiosClient.get<ApiResponse<PageResponse<DeliveryRoute>>>(`${ROUTES_BASE}/search`, {
       params: { page: 0, size: 50, sort: 'routeCode', ...params },
     }),
+
+  getById: (id: string) =>
+    axiosClient.get<ApiResponse<DeliveryRoute>>(`${ROUTES_BASE}/${id}`),
+
+  // FARM_MANAGER/SUPER_ADMIN only on the backend (see DeliveryRouteController).
+  create: (data: CreateRouteRequest) =>
+    axiosClient.post<ApiResponse<DeliveryRoute>>(ROUTES_BASE, data),
+
+  update: (id: string, data: UpdateRouteRequest) =>
+    axiosClient.put<ApiResponse<DeliveryRoute>>(`${ROUTES_BASE}/${id}`, data),
+
+  updateStatus: (id: string, data: UpdateRouteStatusRequest) =>
+    axiosClient.patch<ApiResponse<DeliveryRoute>>(`${ROUTES_BASE}/${id}/status`, data),
+
+  // 409 if the route is currently referenced by an active (ASSIGNED/OUT_FOR_DELIVERY) assignment
+  // - the real server error is surfaced to the caller, not swallowed.
+  delete: (id: string) =>
+    axiosClient.delete<ApiResponse<void>>(`${ROUTES_BASE}/${id}`),
 }

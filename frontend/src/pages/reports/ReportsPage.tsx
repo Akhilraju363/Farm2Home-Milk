@@ -58,7 +58,7 @@ export function ReportsPage() {
   })
 
   // Production chart
-  const productionChart = (productionData?.data ?? []).map((d) => ({
+  const productionChart = (productionData?.data.data ?? []).map((d) => ({
     date: dayjs(d.date).format('DD MMM'),
     liters: Number(Number(d.totalLiters).toFixed(1)),
     records: d.recordCount,
@@ -96,7 +96,7 @@ export function ReportsPage() {
   const totalRevenue = successPayments.reduce((s, p) => s + Number(p.amount), 0)
   const totalOrders = ordersData?.data.data.totalElements ?? 0
   const totalSubs = subsData?.data.data.totalElements ?? 0
-  const totalProduction = (productionData?.data ?? []).reduce((s, d) => s + Number(d.totalLiters), 0)
+  const totalProduction = (productionData?.data.data ?? []).reduce((s, d) => s + Number(d.totalLiters), 0)
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>

@@ -42,6 +42,16 @@ public class Order {
     @Column(name = "subscription_id")
     private UUID subscriptionId;
 
+    // Automatically selected at order-creation time from the customer's delivery address (see
+    // OrderServiceImpl.verifyDeliveryEligibility / customer-service's
+    // DeliveryRouteSelectionServiceImpl, the single authoritative implementation) - never trusted
+    // from the client (CreateOrderRequest/CheckoutRequest have no routeId field at all). Null when
+    // no active route's coverage circle contains the address (a route-coverage gap) or the order
+    // predates this feature - delivery-service's manualAssign() requires an explicit admin
+    // override in that case rather than crashing.
+    @Column(name = "delivery_route_id")
+    private UUID deliveryRouteId;
+
     @Column(name = "order_date", nullable = false)
     private LocalDate orderDate;
 

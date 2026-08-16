@@ -26,9 +26,20 @@ public class OrderItem {
     @JoinColumn(name = "order_id", nullable = false)
     private Order order;
 
+    // Exactly one of milkType/productId is set - never both, never neither (see the DB CHECK
+    // constraint added in V4). milkType is the original/legacy shape (subscriptions and manual
+    // orders created before Product-based ordering existed); productId is a plain UUID reference
+    // into inventory-service's Product table, resolved and price-snapshotted by
+    // OrderServiceImpl.createManualOrder() at order time - never trusted from the client.
     @Enumerated(EnumType.STRING)
-    @Column(name = "milk_type", nullable = false, length = 50)
+    @Column(name = "milk_type", length = 50)
     private MilkType milkType;
+
+    @Column(name = "product_id")
+    private UUID productId;
+
+    @Column(name = "product_name", length = 150)
+    private String productName;
 
     @Column(name = "quantity", nullable = false, precision = 5, scale = 2)
     private BigDecimal quantity;

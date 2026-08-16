@@ -1,9 +1,9 @@
 import {
   Box, Button, IconButton, Menu, MenuItem, ListItemIcon, ListItemText, Tooltip, Paper,
-  Typography, TextField, InputAdornment, Avatar,
+  Typography, TextField, InputAdornment, Avatar, CircularProgress, Alert,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
-import { Add, Refresh, MoreVert, Edit, Delete, Agriculture, Search, Close } from '@mui/icons-material'
+import { Add, Refresh, MoreVert, Edit, Delete, Agriculture, Search, Close, MyLocation, Check } from '@mui/icons-material'
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSnackbar } from 'notistack'
@@ -15,6 +15,111 @@ import { useDebounced } from '../../hooks/useDebounced'
 import { farmService } from '../../services/farmService'
 import { formatDate } from '../../utils/formatters'
 import type { Farm } from '../../types/farm.types'
+
+function BusinessSettingsCard({ canWrite }: { canWrite: boolean }) {
+  const { enqueueSnackbar } = useSnackbar()
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [radiusInput, setRadiusInput] = useState('')
+  const [latInput, setLatInput] = useState('')
+  const [lonInput, setLonInput] = useState('')
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['farm', 'business-settings'],
+    queryFn: () => farmService.getBusinessSettings(),
+  })
+  const settings = data?.data.data
+
+  const startEdit = () => {
+    if (!settings) return
+    setRadiusInput(String(settings.deliveryRadiusKm))
+    setLatInput(String(settings.farmLatitude))
+    setLonInput(String(settings.farmLongitude))
+    setEditing(true)
+  }
+
+  const mutation = useMutation({
+    mutationFn: () => farmService.updateBusinessSettings({
+      farmLatitude: Number(latInput), farmLongitude: Number(lonInput), deliveryRadiusKm: Number(radiusInput),
+    }),
+    onSuccess: () => {
+      enqueueSnackbar('Delivery settings updated', { variant: 'success' })
+      queryClient.invalidateQueries({ queryKey: ['farm', 'business-settings'] })
+      setEditing(false)
+    },
+    onError: (err: any) => enqueueSnackbar(err.response?.data?.message ?? "Couldn't update delivery settings.", { variant: 'error' }),
+  })
+
+  return (
+    <Paper variant="outlined" sx={{ p: 2.5, mb: 3, borderRadius: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <MyLocation color="primary" fontSize="small" />
+          <Typography variant="subtitle1" fontWeight={700}>Delivery Coverage</Typography>
+        </Box>
+        {canWrite && !editing && settings && (
+          <Button size="small" startIcon={<Edit fontSize="small" />} onClick={startEdit}>Edit</Button>
+        )}
+      </Box>
+
+      {isLoading ? (
+        <CircularProgress size={20} />
+      ) : isError ? (
+        <Alert severity="error">Couldn't load delivery settings.</Alert>
+      ) : editing ? (
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <TextField label="Latitude" size="small" type="number" value={latInput}
+            onChange={(e) => setLatInput(e.target.value)} sx={{ width: 160 }} />
+          <TextField label="Longitude" size="small" type="number" value={lonInput}
+            onChange={(e) => setLonInput(e.target.value)} sx={{ width: 160 }} />
+          <TextField label="Delivery Radius (KM)" size="small" type="number" value={radiusInput}
+            onChange={(e) => setRadiusInput(e.target.value)} sx={{ width: 170 }} />
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant="contained" size="small" startIcon={<Check fontSize="small" />}
+              disabled={mutation.isPending} onClick={() => mutation.mutate()}
+            >
+              Save
+            </Button>
+            <Button size="small" color="inherit" disabled={mutation.isPending} onClick={() => setEditing(false)}>Cancel</Button>
+          </Box>
+        </Box>
+      ) : settings ? (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Farm2Home's real business address - sourced from BusinessSettings alone (the one
+              authoritative place it's stored anywhere in this app), not editable here yet (the
+              spec for this fix asked only that it be displayed correctly - coordinates/radius
+              already had an edit flow before this address existed). */}
+          {(settings.addressLine || settings.locality || settings.city) && (
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block">Address</Typography>
+              <Typography variant="body1" fontWeight={600}>
+                {[settings.addressLine, settings.locality, settings.city].filter(Boolean).join(', ')}
+                {settings.district ? `, ${settings.district}` : ''}
+                {settings.state ? `, ${settings.state}` : ''}
+                {settings.pincode ? ` - ${settings.pincode}` : ''}
+              </Typography>
+            </Box>
+          )}
+          <Box sx={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block">Delivery Radius</Typography>
+              <Typography variant="body1" fontWeight={600}>{settings.deliveryRadiusKm} KM</Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block">Farm Location (Latitude)</Typography>
+              <Typography variant="body1" fontWeight={600}>{settings.farmLatitude}</Typography>
+            </Box>
+            <Box>
+              <Typography variant="caption" color="text.secondary" display="block">Farm Location (Longitude)</Typography>
+              <Typography variant="body1" fontWeight={600}>{settings.farmLongitude}</Typography>
+            </Box>
+          </Box>
+        </Box>
+      ) : null}
+    </Paper>
+  )
+}
 
 const PAGE_SIZE = 20
 const DEBOUNCE_MS = 350
@@ -105,6 +210,8 @@ export function FarmsPage() {
         subtitle="Manage the farm profiles registered on the platform."
         action={canWrite ? { label: 'Register Farm', icon: <Add />, onClick: openAdd } : undefined}
       />
+
+      <BusinessSettingsCard canWrite={canWrite} />
 
       <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
         <TextField

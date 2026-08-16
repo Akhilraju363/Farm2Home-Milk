@@ -2,6 +2,7 @@ package com.farm2home.delivery.service;
 
 import com.farm2home.delivery.domain.entity.DeliveryPartner;
 import com.farm2home.delivery.domain.entity.DeliveryRoute;
+import com.farm2home.delivery.domain.repository.DeliveryAssignmentRepository;
 import com.farm2home.delivery.domain.repository.DeliveryPartnerRepository;
 import com.farm2home.delivery.domain.repository.DeliveryRouteRepository;
 import com.farm2home.delivery.dto.request.CreatePartnerRequest;
@@ -10,6 +11,7 @@ import com.farm2home.delivery.dto.response.PartnerResponse;
 import com.farm2home.delivery.exception.ResourceNotFoundException;
 import com.farm2home.delivery.mapper.DeliveryMapper;
 import com.farm2home.delivery.service.impl.DeliveryPartnerServiceImpl;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -31,9 +33,18 @@ class DeliveryPartnerServiceImplTest {
 
     @Mock private DeliveryPartnerRepository partnerRepository;
     @Mock private DeliveryRouteRepository routeRepository;
+    @Mock private DeliveryAssignmentRepository assignmentRepository;
     @Mock private DeliveryMapper mapper;
 
     @InjectMocks private DeliveryPartnerServiceImpl service;
+
+    // activeDeliveries is computed live (DeliveryPartnerServiceImpl.toResponse) on every response
+    // this service builds - unstubbed by default here (0), since none of these tests care about
+    // its exact value; PartnerSelectionServiceImplTest covers the workload logic itself.
+    @BeforeEach
+    void stubWorkloadDefault() {
+        lenient().when(assignmentRepository.countByDeliveryPartner_IdAndStatusIn(any(), any())).thenReturn(0L);
+    }
 
     private final UUID partnerId = UUID.randomUUID();
     private final UUID routeId = UUID.randomUUID();

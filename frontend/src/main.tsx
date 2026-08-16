@@ -7,7 +7,6 @@ import { SnackbarProvider } from 'notistack'
 import App from './App'
 import { store } from './store/store'
 import './index.css'
-import 'leaflet/dist/leaflet.css'
 
 const queryClient = new QueryClient({
   defaultOptions: {

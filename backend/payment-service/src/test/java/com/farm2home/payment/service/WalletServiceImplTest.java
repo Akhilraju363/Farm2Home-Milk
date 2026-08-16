@@ -137,13 +137,20 @@ class WalletServiceImplTest {
         }
 
         @Test
-        @DisplayName("wallet not found → throws InsufficientBalanceException")
-        void noWallet_throws() {
+        @DisplayName("first-ever payment (no wallet row yet) → auto-creates a ₹0 wallet, same as " +
+                "getWallet()/topUp() already do, then correctly rejects for insufficient (₹0) balance " +
+                "rather than a confusing \"Wallet not found\"")
+        void noWallet_autoCreatesThenRejectsForInsufficientBalance() {
             when(walletRepository.findByCustomerIdForUpdate(customerId)).thenReturn(Optional.empty());
+            when(walletRepository.save(any(Wallet.class))).thenAnswer(inv -> inv.getArgument(0));
 
             assertThatThrownBy(() -> service.debitForPayment(customerId, new BigDecimal("100.00"), null))
                     .isInstanceOf(InsufficientBalanceException.class)
-                    .hasMessageContaining("Wallet not found");
+                    .hasMessageContaining("Insufficient wallet balance")
+                    .hasMessageContaining("Available: ₹0");
+
+            verify(walletRepository).save(argThat(w -> w.getCustomerId().equals(customerId)
+                    && w.getBalance().compareTo(BigDecimal.ZERO) == 0));
         }
     }
 

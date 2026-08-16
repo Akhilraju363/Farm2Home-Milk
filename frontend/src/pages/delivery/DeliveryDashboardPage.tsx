@@ -3,7 +3,10 @@ import {
   Pagination, Alert, Chip, Tabs, Tab, Grid, Card,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
-import { Search, Refresh, Add, Close, LocalShipping, CheckCircleOutline } from '@mui/icons-material'
+import {
+  Search, Refresh, Add, Close, LocalShipping, CheckCircleOutline, SmartToy, Person,
+  HourglassEmpty,
+} from '@mui/icons-material'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -12,6 +15,7 @@ import { AssignDeliveryDialog } from '../../components/delivery/AssignDeliveryDi
 import { useAuth } from '../../hooks/useAuth'
 import { useDebounced } from '../../hooks/useDebounced'
 import { deliveryService } from '../../services/deliveryService'
+import { orderService } from '../../services/orderService'
 import { formatDateTime, statusColor } from '../../utils/formatters'
 import { ASSIGNMENT_STATUS_LABELS } from '../../types/delivery.types'
 import type { Assignment, AssignmentStatus } from '../../types/delivery.types'
@@ -90,6 +94,22 @@ export function DeliveryDashboardPage() {
     queryFn: () => deliveryService.search({ status: 'OUT_FOR_DELIVERY', size: 1 }),
   })
 
+  // Orders waiting for assignment: order-service's own pendingOrders count (an Order only leaves
+  // PENDING once a DeliveryAssignment - auto or manual - exists, see order-service's
+  // DeliveryEventConsumer) - reused as-is, not re-derived from delivery-service's own data.
+  const { data: orderSummaryData } = useQuery({
+    queryKey: ['orders', 'summary'],
+    queryFn: () => orderService.getSummary(),
+  })
+  const { data: autoAssignedCountData } = useQuery({
+    queryKey: ['delivery', 'count', 'auto-assigned'],
+    queryFn: () => deliveryService.search({ autoAssigned: true, size: 1 }),
+  })
+  const { data: manualAssignedCountData } = useQuery({
+    queryKey: ['delivery', 'count', 'manual-assigned'],
+    queryFn: () => deliveryService.search({ autoAssigned: false, size: 1 }),
+  })
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['delivery'] })
   const resetFilters = () => { setSearch(''); setStatus(''); setDateFrom(''); setDateTo(''); setPage(0) }
   const handleAssigned = () => { setAssignOpen(false); invalidate() }
@@ -110,6 +130,16 @@ export function DeliveryDashboardPage() {
     { field: 'deliveryPartnerMobile', headerName: 'Mobile', width: 130 },
     { field: 'routeCode', headerName: 'Route', width: 100 },
     {
+      field: 'autoAssigned', headerName: 'Assigned By', width: 130,
+      renderCell: ({ value }) => (
+        <Chip
+          size="small" variant="outlined"
+          icon={value ? <SmartToy sx={{ fontSize: 14 }} /> : <Person sx={{ fontSize: 14 }} />}
+          label={value ? 'Automatic' : 'Manual'}
+        />
+      ),
+    },
+    {
       field: 'status', headerName: 'Status', width: 150,
       renderCell: ({ value }) => <Chip label={ASSIGNMENT_STATUS_LABELS[value as AssignmentStatus]} size="small" color={statusColor(value as string)} sx={{ fontWeight: 600 }} />,
     },
@@ -124,6 +154,16 @@ export function DeliveryDashboardPage() {
         action={canAssign ? { label: 'Assign Delivery', icon: <Add />, onClick: () => setAssignOpen(true) } : undefined}
       />
 
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <Chip
+          size="small" color="success" variant="outlined" icon={<SmartToy sx={{ fontSize: 14 }} />}
+          label="Automatic Assignment: Enabled"
+        />
+        <Tooltip title="New orders are automatically assigned to the least-loaded active delivery partner on their route. If none is available, the order stays unassigned here for manual assignment.">
+          <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>What does this mean?</Typography>
+        </Tooltip>
+      </Box>
+
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={6} sm={3}>
           <KpiCard label="Delivered Today" value={summaryData?.data.data.completedDeliveriesToday ?? '—'} icon={<CheckCircleOutline />} />
@@ -136,6 +176,15 @@ export function DeliveryDashboardPage() {
         </Grid>
         <Grid item xs={6} sm={3}>
           <KpiCard label="This View" value={totalElements} icon={<LocalShipping />} />
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <KpiCard label="Orders Waiting for Assignment" value={orderSummaryData?.data.data.pendingOrders ?? '—'} icon={<HourglassEmpty />} />
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <KpiCard label="Automatically Assigned" value={autoAssignedCountData?.data.data.totalElements ?? '—'} icon={<SmartToy />} />
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <KpiCard label="Manually Assigned" value={manualAssignedCountData?.data.data.totalElements ?? '—'} icon={<Person />} />
         </Grid>
       </Grid>
 

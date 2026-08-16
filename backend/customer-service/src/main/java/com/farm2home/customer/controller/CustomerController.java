@@ -18,7 +18,9 @@ import com.farm2home.customer.dto.request.UpdateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
 import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
+import com.farm2home.customer.dto.response.DeliveryAvailabilityResponse;
 import com.farm2home.customer.service.impl.CustomerServiceImpl;
+import com.farm2home.customer.service.impl.DeliveryAvailabilityServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -54,6 +56,7 @@ import java.util.UUID;
 public class CustomerController {
 
     private final CustomerServiceImpl customerService;
+    private final DeliveryAvailabilityServiceImpl deliveryAvailabilityService;
 
     @GetMapping
     @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_SUPER_ADMIN + "', '" + SecurityConstants.ROLE_DELIVERY_MANAGER + "')")
@@ -196,6 +199,52 @@ public class CustomerController {
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Address saved successfully", customerService.addAddress(principal.userId(), request)));
+    }
+
+    @GetMapping("/me/delivery-availability")
+    @Operation(summary = "Check delivery eligibility for the current customer",
+            description = "Backend-authoritative: computes the Haversine distance from Farm2Home's configured "
+                    + "business origin to the caller's chosen address (default address if addressId is omitted) "
+                    + "and compares it against the configured delivery radius. deliveryAvailable is null (not "
+                    + "false) when it cannot be determined - no address, or the address has no captured "
+                    + "coordinates yet - never treat null as either available or unavailable.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Availability computed (or reported as undeterminable - still a 200, see deliveryAvailable)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "422",
+                description = "Farm2Home's business settings could not be fetched right now", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<DeliveryAvailabilityResponse>> getDeliveryAvailability(
+            @Parameter(description = "Optional - check a specific saved address instead of the default one")
+            @RequestParam(required = false) UUID addressId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Delivery availability retrieved successfully",
+                deliveryAvailabilityService.getForCustomer(principal.userId(), addressId)));
+    }
+
+    @GetMapping("/{id}/delivery-availability")
+    @Operation(summary = "Check delivery eligibility for a given customer",
+            description = "Ownership-scoped counterpart to GET /me/delivery-availability - used by order-service "
+                    + "to revalidate delivery eligibility at order-creation time even when an admin creates the "
+                    + "order on behalf of a different customer. Callers may only check their own availability "
+                    + "unless they hold SUPER_ADMIN/FARM_MANAGER/DELIVERY_MANAGER.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Availability computed (or reported as undeterminable)"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No customer with this id, or it belongs to someone else", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<DeliveryAvailabilityResponse>> getDeliveryAvailabilityForCustomer(
+            @PathVariable UUID id,
+            @Parameter(description = "Optional - check a specific saved address instead of the default one")
+            @RequestParam(required = false) UUID addressId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(ApiResponse.success("Delivery availability retrieved successfully",
+                deliveryAvailabilityService.getForCustomerScoped(id, addressId, principal)));
     }
 
     @GetMapping("/{id}/addresses")
