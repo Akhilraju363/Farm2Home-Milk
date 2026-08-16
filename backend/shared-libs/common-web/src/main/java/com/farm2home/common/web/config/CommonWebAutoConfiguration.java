@@ -4,9 +4,12 @@ import com.farm2home.common.web.client.RequestHeaderForwarder;
 import com.farm2home.common.web.exception.GlobalExceptionHandler;
 import com.farm2home.common.web.storage.FileStorageProperties;
 import com.farm2home.common.web.storage.FileStorageService;
+import jakarta.servlet.MultipartConfigElement;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.MultipartConfigFactory;
 import org.springframework.context.annotation.Bean;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -22,6 +25,26 @@ public class CommonWebAutoConfiguration {
     @Bean
     public FileStorageService fileStorageService(FileStorageProperties properties) {
         return new FileStorageService(properties);
+    }
+
+    /** Spring Boot's own servlet-container multipart limit defaults to 1MB (both max-file-size
+     *  and max-request-size) unless something overrides it - no service in this codebase ever
+     *  did, so every upload endpoint (product images, customer profile photos, farm images) has
+     *  been silently rejecting anything over ~1MB with an opaque 500 "An unexpected error
+     *  occurred" (MaxUploadSizeExceededException has no @ResponseStatus, so it fell into
+     *  GlobalExceptionHandler's generic catch-all) - even though FileStorageService.validate()
+     *  already implements a proper, cleanly-messaged 5MB check via FileStorageProperties, and
+     *  every upload UI in the frontend advertises "Max 5 MB". The container limit here is set
+     *  above that 5MB application-level limit (not equal to it) so a legitimate ≤5MB file is
+     *  never rejected by multipart framing/boundary overhead before FileStorageService ever sees
+     *  it - that check, not this one, is meant to be the actual gate a user hits. */
+    @Bean
+    public MultipartConfigElement multipartConfigElement(FileStorageProperties properties) {
+        long limitBytes = properties.getMaxFileSizeBytes() + (1024 * 1024);
+        MultipartConfigFactory factory = new MultipartConfigFactory();
+        factory.setMaxFileSize(DataSize.ofBytes(limitBytes));
+        factory.setMaxRequestSize(DataSize.ofBytes(limitBytes));
+        return factory.createMultipartConfig();
     }
 
     /** Used by BFF-style aggregator/proxy services (dashboard-service, reports-service, ...) to

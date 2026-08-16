@@ -14,4 +14,7 @@ public interface LocationStateRepository extends JpaRepository<LocationState, UU
     List<LocationState> findAllByActiveTrueOrderByNameAsc();
 
     Optional<LocationState> findByIdAndActiveTrue(UUID id);
+    boolean existsByNameIgnoreCase(String name);
+    boolean existsByCodeIgnoreCase(String code);
+    Optional<LocationState> findByNameIgnoreCaseAndActiveTrue(String name);
 }

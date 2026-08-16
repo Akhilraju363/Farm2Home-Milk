@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box, Paper, TextField, Button, Typography, IconButton,
   InputAdornment, CircularProgress, Alert, LinearProgress, MenuItem,
-  ToggleButton, ToggleButtonGroup,
+  ToggleButton, ToggleButtonGroup, Checkbox, FormControlLabel,
 } from '@mui/material'
 import {
   Agriculture, Visibility, VisibilityOff,
   VerifiedUser, LocalShipping, Lock, ArrowBack, ArrowForward, Spa, Schedule,
   Pets, WaterDrop, LocalFlorist, WbTwilight, WbSunny, LightMode as SunIcon,
+  MyLocation, CheckCircle,
 } from '@mui/icons-material'
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
@@ -23,6 +24,14 @@ import { authService } from '../../services/authService'
 import { customerService } from '../../services/customerService'
 import { indiaLocationService } from '../../services/indiaLocationService'
 import { tokenStorage } from '../../services/tokenStorage'
+import { useAuth } from '../../hooks/useAuth'
+import { useGeolocationCapture } from '../../hooks/useGeolocationCapture'
+import { getLandingRoute } from '../../utils/roleLanding'
+import { PublicFooter } from '../../components/layout/PublicFooter'
+import { consentService } from '../../services/consentService'
+import { CONSENT_PURPOSE_LABELS } from '../../types/consent.types'
+import type { ConsentChoice, ConsentPurpose } from '../../types/consent.types'
+import { PRIVACY_NOTICE_VERSION } from '../../constants/legal'
 
 const TOTAL_STEPS = 4
 const RESEND_COOLDOWN_SECONDS = 60
@@ -139,6 +148,11 @@ interface AddressDetails extends AddressFields {
   state: string
   district: string
   city: string
+  // Real device-captured coordinates only (browser geolocation) - never derived from
+  // city/district/pincode. Undefined when the customer didn't grant location permission; the
+  // address is still saved, just without delivery-radius eligibility until it's captured later.
+  latitude?: number
+  longitude?: number
 }
 
 interface MilkPreferences {
@@ -159,15 +173,28 @@ function maskMobile(mobile: string) {
   return mobile.length === 10 ? `+91 ${mobile.slice(0, 2)}${'*'.repeat(6)}${mobile.slice(-2)}` : mobile
 }
 
+// Unticked by default for every purpose, including ESSENTIAL_SERVICE - DPDP consent must be an
+// affirmative act, never pre-selected (see the "opt-in, unticked" requirement in DPDP_PROGRESS.md).
+// ESSENTIAL_SERVICE is still required to proceed (it's the acknowledgment of the Privacy Notice
+// covering processing necessary for the service itself), the other three are genuinely optional.
+const INITIAL_CONSENT_STATE: Record<ConsentPurpose, boolean> = {
+  ESSENTIAL_SERVICE: false,
+  MARKETING_COMMUNICATIONS: false,
+  LOCATION_TRACKING: false,
+  ANALYTICS_COOKIES: false,
+}
+
 function PersonalDetailsStep({
   defaultValues, error, submitting, onNext,
 }: {
   defaultValues?: Partial<PersonalDetails>
   error: string
   submitting: boolean
-  onNext: (data: PersonalDetails) => void
+  onNext: (data: PersonalDetails, consents: ConsentChoice[]) => void
 }) {
   const [showPassword, setShowPassword] = useState(false)
+  const [consents, setConsents] = useState(INITIAL_CONSENT_STATE)
+  const [consentError, setConsentError] = useState('')
   const {
     register, handleSubmit, watch,
     formState: { errors },
@@ -177,8 +204,23 @@ function PersonalDetailsStep({
   const strength = useMemo(() => passwordStrength(password), [password])
   const mobileField = register('mobile')
 
+  const toggleConsent = (purpose: ConsentPurpose) =>
+    setConsents((prev) => ({ ...prev, [purpose]: !prev[purpose] }))
+
+  const submitWithConsent = handleSubmit((data) => {
+    if (!consents.ESSENTIAL_SERVICE) {
+      setConsentError('Please acknowledge the Privacy Notice to continue.')
+      return
+    }
+    setConsentError('')
+    const choices: ConsentChoice[] = (Object.keys(consents) as ConsentPurpose[]).map((purpose) => ({
+      purpose, granted: consents[purpose], noticeVersion: PRIVACY_NOTICE_VERSION,
+    }))
+    onNext(data, choices)
+  })
+
   return (
-    <Box component="form" onSubmit={handleSubmit(onNext)} noValidate>
+    <Box component="form" onSubmit={submitWithConsent} noValidate>
       <Box sx={{ display: 'flex', gap: 2 }}>
         <TextField
           label="First Name"
@@ -257,6 +299,36 @@ function PersonalDetailsStep({
           </Typography>
         </Box>
       )}
+
+      <Box sx={{ mt: 2 }}>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+          How we use your data (see our{' '}
+          <Typography component={RouterLink} to="/privacy" variant="caption" color="primary.main" sx={{ textDecoration: 'none' }}>
+            Privacy Notice
+          </Typography>{' '}
+          for full details):
+        </Typography>
+        {(Object.keys(consents) as (keyof typeof consents)[]).map((purpose) => (
+          <FormControlLabel
+            key={purpose}
+            sx={{ display: 'flex', alignItems: 'flex-start', mt: 0.25 }}
+            control={
+              <Checkbox
+                size="small"
+                checked={consents[purpose]}
+                onChange={() => toggleConsent(purpose)}
+                sx={{ pt: 0 }}
+              />
+            }
+            label={
+              <Typography variant="caption" color="text.secondary">
+                {CONSENT_PURPOSE_LABELS[purpose]}
+              </Typography>
+            }
+          />
+        ))}
+        {consentError && <Typography variant="caption" color="error" display="block">{consentError}</Typography>}
+      </Box>
 
       {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
 
@@ -360,6 +432,7 @@ function AddressDetailsStep({
   const [districtId, setDistrictId] = useState('')
   const [cityId, setCityId] = useState('')
   const [locationTouched, setLocationTouched] = useState(false)
+  const { coords, locating, error: locationError, capture: captureLocation } = useGeolocationCapture()
 
   const statesQuery = useQuery({
     queryKey: ['indiaLocations', 'states'],
@@ -401,7 +474,10 @@ function AddressDetailsStep({
     const district = districts.find((d) => d.id === districtId)
     const city = cities.find((c) => c.id === cityId)
     if (!state || !district || !city) return
-    onNext({ ...fields, state: state.name, district: district.name, city: city.name })
+    onNext({
+      ...fields, state: state.name, district: district.name, city: city.name,
+      latitude: coords?.latitude, longitude: coords?.longitude,
+    })
   }
 
   return (
@@ -491,6 +567,30 @@ function AddressDetailsStep({
           helperText={errors.pincode?.message}
           {...register('pincode')}
         />
+      </Box>
+
+      <Box sx={{ mt: 1, mb: 1 }}>
+        {coords ? (
+          <Alert severity="success" icon={<CheckCircle fontSize="small" />}>
+            Location captured — we'll use this to confirm delivery availability for your address.
+          </Alert>
+        ) : (
+          <Button
+            onClick={captureLocation}
+            disabled={locating}
+            startIcon={locating ? <CircularProgress size={16} /> : <MyLocation />}
+            variant="outlined"
+            size="small"
+          >
+            {locating ? 'Locating…' : 'Use my current location'}
+          </Button>
+        )}
+        {locationError && <Alert severity="warning" sx={{ mt: 1 }}>{locationError}</Alert>}
+        {!coords && !locationError && (
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+            Optional, but needed to check if we currently deliver to your address.
+          </Typography>
+        )}
       </Box>
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
@@ -713,6 +813,7 @@ function VerificationStep({
 export function RegisterPage() {
   const navigate = useNavigate()
   const dispatch = useDispatch<AppDispatch>()
+  const { user } = useAuth()
   const [step, setStep] = useState(1)
   const [error, setError] = useState('')
   const [addressWarning, setAddressWarning] = useState('')
@@ -723,7 +824,7 @@ export function RegisterPage() {
   const stepLabels = ['Personal Details', 'Address Details', 'Milk Preferences', 'Verification']
   const stepLabel = stepLabels[step - 1]
 
-  const handlePersonalDetailsNext = async (data: PersonalDetails) => {
+  const handlePersonalDetailsNext = async (data: PersonalDetails, consents: ConsentChoice[]) => {
     setError('')
     setSubmitting(true)
     try {
@@ -738,6 +839,11 @@ export function RegisterPage() {
       tokenStorage.setTokens(accessToken, refreshToken, true)
       dispatch(setCredentials({ accessToken, user }))
       setPersonalDetails(data)
+      // Best-effort, same tolerance as the address step below - the customer row this consent is
+      // scoped to is created asynchronously (Kafka), and consentService.record() already retries
+      // through that race. A failure here doesn't block registration; it's surfaced nowhere to the
+      // user since there's no consent-specific UI state on this step to show it in.
+      consentService.record(consents).catch(() => {})
       setStep(2)
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Registration failed. Please try again.')
@@ -756,6 +862,8 @@ export function RegisterPage() {
         state: address.state,
         district: address.district,
         pincode: address.pincode,
+        latitude: address.latitude,
+        longitude: address.longitude,
       })
     } catch {
       setAddressWarning("We couldn't save your address just now — you can add it later from your profile.")
@@ -773,7 +881,9 @@ export function RegisterPage() {
     setSubmitting(true)
     try {
       await authService.verifyOtp(personalDetails.mobile, otp, 'REGISTRATION')
-      navigate('/dashboard', { replace: true })
+      // Registration always creates a CUSTOMER account (see AuthServiceImpl.register()) - user
+      // here reflects the credentials already dispatched to Redux in handlePersonalDetailsNext.
+      navigate(getLandingRoute(user?.roles), { replace: true })
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Invalid or expired code. Please try again.')
     } finally {
@@ -919,6 +1029,7 @@ export function RegisterPage() {
           <Lock sx={{ fontSize: 12, verticalAlign: 'middle', mr: 0.5 }} />
           &copy; {new Date().getFullYear()} Farm2Home Premium. All rights reserved. Secure Registration Portal.
         </Typography>
+        <PublicFooter variant="compact" />
       </Box>
     </Box>
   )

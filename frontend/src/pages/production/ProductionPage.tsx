@@ -1,4 +1,4 @@
-import { Box, TextField, MenuItem, Chip, Tooltip, IconButton } from '@mui/material'
+import { Box, TextField, MenuItem, Chip, Tooltip, IconButton, Alert, Button } from '@mui/material'
 import { DataGrid, type GridColDef, type GridValueGetterParams } from '@mui/x-data-grid'
 import { Refresh } from '@mui/icons-material'
 import { useState } from 'react'
@@ -23,13 +23,13 @@ export function ProductionPage() {
   const [pageSize, setPageSize] = useState(50)
   const [session, setSession] = useState('')
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['productions', page, pageSize],
     queryFn: () => productionService.getAll({ page, size: pageSize }),
   })
 
-  const allRows = data?.data?.content ?? []
-  const total = data?.data?.totalElements ?? 0
+  const allRows = data?.data.data.content ?? []
+  const total = data?.data.data.totalElements ?? 0
 
   const rows = session ? allRows.filter((r) => r.session === session) : allRows
 
@@ -90,15 +90,21 @@ export function ProductionPage() {
         </Tooltip>
       </Box>
 
-      <DataGrid
-        rows={rows} columns={columns} loading={isLoading}
-        rowCount={total} paginationMode="server"
-        paginationModel={{ page, pageSize }}
-        onPaginationModelChange={({ page: p, pageSize: ps }) => { setPage(p); setPageSize(ps) }}
-        pageSizeOptions={[20, 50, 100]}
-        autoHeight disableRowSelectionOnClick
-        sx={{ bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider' }}
-      />
+      {isError ? (
+        <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => refetch()}>Retry</Button>}>
+          Couldn't load production records. Please check your connection and try again.
+        </Alert>
+      ) : (
+        <DataGrid
+          rows={rows} columns={columns} loading={isLoading}
+          rowCount={total} paginationMode="server"
+          paginationModel={{ page, pageSize }}
+          onPaginationModelChange={({ page: p, pageSize: ps }) => { setPage(p); setPageSize(ps) }}
+          pageSizeOptions={[20, 50, 100]}
+          autoHeight disableRowSelectionOnClick
+          sx={{ bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider' }}
+        />
+      )}
     </Box>
   )
 }

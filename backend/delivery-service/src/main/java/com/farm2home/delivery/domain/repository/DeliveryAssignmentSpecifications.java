@@ -39,6 +39,13 @@ public final class DeliveryAssignmentSpecifications {
         return (root, query, cb) -> cb.equal(root.get("status"), status);
     }
 
+    /** Backs the admin dashboard's "Automatically assigned" / "Manually assigned" counts (via the
+     *  same search().totalElements pattern already used for per-status KPI counts) - a real,
+     *  stored field, never guessed at read time. */
+    public static Specification<DeliveryAssignment> isAutoAssigned(boolean autoAssigned) {
+        return (root, query, cb) -> cb.equal(root.get("autoAssigned"), autoAssigned);
+    }
+
     public static Specification<DeliveryAssignment> hasOrderIdIn(List<UUID> orderIds) {
         return (root, query, cb) -> root.get("orderId").in(orderIds);
     }

@@ -1,7 +1,8 @@
 import axiosClient from './axiosClient'
 import type {
-  CreateOrderRequest, Order, OrderSearchParams, UpdateOrderStatusRequest,
+  CreateOrderRequest, Order, OrderSearchParams, OrderSummary, UpdateOrderStatusRequest,
 } from '../types/order.types'
+import type { CheckoutRequest } from '../types/cart.types'
 import type { ApiResponse, PageResponse } from '../types/common.types'
 
 const BASE = '/orders'
@@ -17,6 +18,13 @@ export const orderService = {
 
   getById: (id: string) =>
     axiosClient.get<ApiResponse<Order>>(`${BASE}/${id}`),
+
+  // SUPER_ADMIN/FARM_MANAGER/DELIVERY_MANAGER only - pendingOrders (platform-wide, orders with no
+  // delivery assignment yet, since Order.status only leaves PENDING once one is created - see
+  // DeliveryEventConsumer in order-service) backs the Delivery Dashboard's "Orders Waiting for
+  // Assignment" KPI. Reused as-is, not re-derived from delivery-service's own data.
+  getSummary: () =>
+    axiosClient.get<ApiResponse<OrderSummary>>(`${BASE}/summary`),
 
   // Used by the dashboard's recent-orders list, one request, not per row.
   getRecent: (size = 5) =>
@@ -40,6 +48,12 @@ export const orderService = {
 
   create: (data: CreateOrderRequest) =>
     axiosClient.post<ApiResponse<Order>>(BASE, data),
+
+  // Creates a ONE_TIME order from the caller's own server-side Cart - see order-service's
+  // OrderServiceImpl.checkout(). Items/prices are never sent from here; the backend sources them
+  // from the cart itself and clears it on success.
+  checkout: (data: CheckoutRequest) =>
+    axiosClient.post<ApiResponse<Order>>(`${BASE}/checkout`, data),
 
   updateStatus: (id: string, data: UpdateOrderStatusRequest) =>
     axiosClient.patch<ApiResponse<Order>>(`${BASE}/${id}/status`, data),

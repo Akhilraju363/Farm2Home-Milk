@@ -1,6 +1,10 @@
 package com.farm2home.order.service;
 
+import com.farm2home.order.client.CustomerServiceClient;
 import com.farm2home.order.client.DailyProductionResponse;
+import com.farm2home.order.client.DeliveryAvailabilityResponse;
+import com.farm2home.order.client.InventoryServiceClient;
+import com.farm2home.order.client.ProductDetailResponse;
 import com.farm2home.order.client.ProductionServiceClient;
 import com.farm2home.order.config.MilkPriceProperties;
 import com.farm2home.order.domain.entity.Order;
@@ -9,6 +13,7 @@ import com.farm2home.order.domain.enums.MilkType;
 import com.farm2home.order.domain.enums.OrderStatus;
 import com.farm2home.order.domain.enums.OrderType;
 import com.farm2home.order.domain.repository.OrderRepository;
+import com.farm2home.order.dto.request.CheckoutRequest;
 import com.farm2home.order.dto.request.CreateOrderItemRequest;
 import com.farm2home.order.dto.request.CreateOrderRequest;
 import com.farm2home.order.dto.request.UpdateOrderStatusRequest;
@@ -40,10 +45,15 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.publisher.Mono;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +63,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -65,6 +76,9 @@ class OrderServiceImplTest {
     @Mock private AuditLogService auditLogService;
     @Mock(answer = Answers.RETURNS_DEEP_STUBS) private EntityManager entityManager;
     @Mock private ProductionServiceClient productionServiceClient;
+    @Mock private InventoryServiceClient inventoryServiceClient;
+    @Mock private CustomerServiceClient customerServiceClient;
+    @Mock private com.farm2home.order.domain.repository.CartRepository cartRepository;
 
     @InjectMocks private OrderServiceImpl service;
 
@@ -78,6 +92,23 @@ class OrderServiceImplTest {
         // nested test class.
         lenient().when(priceProperties.getPriceFor("FULL_CREAM")).thenReturn(new BigDecimal("80.00"));
         lenient().when(priceProperties.getPriceFor("TONED")).thenReturn(new BigDecimal("65.00"));
+    }
+
+    /** Every createManualOrder() call now checks delivery eligibility first - default every test
+     *  to "available" (via a null Mono result, which verifyDeliveryEligibility also treats as
+     *  non-blocking/unknown) so existing tests unrelated to delivery-radius validation don't need
+     *  to know about it. Delivery-eligibility-specific tests below override this stub per-case. */
+    @BeforeEach
+    void setupDeliveryEligibility() {
+        lenient().when(customerServiceClient.getDeliveryAvailability(any())).thenReturn(Mono.empty());
+    }
+
+    /** Every product-based item now reserves stock via an atomic decrement call - default every
+     *  test to "reservation succeeded" (a Mono resolving to some non-null response) so existing
+     *  product-item tests unrelated to stock-race behavior don't need to know about it. */
+    @BeforeEach
+    void setupStockReservation() {
+        lenient().when(inventoryServiceClient.decrementStock(any(), anyInt())).thenReturn(Mono.just(new ProductDetailResponse()));
     }
 
     private Order buildPendingOrder() {
@@ -132,7 +163,6 @@ class OrderServiceImplTest {
                     .build();
 
             Order saved = buildPendingOrder();
-            when(orderMapper.toEntity(req)).thenReturn(Order.builder().build());
             when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
             when(orderRepository.nextOrderNumber()).thenReturn(100001L);
             when(orderRepository.save(any())).thenReturn(saved);
@@ -158,7 +188,6 @@ class OrderServiceImplTest {
                                     .milkType(MilkType.TONED).quantity(new BigDecimal("2.0")).build()))
                     .build();
 
-            when(orderMapper.toEntity(req)).thenReturn(Order.builder().build());
             when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
             when(orderRepository.nextOrderNumber()).thenReturn(100002L);
             when(orderRepository.save(any())).thenAnswer(inv -> {
@@ -219,10 +248,14 @@ class OrderServiceImplTest {
             CreateOrderRequest req = CreateOrderRequest.builder()
                     .orderDate(LocalDate.now().plusDays(3))
                     .items(List.of(CreateOrderItemRequest.builder()
-                            .milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("50.00")).build()))
+                            // Deliberately the max valid per-item quantity (10L, not an
+                            // unrealistically large one) - createManualOrder's own quantity range
+                            // check now runs before this test's actual assertion, which is about
+                            // future-dated orders skipping the production check regardless of
+                            // quantity, not about testing the range boundary itself.
+                            .milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("10.00")).build()))
                     .build();
 
-            when(orderMapper.toEntity(req)).thenReturn(Order.builder().build());
             when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
             when(orderRepository.nextOrderNumber()).thenReturn(100003L);
             when(orderRepository.save(any())).thenAnswer(inv -> {
@@ -258,6 +291,516 @@ class OrderServiceImplTest {
                     .isInstanceOf(OrderException.class)
                     .hasMessageContaining("Could not verify milk production capacity");
             verify(orderRepository, never()).save(any());
+        }
+
+        // ── Product-based items (Shop "Buy Now") ────────────────────────────────
+
+        private ProductDetailResponse activeProduct(UUID id, String name, String price, int stock) {
+            ProductDetailResponse product = new ProductDetailResponse();
+            product.setId(id);
+            product.setName(name);
+            product.setPrice(new BigDecimal(price));
+            product.setActive(true);
+            product.setAvailability(true);
+            product.setStockQuantity(stock);
+            return product;
+        }
+
+        @Test
+        @DisplayName("product-based item -> priced from inventory-service, production check skipped entirely")
+        void productBasedItem_pricesFromInventoryServiceAndSkipsProductionCheck() {
+            UUID productId = UUID.randomUUID();
+            when(inventoryServiceClient.getProduct(productId))
+                    .thenReturn(Mono.just(activeProduct(productId, "Full Cream Milk 1L", "70.00", 50)));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().productId(productId).quantity(new BigDecimal("2")).build()))
+                    .build();
+
+            Order saved = buildPendingOrder();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100004L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                assertThat(o.getTotalAmount()).isEqualByComparingTo("140.00");
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verifyNoInteractions(productionServiceClient);
+            verify(inventoryServiceClient).decrementStock(productId, 2);
+        }
+
+        @Test
+        @DisplayName("lost a concurrent stock race at reservation time -> OrderException, nothing saved " +
+                "(the earlier stockQuantity check is a fast-fail nicety, not the real gate)")
+        void productStockRaceLost_throwsOrderException() {
+            UUID productId = UUID.randomUUID();
+            when(inventoryServiceClient.getProduct(productId))
+                    .thenReturn(Mono.just(activeProduct(productId, "Farm Eggs (Dozen)", "90.00", 10)));
+            when(inventoryServiceClient.decrementStock(productId, 2)).thenReturn(Mono.error(
+                    org.springframework.web.reactive.function.client.WebClientResponseException.create(
+                            409, "Conflict", null, null, null)));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().productId(productId).quantity(new BigDecimal("2")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("Farm Eggs (Dozen)");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("productId not found -> ResourceNotFoundException, nothing saved")
+        void productNotFound_throwsResourceNotFound() {
+            UUID productId = UUID.randomUUID();
+            when(inventoryServiceClient.getProduct(productId)).thenReturn(Mono.empty());
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().productId(productId).quantity(BigDecimal.ONE).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("product exists but is inactive/unavailable -> OrderException, nothing saved")
+        void productUnavailable_throwsOrderException() {
+            UUID productId = UUID.randomUUID();
+            ProductDetailResponse product = activeProduct(productId, "Seasonal Butter", "150.00", 10);
+            product.setAvailability(false);
+            when(inventoryServiceClient.getProduct(productId)).thenReturn(Mono.just(product));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().productId(productId).quantity(BigDecimal.ONE).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("not currently available");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("requested quantity exceeds current stock -> OrderException, nothing saved")
+        void productQuantityExceedsStock_throwsOrderException() {
+            UUID productId = UUID.randomUUID();
+            when(inventoryServiceClient.getProduct(productId))
+                    .thenReturn(Mono.just(activeProduct(productId, "Farm Eggs (Dozen)", "90.00", 3)));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().productId(productId).quantity(new BigDecimal("5")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("Only 3");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("item with neither milkType nor productId -> OrderException")
+        void itemWithNeitherReference_throwsOrderException() {
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().quantity(BigDecimal.ONE).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("exactly one of milkType or productId");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("item with both milkType and productId -> OrderException")
+        void itemWithBothReferences_throwsOrderException() {
+            // Future-dated so the milk-quantity capacity check (which would otherwise run first,
+            // since this item's non-null milkType makes it count toward requestedMilkQuantity)
+            // doesn't need production-service stubbed - this test is only about the "exactly one
+            // reference" validation, not the capacity check.
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now().plusDays(3))
+                    .items(List.of(CreateOrderItemRequest.builder()
+                            .milkType(MilkType.FULL_CREAM).productId(UUID.randomUUID()).quantity(BigDecimal.ONE).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("exactly one of milkType or productId");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("product quantity must be greater than 0 and at most 50")
+        void productQuantityOutOfRange_throwsOrderException() {
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder()
+                            .productId(UUID.randomUUID()).quantity(new BigDecimal("51")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("at most 50");
+            verifyNoInteractions(inventoryServiceClient);
+        }
+
+        // ── Delivery-radius revalidation (10 KM delivery area) ──────────────────
+
+        private DeliveryAvailabilityResponse availability(Boolean deliveryAvailable, String distanceKm, String radiusKm) {
+            return availability(deliveryAvailable, distanceKm, radiusKm, null);
+        }
+
+        private DeliveryAvailabilityResponse availability(Boolean deliveryAvailable, String distanceKm, String radiusKm, UUID routeId) {
+            DeliveryAvailabilityResponse response = new DeliveryAvailabilityResponse();
+            response.setDeliveryAvailable(deliveryAvailable);
+            response.setDistanceKm(distanceKm == null ? null : new BigDecimal(distanceKm));
+            response.setDeliveryRadiusKm(radiusKm == null ? null : new BigDecimal(radiusKm));
+            response.setRouteId(routeId);
+            return response;
+        }
+
+        @Test
+        @DisplayName("customer-service reports address outside the delivery radius -> OrderException, nothing saved " +
+                "(this is what prevents a customer from bypassing the Shop's own frontend check by calling the API directly)")
+        void deliveryUnavailable_rejectsOrder() {
+            when(customerServiceClient.getDeliveryAvailability(customerId))
+                    .thenReturn(Mono.just(availability(false, "13.84", "10")));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1")).build()))
+                    .build();
+
+            assertThatThrownBy(() -> service.createManualOrder(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("13.84")
+                    .hasMessageContaining("10");
+            verify(orderRepository, never()).save(any());
+            verifyNoInteractions(productionServiceClient, orderMapper);
+        }
+
+        @Test
+        @DisplayName("customer-service reports deliveryAvailable=true -> order proceeds")
+        void deliveryAvailable_allowsOrder() {
+            stubSufficientProduction();
+            when(customerServiceClient.getDeliveryAvailability(customerId))
+                    .thenReturn(Mono.just(availability(true, "6.37", "10")));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100005L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verify(orderRepository).save(any());
+        }
+
+        @Test
+        @DisplayName("customer-service returns an automatically-selected route -> persisted onto the order verbatim, " +
+                "never re-derived here (order-service is not the authoritative route-selection implementation)")
+        void deliveryAvailable_persistsSelectedRoute() {
+            stubSufficientProduction();
+            UUID selectedRouteId = UUID.randomUUID();
+            when(customerServiceClient.getDeliveryAvailability(customerId))
+                    .thenReturn(Mono.just(availability(true, "2.82", "10", selectedRouteId)));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100007L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verify(orderRepository).save(argThat(o -> selectedRouteId.equals(o.getDeliveryRouteId())));
+        }
+
+        @Test
+        @DisplayName("no route covers the address (coverage gap) -> order still created, deliveryRouteId left null")
+        void deliveryAvailable_noRouteMatch_leavesRouteIdNull() {
+            stubSufficientProduction();
+            when(customerServiceClient.getDeliveryAvailability(customerId))
+                    .thenReturn(Mono.just(availability(true, "9.99", "10", null)));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100008L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verify(orderRepository).save(argThat(o -> o.getDeliveryRouteId() == null));
+        }
+
+        @Test
+        @DisplayName("deliveryAvailable=null (address has no captured coordinates yet) -> order still proceeds, " +
+                "\"unknown\" is never treated as \"ineligible\"")
+        void deliveryAvailabilityUnknown_allowsOrder() {
+            stubSufficientProduction();
+            when(customerServiceClient.getDeliveryAvailability(customerId))
+                    .thenReturn(Mono.just(availability(null, null, "10")));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100006L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verify(orderRepository).save(any());
+        }
+
+        @Test
+        @DisplayName("customer-service unreachable -> treated the same as \"unknown\", order still proceeds " +
+                "(a transient cross-service failure must never brick order creation)")
+        void deliveryServiceUnreachable_allowsOrderThrough() {
+            stubSufficientProduction();
+            when(customerServiceClient.getDeliveryAvailability(customerId))
+                    .thenReturn(Mono.error(new WebClientRequestException(
+                            new IOException("connection refused"), HttpMethod.GET,
+                            URI.create("http://customer-service/api/v1/customers/x/delivery-availability"),
+                            new HttpHeaders())));
+
+            CreateOrderRequest req = CreateOrderRequest.builder()
+                    .orderDate(LocalDate.now())
+                    .items(List.of(CreateOrderItemRequest.builder().milkType(MilkType.FULL_CREAM).quantity(new BigDecimal("1")).build()))
+                    .build();
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100007L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            service.createManualOrder(req, customerId);
+
+            verify(orderRepository).save(any());
+        }
+    }
+
+    // ── Checkout ─────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("checkout()")
+    class Checkout {
+
+        private com.farm2home.order.domain.entity.Cart buildCart(com.farm2home.order.domain.entity.CartItem... items) {
+            com.farm2home.order.domain.entity.Cart cart = com.farm2home.order.domain.entity.Cart.builder()
+                    .id(UUID.randomUUID()).customerId(customerId).build();
+            for (var item : items) cart.addItem(item);
+            return cart;
+        }
+
+        private com.farm2home.order.domain.entity.CartItem buildCartItem(UUID productId, String quantity) {
+            return com.farm2home.order.domain.entity.CartItem.builder()
+                    .id(UUID.randomUUID()).productId(productId).quantity(new BigDecimal(quantity)).build();
+        }
+
+        private ProductDetailResponse activeProduct(UUID id, String name, String price, int stock) {
+            ProductDetailResponse product = new ProductDetailResponse();
+            product.setId(id);
+            product.setName(name);
+            product.setPrice(new BigDecimal(price));
+            product.setActive(true);
+            product.setAvailability(true);
+            product.setStockQuantity(stock);
+            return product;
+        }
+
+        @Test
+        @DisplayName("no cart at all -> OrderException(\"Your cart is empty.\"), nothing saved")
+        void noCart_throws() {
+            when(cartRepository.findByCustomerId(customerId)).thenReturn(Optional.empty());
+
+            CheckoutRequest req = new CheckoutRequest();
+            req.setOrderDate(LocalDate.now().plusDays(1));
+
+            assertThatThrownBy(() -> service.checkout(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("cart is empty");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("cart exists but has no items -> OrderException(\"Your cart is empty.\")")
+        void emptyCart_throws() {
+            when(cartRepository.findByCustomerId(customerId)).thenReturn(Optional.of(buildCart()));
+
+            CheckoutRequest req = new CheckoutRequest();
+            req.setOrderDate(LocalDate.now().plusDays(1));
+
+            assertThatThrownBy(() -> service.checkout(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("cart is empty");
+            verify(orderRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("valid cart -> order created from cart items, cart cleared after success")
+        void validCart_createsOrderAndClearsCart() {
+            UUID productId = UUID.randomUUID();
+            var cartItem = buildCartItem(productId, "2");
+            var cart = buildCart(cartItem);
+            when(cartRepository.findByCustomerId(customerId)).thenReturn(Optional.of(cart));
+            when(inventoryServiceClient.getProduct(productId))
+                    .thenReturn(Mono.just(activeProduct(productId, "Farm Eggs (Dozen)", "90.00", 10)));
+
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100005L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                assertThat(o.getTotalAmount()).isEqualByComparingTo("180.00");
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            CheckoutRequest req = new CheckoutRequest();
+            req.setOrderDate(LocalDate.now().plusDays(1));
+
+            service.checkout(req, customerId);
+
+            verify(inventoryServiceClient).decrementStock(productId, 2);
+            assertThat(cart.getItems()).isEmpty();
+            verify(cartRepository).save(cart);
+        }
+
+        @Test
+        @DisplayName("checkout also persists the automatically-selected route, same as a manual order")
+        void validCart_persistsSelectedRoute() {
+            UUID productId = UUID.randomUUID();
+            UUID selectedRouteId = UUID.randomUUID();
+            var cart = buildCart(buildCartItem(productId, "1"));
+            when(cartRepository.findByCustomerId(customerId)).thenReturn(Optional.of(cart));
+            when(inventoryServiceClient.getProduct(productId))
+                    .thenReturn(Mono.just(activeProduct(productId, "Farm Eggs (Dozen)", "90.00", 10)));
+
+            DeliveryAvailabilityResponse availability = new DeliveryAvailabilityResponse();
+            availability.setDeliveryAvailable(true);
+            availability.setDistanceKm(new BigDecimal("2.82"));
+            availability.setDeliveryRadiusKm(new BigDecimal("10"));
+            availability.setRouteId(selectedRouteId);
+            when(customerServiceClient.getDeliveryAvailability(customerId)).thenReturn(Mono.just(availability));
+
+            when(orderMapper.toItemEntity(any())).thenReturn(new OrderItem());
+            when(orderRepository.nextOrderNumber()).thenReturn(100009L);
+            when(orderRepository.save(any())).thenAnswer(inv -> {
+                Order o = inv.getArgument(0);
+                o.setId(UUID.randomUUID());
+                return o;
+            });
+            when(orderMapper.toResponse(any())).thenReturn(buildResponse(OrderStatus.PENDING));
+
+            CheckoutRequest req = new CheckoutRequest();
+            req.setOrderDate(LocalDate.now().plusDays(1));
+
+            service.checkout(req, customerId);
+
+            verify(orderRepository).save(argThat(o -> selectedRouteId.equals(o.getDeliveryRouteId())));
+        }
+
+        @Test
+        @DisplayName("delivery unavailable for the address -> OrderException, cart untouched")
+        void deliveryUnavailable_cartUntouched() {
+            UUID productId = UUID.randomUUID();
+            var cartItem = buildCartItem(productId, "1");
+            var cart = buildCart(cartItem);
+            when(cartRepository.findByCustomerId(customerId)).thenReturn(Optional.of(cart));
+
+            DeliveryAvailabilityResponse availability = new DeliveryAvailabilityResponse();
+            availability.setDeliveryAvailable(false);
+            availability.setDistanceKm(new BigDecimal("13.84"));
+            availability.setDeliveryRadiusKm(new BigDecimal("10"));
+            when(customerServiceClient.getDeliveryAvailability(customerId)).thenReturn(Mono.just(availability));
+
+            CheckoutRequest req = new CheckoutRequest();
+            req.setOrderDate(LocalDate.now().plusDays(1));
+
+            assertThatThrownBy(() -> service.checkout(req, customerId))
+                    .isInstanceOf(OrderException.class)
+                    .hasMessageContaining("13.84");
+            verify(orderRepository, never()).save(any());
+            assertThat(cart.getItems()).hasSize(1);
+            verify(cartRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("a cart item lost a concurrent stock race -> OrderException, cart untouched (not cleared " +
+                "on a failed checkout, so the customer can retry without re-adding everything)")
+        void stockRaceLost_cartUntouched() {
+            UUID productId = UUID.randomUUID();
+            var cartItem = buildCartItem(productId, "3");
+            var cart = buildCart(cartItem);
+            when(cartRepository.findByCustomerId(customerId)).thenReturn(Optional.of(cart));
+            when(inventoryServiceClient.getProduct(productId))
+                    .thenReturn(Mono.just(activeProduct(productId, "Farm Eggs (Dozen)", "90.00", 10)));
+            when(inventoryServiceClient.decrementStock(productId, 3)).thenReturn(Mono.error(
+                    org.springframework.web.reactive.function.client.WebClientResponseException.create(
+                            409, "Conflict", null, null, null)));
+
+            CheckoutRequest req = new CheckoutRequest();
+            req.setOrderDate(LocalDate.now().plusDays(1));
+
+            assertThatThrownBy(() -> service.checkout(req, customerId))
+                    .isInstanceOf(OrderException.class);
+            verify(orderRepository, never()).save(any());
+            assertThat(cart.getItems()).hasSize(1);
+            verify(cartRepository, never()).save(any());
         }
     }
 

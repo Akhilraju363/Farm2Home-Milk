@@ -1,4 +1,4 @@
-import { Box, TextField, MenuItem, Chip, Tooltip, IconButton, Alert } from '@mui/material'
+import { Box, TextField, MenuItem, Chip, Tooltip, IconButton, Alert, Button } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { DataGrid, type GridColDef, type GridValueGetterParams } from '@mui/x-data-grid'
 import { Refresh, Warning } from '@mui/icons-material'
@@ -25,7 +25,7 @@ export function InventoryPage() {
   const [pageSize, setPageSize] = useState(50)
   const [typeFilter, setTypeFilter] = useState('')
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['inventory', page, pageSize, typeFilter],
     queryFn: () => inventoryService.getAll({ page, size: pageSize, type: typeFilter || undefined }),
   })
@@ -35,9 +35,9 @@ export function InventoryPage() {
     queryFn: () => inventoryService.getLowStock(),
   })
 
-  const rows = data?.data?.content ?? []
-  const total = data?.data?.totalElements ?? 0
-  const lowStockCount = lowStockData?.data?.length ?? 0
+  const rows = data?.data.data.content ?? []
+  const total = data?.data.data.totalElements ?? 0
+  const lowStockCount = lowStockData?.data.data.length ?? 0
 
   const columns: GridColDef[] = [
     { field: 'itemName', headerName: 'Item Name', flex: 1, minWidth: 160 },
@@ -87,21 +87,27 @@ export function InventoryPage() {
         </Tooltip>
       </Box>
 
-      <DataGrid
-        rows={rows} columns={columns} loading={isLoading}
-        rowCount={total} paginationMode="server"
-        paginationModel={{ page, pageSize }}
-        onPaginationModelChange={({ page: p, pageSize: ps }) => { setPage(p); setPageSize(ps) }}
-        pageSizeOptions={[20, 50, 100]}
-        autoHeight disableRowSelectionOnClick
-        getRowClassName={({ row }) => row.belowReorderLevel ? 'low-stock-row' : ''}
-        sx={(theme) => ({
-          bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider',
-          '& .low-stock-row': {
-            bgcolor: alpha(theme.palette.warning.main, theme.palette.mode === 'dark' ? 0.2 : 0.12),
-          },
-        })}
-      />
+      {isError ? (
+        <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => refetch()}>Retry</Button>}>
+          Couldn't load inventory items. Please check your connection and try again.
+        </Alert>
+      ) : (
+        <DataGrid
+          rows={rows} columns={columns} loading={isLoading}
+          rowCount={total} paginationMode="server"
+          paginationModel={{ page, pageSize }}
+          onPaginationModelChange={({ page: p, pageSize: ps }) => { setPage(p); setPageSize(ps) }}
+          pageSizeOptions={[20, 50, 100]}
+          autoHeight disableRowSelectionOnClick
+          getRowClassName={({ row }) => row.belowReorderLevel ? 'low-stock-row' : ''}
+          sx={(theme) => ({
+            bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider',
+            '& .low-stock-row': {
+              bgcolor: alpha(theme.palette.warning.main, theme.palette.mode === 'dark' ? 0.2 : 0.12),
+            },
+          })}
+        />
+      )}
     </Box>
   )
 }

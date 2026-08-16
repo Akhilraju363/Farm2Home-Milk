@@ -211,6 +211,31 @@ public class ProductController {
         return ResponseEntity.ok(ApiResponse.success("Product updated successfully", service.update(id, request)));
     }
 
+    @PostMapping("/{id}/decrement-stock")
+    @Operation(summary = "Atomically decrement stock (order creation/checkout)",
+            description = "Called by order-service when a customer's order/checkout is created for this "
+                    + "product - a single atomic UPDATE, race-safe under concurrent purchases of the same "
+                    + "product (see ProductRepository.decrementStock). Open to any authenticated caller, same "
+                    + "as GET, since it's triggered by a customer's own order creation, not an admin action; "
+                    + "there is no separate reservation/release step - this is the reservation.")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Stock decremented, updated product returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "quantity missing or not at least 1", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                description = "No product with this ID (or it has been deleted)", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                description = "Not enough stock available right now (lost a concurrent-purchase race, or " +
+                        "stock changed since it was last checked)", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<ProductResponse>> decrementStock(
+            @PathVariable UUID id, @Valid @RequestBody com.farm2home.inventory.dto.request.DecrementStockRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Stock decremented successfully", service.decrementStock(id, request.getQuantity())));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_FARM_MANAGER + "','" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
     @Operation(summary = "Delete product",

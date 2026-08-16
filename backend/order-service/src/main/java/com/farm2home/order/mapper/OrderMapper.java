@@ -3,7 +3,6 @@ package com.farm2home.order.mapper;
 import com.farm2home.order.domain.entity.Order;
 import com.farm2home.order.domain.entity.OrderItem;
 import com.farm2home.order.dto.request.CreateOrderItemRequest;
-import com.farm2home.order.dto.request.CreateOrderRequest;
 import com.farm2home.order.dto.response.OrderItemResponse;
 import com.farm2home.order.dto.response.OrderResponse;
 import org.mapstruct.Mapper;
@@ -16,30 +15,15 @@ public interface OrderMapper {
     @Mapping(target = "status", expression = "java(order.getStatus().name())")
     OrderResponse toResponse(Order order);
 
-    @Mapping(target = "milkType", expression = "java(item.getMilkType().name())")
+    @Mapping(target = "milkType", expression = "java(item.getMilkType() != null ? item.getMilkType().name() : null)")
     OrderItemResponse toItemResponse(OrderItem item);
 
-    // orderNumber/customerId/orderType/status are assigned by the service (computed order
-    // number, resolved customer, fixed ONE_TIME/PENDING for a manual order); items are built
-    // and linked item-by-item in the service because each needs a priced lookup.
-    @Mapping(target = "id", ignore = true)
-    @Mapping(target = "orderNumber", ignore = true)
-    @Mapping(target = "customerId", ignore = true)
-    @Mapping(target = "subscriptionId", ignore = true)
-    @Mapping(target = "orderType", ignore = true)
-    @Mapping(target = "totalAmount", ignore = true)
-    @Mapping(target = "status", ignore = true)
-    @Mapping(target = "items", ignore = true)
-    @Mapping(target = "createdAt", ignore = true)
-    @Mapping(target = "createdBy", ignore = true)
-    @Mapping(target = "updatedAt", ignore = true)
-    @Mapping(target = "updatedBy", ignore = true)
-    @Mapping(target = "deleted", ignore = true)
-    Order toEntity(CreateOrderRequest request);
-
-    // unitPrice/totalPrice come from a price-list lookup done in the service, not the request.
+    // unitPrice/totalPrice/productName come from a price-list or inventory-service lookup done in
+    // the service, never the request - productId maps straight through (auto-matched by field
+    // name), since the client legitimately does choose which product it means.
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "order", ignore = true)
+    @Mapping(target = "productName", ignore = true)
     @Mapping(target = "unitPrice", ignore = true)
     @Mapping(target = "totalPrice", ignore = true)
     @Mapping(target = "createdAt", ignore = true)

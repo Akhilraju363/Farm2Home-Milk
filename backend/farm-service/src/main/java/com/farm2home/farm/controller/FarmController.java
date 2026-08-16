@@ -4,8 +4,11 @@ import com.farm2home.common.core.constants.ApiConstants;
 import com.farm2home.common.core.constants.SecurityConstants;
 import com.farm2home.common.web.dto.response.ApiResponse;
 import com.farm2home.farm.dto.request.CreateFarmRequest;
+import com.farm2home.farm.dto.request.UpdateBusinessSettingsRequest;
 import com.farm2home.farm.dto.request.UpdateFarmRequest;
+import com.farm2home.farm.dto.response.BusinessSettingsResponse;
 import com.farm2home.farm.dto.response.FarmResponse;
+import com.farm2home.farm.service.impl.BusinessSettingsServiceImpl;
 import com.farm2home.farm.service.impl.FarmServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -42,6 +45,7 @@ import java.util.UUID;
 public class FarmController {
 
     private final FarmServiceImpl farmService;
+    private final BusinessSettingsServiceImpl businessSettingsService;
 
     @PostMapping
     @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
@@ -185,5 +189,44 @@ public class FarmController {
             @RequestParam("file") MultipartFile file) {
         return ResponseEntity.ok(ApiResponse.success("Farm image uploaded successfully",
                 farmService.uploadImage(id, file)));
+    }
+
+    // Note: "/business-settings" is a literal path segment, so Spring routes it here rather than
+    // to GET/PUT /{id} above even though both are registered on this controller - static patterns
+    // always win over template variables in Spring MVC's route matching.
+    @GetMapping("/business-settings")
+    @Operation(summary = "Get Farm2Home's delivery-origin location and radius",
+            description = "Farm2Home's own delivery origin (latitude/longitude) and maximum delivery radius in "
+                    + "kilometres - distinct from farm.farms, which is the supplier-farm registry, not the "
+                    + "company's own delivery hub. Open to any authenticated caller (other services need this to "
+                    + "compute delivery eligibility).")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Business settings retrieved"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<BusinessSettingsResponse>> getBusinessSettings() {
+        return ResponseEntity.ok(ApiResponse.success("Business settings retrieved successfully", businessSettingsService.get()));
+    }
+
+    @PutMapping("/business-settings")
+    @PreAuthorize("hasAnyRole('" + SecurityConstants.ROLE_FARM_MANAGER + "', '" + SecurityConstants.ROLE_SUPER_ADMIN + "')")
+    @Operation(summary = "Update Farm2Home's delivery-origin location and radius",
+            description = "Updates the singleton business settings row. All three fields are required (this is a "
+                    + "full replace, not a partial update).")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Business settings updated"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "A supplied field violates its validation constraint (e.g. latitude out of range)",
+                content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Missing or invalid bearer token", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                description = "Caller lacks FARM_MANAGER/SUPER_ADMIN role", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<BusinessSettingsResponse>> updateBusinessSettings(
+            @Valid @RequestBody UpdateBusinessSettingsRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Business settings updated successfully",
+                businessSettingsService.update(request)));
     }
 }

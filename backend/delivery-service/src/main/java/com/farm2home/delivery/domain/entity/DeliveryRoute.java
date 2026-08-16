@@ -8,6 +8,7 @@ import org.springframework.data.annotation.LastModifiedBy;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -40,6 +41,19 @@ public class DeliveryRoute {
     @Column(name = "is_active")
     @Builder.Default
     private boolean active = true;
+
+    // Geographic routing fields - the ONLY input to automatic route selection (see
+    // DeliveryRouteSelectionServiceImpl in customer-service). A route missing any of the three is
+    // simply never selectable by that algorithm (still fully usable for manual assignment), which
+    // is what keeps a route created before this feature existed from breaking anything.
+    @Column(name = "center_latitude", precision = 10, scale = 8)
+    private BigDecimal centerLatitude;
+
+    @Column(name = "center_longitude", precision = 11, scale = 8)
+    private BigDecimal centerLongitude;
+
+    @Column(name = "radius_km", precision = 6, scale = 2)
+    private BigDecimal radiusKm;
 
     @CreatedDate
     @Column(name = "created_at", updatable = false)

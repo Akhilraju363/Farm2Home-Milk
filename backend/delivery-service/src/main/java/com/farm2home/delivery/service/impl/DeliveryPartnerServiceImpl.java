@@ -2,6 +2,8 @@ package com.farm2home.delivery.service.impl;
 
 import com.farm2home.delivery.domain.entity.DeliveryPartner;
 import com.farm2home.delivery.domain.entity.DeliveryRoute;
+import com.farm2home.delivery.domain.enums.AssignmentStatus;
+import com.farm2home.delivery.domain.repository.DeliveryAssignmentRepository;
 import com.farm2home.delivery.domain.repository.DeliveryPartnerRepository;
 import com.farm2home.delivery.domain.repository.DeliveryRouteRepository;
 import com.farm2home.delivery.dto.request.CreatePartnerRequest;
@@ -15,14 +17,19 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class DeliveryPartnerServiceImpl {
 
+    private static final List<AssignmentStatus> ACTIVE_ASSIGNMENT_STATUSES =
+            List.of(AssignmentStatus.ASSIGNED, AssignmentStatus.OUT_FOR_DELIVERY);
+
     private final DeliveryPartnerRepository partnerRepository;
     private final DeliveryRouteRepository routeRepository;
+    private final DeliveryAssignmentRepository assignmentRepository;
     private final DeliveryMapper mapper;
 
     @Transactional
@@ -34,17 +41,17 @@ public class DeliveryPartnerServiceImpl {
         }
         DeliveryPartner partner = mapper.toEntity(request);
         partner.setRoute(route);
-        return mapper.toPartnerResponse(partnerRepository.save(partner));
+        return toResponse(partnerRepository.save(partner));
     }
 
     @Transactional(readOnly = true)
     public Page<PartnerResponse> findAll(Pageable pageable) {
-        return partnerRepository.findAllByDeletedFalse(pageable).map(mapper::toPartnerResponse);
+        return partnerRepository.findAllByDeletedFalse(pageable).map(this::toResponse);
     }
 
     @Transactional(readOnly = true)
     public PartnerResponse findById(UUID id) {
-        return mapper.toPartnerResponse(partnerRepository.findByIdAndDeletedFalse(id)
+        return toResponse(partnerRepository.findByIdAndDeletedFalse(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Partner not found: " + id)));
     }
 
@@ -60,6 +67,16 @@ public class DeliveryPartnerServiceImpl {
         }
         mapper.updatePartnerFromRequest(request, partner);
 
-        return mapper.toPartnerResponse(partnerRepository.save(partner));
+        return toResponse(partnerRepository.save(partner));
+    }
+
+    /** activeDeliveries is never persisted on DeliveryPartner - always computed live here so it
+     *  can't drift from the assignments it counts (the same count PartnerSelectionServiceImpl
+     *  itself uses for least-loaded selection). */
+    private PartnerResponse toResponse(DeliveryPartner partner) {
+        PartnerResponse response = mapper.toPartnerResponse(partner);
+        response.setActiveDeliveries(assignmentRepository.countByDeliveryPartner_IdAndStatusIn(
+                partner.getId(), ACTIVE_ASSIGNMENT_STATUSES));
+        return response;
     }
 }

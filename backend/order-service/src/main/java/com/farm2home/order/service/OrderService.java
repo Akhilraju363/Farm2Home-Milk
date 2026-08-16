@@ -7,6 +7,7 @@ import com.farm2home.common.core.reports.SalesReportSummary;
 import com.farm2home.common.export.ExportFormat;
 import com.farm2home.order.domain.enums.MilkType;
 import com.farm2home.order.domain.enums.OrderStatus;
+import com.farm2home.order.dto.request.CheckoutRequest;
 import com.farm2home.order.dto.request.CreateOrderRequest;
 import com.farm2home.order.dto.request.UpdateOrderStatusRequest;
 import com.farm2home.order.dto.response.GenerationResultResponse;
@@ -23,6 +24,10 @@ public interface OrderService {
 
     /** Create a manual ONE_TIME order. */
     OrderResponse createManualOrder(CreateOrderRequest request, UUID customerId);
+
+    /** Create a ONE_TIME order from the caller's own server-side Cart - see
+     *  OrderServiceImpl.checkout() for why items are never taken from the request itself. */
+    OrderResponse checkout(CheckoutRequest request, UUID customerId);
 
     /** List orders. {@code null} customerId returns all (admin). */
     Page<OrderResponse> findAll(UUID customerId, Pageable pageable);

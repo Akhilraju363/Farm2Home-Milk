@@ -1,4 +1,4 @@
-import { Box, Paper, Typography, List, ListItemButton, ListItemAvatar, Avatar, ListItemText, Chip, CircularProgress } from '@mui/material'
+import { Box, Paper, Typography, List, ListItemButton, ListItemAvatar, Avatar, ListItemText, Chip, CircularProgress, Button } from '@mui/material'
 import {
   ShoppingCart, LocalShipping, CheckCircle, AccessTime, Payment, ErrorOutline,
   Autorenew, PauseCircle, PlayCircle, Cancel, PersonAdd, Notifications as NotificationsIcon,
@@ -71,7 +71,7 @@ export function NotificationsPage() {
   // recent activity (read-only - marking someone else's notification "read" on their behalf
   // isn't a real action, and the backend's markAsRead ownership check would 404 it anyway).
   // Everyone else reaches it via the bell's "View all" and sees only their own, interactively.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['notifications', admin ? 'summary' : 'mine', 'full'],
     queryFn: () => (admin ? notificationService.getSummary(100) : notificationService.getMine(50)),
     refetchInterval: 60_000,
@@ -79,6 +79,16 @@ export function NotificationsPage() {
   const items = data?.data.data ?? []
   const groups = groupByDay(items)
   const unreadCount = items.filter((i) => !i.read).length
+  const stateCardSx = {
+    width: '100%',
+    minHeight: { xs: 240, sm: 198 },
+    borderRadius: 1.25,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    px: { xs: 3, sm: 6 },
+  }
 
   // Both mutations invalidate every notifications query (bell dropdown + this page) rather than
   // just this page's own key, so read state stays consistent wherever it's shown.
@@ -106,13 +116,23 @@ export function NotificationsPage() {
       />
 
       {isLoading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+        <Paper sx={stateCardSx} aria-label="Loading notifications">
           <CircularProgress />
-        </Box>
+        </Paper>
+      ) : isError ? (
+        <Paper sx={stateCardSx}>
+          <Box>
+            <ErrorOutline sx={{ fontSize: 40, color: 'text.disabled', mb: 1.5 }} />
+            <Typography variant="body1" color="text.secondary">We couldn’t load notifications.</Typography>
+            <Button variant="outlined" size="small" onClick={() => refetch()} sx={{ mt: 2 }}>Retry</Button>
+          </Box>
+        </Paper>
       ) : items.length === 0 ? (
-        <Paper sx={{ p: 6, textAlign: 'center' }}>
-          <NotificationsIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-          <Typography color="text.secondary">Nothing here yet</Typography>
+        <Paper sx={stateCardSx}>
+          <Box>
+            <NotificationsIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1.5 }} />
+            <Typography variant="body1" color="text.secondary">Nothing here yet</Typography>
+          </Box>
         </Paper>
       ) : (
         groups.map(([label, groupItems]) => (

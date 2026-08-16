@@ -15,6 +15,7 @@ import com.farm2home.customer.dto.request.UpdateCustomerRequest;
 import com.farm2home.customer.dto.response.AddressResponse;
 import com.farm2home.customer.dto.response.CustomerResponse;
 import com.farm2home.customer.service.impl.CustomerServiceImpl;
+import com.farm2home.customer.service.impl.DeliveryAvailabilityServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -63,6 +64,7 @@ class CustomerControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @MockBean private CustomerServiceImpl customerService;
+    @MockBean private DeliveryAvailabilityServiceImpl deliveryAvailabilityService;
 
     private final UUID customerId = UUID.randomUUID();
 

@@ -27,6 +27,17 @@ public interface DeliveryAssignmentRepository extends JpaRepository<DeliveryAssi
 
     boolean existsByOrderId(UUID orderId);
 
+    /** Live workload - number of non-terminal (ASSIGNED/OUT_FOR_DELIVERY) assignments for one
+     *  partner. Used by PartnerSelectionServiceImpl (least-loaded selection) and exposed
+     *  read-only on PartnerResponse/AssignmentResponse for admin visibility - never persisted as
+     *  its own column, always computed live so it can never drift from the assignments it counts. */
+    long countByDeliveryPartner_IdAndStatusIn(UUID partnerId, List<AssignmentStatus> statuses);
+
+    /** Route-deletion guard (see DeliveryRouteServiceImpl.delete()) - a route referenced by a
+     *  non-terminal (ASSIGNED/OUT_FOR_DELIVERY) assignment cannot be deleted. Historical
+     *  assignments referencing a DELIVERED/FAILED route are untouched either way. */
+    boolean existsByRoute_IdAndStatusIn(UUID routeId, List<AssignmentStatus> statuses);
+
     Page<DeliveryAssignment> findAllByStatus(AssignmentStatus status, Pageable pageable);
 
     long countByStatusAndDeliveredAtBetween(AssignmentStatus status, LocalDateTime start, LocalDateTime end);

@@ -2,7 +2,7 @@ import {
   Box, Paper, Typography, Chip, Button, Grid, Skeleton, Divider, IconButton, Alert, Stack,
 } from '@mui/material'
 import {
-  ArrowBack, LocalShipping, CheckCircle, Cancel as CancelIcon, Schedule, Person,
+  ArrowBack, LocalShipping, CheckCircle, Cancel as CancelIcon, Schedule, Person, SmartToy,
 } from '@mui/icons-material'
 import { useState } from 'react'
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom'
@@ -16,7 +16,7 @@ import { orderService } from '../../services/orderService'
 import { customerService } from '../../services/customerService'
 import { formatCurrency, formatDate, formatDateTime, statusColor } from '../../utils/formatters'
 import { ASSIGNMENT_STATUS_LABELS, ASSIGNMENT_STATUS_TRANSITIONS } from '../../types/delivery.types'
-import { MILK_TYPE_LABELS, ORDER_TYPE_LABELS } from '../../types/order.types'
+import { orderItemLabel, ORDER_TYPE_LABELS } from '../../types/order.types'
 import type { AssignmentStatus } from '../../types/delivery.types'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -137,6 +137,11 @@ export function DeliveryDetailsPage() {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography variant="h5" fontWeight={700}>Delivery {assignment.routeCode}</Typography>
               <Chip label={ASSIGNMENT_STATUS_LABELS[assignment.status]} size="small" color={statusColor(assignment.status)} />
+              <Chip
+                size="small" variant="outlined"
+                icon={assignment.autoAssigned ? <SmartToy sx={{ fontSize: 14 }} /> : <Person sx={{ fontSize: 14 }} />}
+                label={assignment.autoAssigned ? 'Automatically Assigned' : 'Manually Assigned'}
+              />
             </Box>
             <Typography variant="body2" color="text.secondary">{assignment.deliveryPartnerName}</Typography>
           </Box>
@@ -161,7 +166,7 @@ export function DeliveryDetailsPage() {
           <Section title="Delivery Overview">
             <Field label="Assignment ID" value={assignment.id} />
             <Field label="Order ID" value={canManage ? <RouterLink to={`/orders/${assignment.orderId}`} style={{ color: 'inherit' }}>{assignment.orderId}</RouterLink> : assignment.orderId} />
-            <Field label="Route" value={`${assignment.routeCode}`} />
+            <Field label="Route" value={`${assignment.routeName} (${assignment.routeCode})`} />
             <Field label="Status" value={ASSIGNMENT_STATUS_LABELS[assignment.status]} />
             {assignment.failureReason && <Field label="Failure Reason" value={assignment.failureReason} />}
             {assignment.deliveryProof && <Field label="Delivery Proof" value={assignment.deliveryProof} />}
@@ -172,6 +177,7 @@ export function DeliveryDetailsPage() {
           <Section title="Delivery Partner">
             <Field label="Name" value={assignment.deliveryPartnerName} />
             <Field label="Mobile" value={assignment.deliveryPartnerMobile} />
+            <Field label="Active Deliveries" value={assignment.partnerActiveDeliveries} />
           </Section>
         </Grid>
 
@@ -186,7 +192,7 @@ export function DeliveryDetailsPage() {
                 <Field label="Order Number" value={order.orderNumber} />
                 <Field label="Type" value={ORDER_TYPE_LABELS[order.orderType]} />
                 <Field label="Order Date" value={formatDate(order.orderDate)} />
-                <Field label="Items" value={order.items.map((it) => `${MILK_TYPE_LABELS[it.milkType]} (${it.quantity}L)`).join(', ')} />
+                <Field label="Items" value={order.items.map((it) => `${orderItemLabel(it)} (${it.quantity})`).join(', ')} />
                 <Field label="Total" value={formatCurrency(order.totalAmount)} />
               </>
             ) : (

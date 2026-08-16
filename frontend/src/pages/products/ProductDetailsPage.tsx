@@ -1,12 +1,16 @@
 import {
   Box, Paper, Typography, Chip, Button, Grid, Skeleton, Avatar, Divider, IconButton, Alert,
+  Rating, LinearProgress, List, ListItem, ListItemText,
 } from '@mui/material'
-import { ArrowBack, Edit, Storefront, AddCircleOutline, EditCalendar } from '@mui/icons-material'
+import { ArrowBack, Edit, Storefront, AddCircleOutline, EditCalendar, Delete } from '@mui/icons-material'
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
+import { useSnackbar } from 'notistack'
 import { productService } from '../../services/productService'
+import { reviewService } from '../../services/reviewService'
 import { ProductFormDialog } from '../../components/product/ProductFormDialog'
+import { ConfirmDialog } from '../../components/common/ConfirmDialog'
 import { useAuth } from '../../hooks/useAuth'
 import { formatCurrency, formatDateTime } from '../../utils/formatters'
 import { PRODUCT_UNIT_LABELS, STOCK_STATUS_LABELS } from '../../types/product.types'
@@ -39,9 +43,14 @@ export function ProductDetailsPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { enqueueSnackbar } = useSnackbar()
   const queryClient = useQueryClient()
   const canWrite = user?.roles.some((r) => r === 'SUPER_ADMIN' || r === 'FARM_MANAGER') ?? false
+  // Moderation (delete any review) - same roles as canWrite today, kept as its own flag since the
+  // two permissions are conceptually distinct even though they currently match.
+  const canModerateReviews = canWrite
   const [editOpen, setEditOpen] = useState(false)
+  const [deleteReviewId, setDeleteReviewId] = useState<string | null>(null)
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['products', id],
@@ -50,6 +59,40 @@ export function ProductDetailsPage() {
     retry: false,
   })
   const product = data?.data.data
+
+  const { data: ratingRes } = useQuery({
+    queryKey: ['reviews', 'rating-summary', id],
+    queryFn: () => reviewService.ratingSummary(id!),
+    enabled: Boolean(id),
+    retry: false,
+  })
+  const ratingSummary = ratingRes?.data.data
+
+  const { data: reviewsRes, isLoading: reviewsLoading } = useQuery({
+    queryKey: ['reviews', 'product', id],
+    queryFn: () => reviewService.findByProduct(id!, { size: 10 }),
+    enabled: Boolean(id),
+    retry: false,
+  })
+  const reviews = reviewsRes?.data.data.content ?? []
+
+  const invalidateReviews = () => {
+    queryClient.invalidateQueries({ queryKey: ['reviews', 'rating-summary', id] })
+    queryClient.invalidateQueries({ queryKey: ['reviews', 'product', id] })
+  }
+
+  const deleteReviewMutation = useMutation({
+    mutationFn: (reviewId: string) => reviewService.delete(reviewId),
+    onSuccess: () => {
+      enqueueSnackbar('Review removed successfully', { variant: 'success' })
+      invalidateReviews()
+      setDeleteReviewId(null)
+    },
+    onError: (err: any) => {
+      enqueueSnackbar(err.response?.data?.message ?? 'Could not remove this review.', { variant: 'error' })
+      setDeleteReviewId(null)
+    },
+  })
 
   const handleSaved = () => {
     setEditOpen(false)
@@ -177,7 +220,86 @@ export function ProductDetailsPage() {
         </Grid>
       </Grid>
 
+      <Paper variant="outlined" sx={{ p: 3, borderRadius: 2, mt: 2 }}>
+        <Typography variant="subtitle1" fontWeight={700} gutterBottom>Ratings & Reviews</Typography>
+        <Divider sx={{ mb: 2 }} />
+
+        {ratingSummary && ratingSummary.totalReviews > 0 ? (
+          <Box sx={{ display: 'flex', gap: 4, flexWrap: 'wrap', mb: 3 }}>
+            <Box sx={{ textAlign: 'center', minWidth: 120 }}>
+              <Typography variant="h3" fontWeight={700}>{ratingSummary.averageRating.toFixed(1)}</Typography>
+              <Rating value={ratingSummary.averageRating} precision={0.1} readOnly />
+              <Typography variant="caption" color="text.secondary" display="block">
+                {ratingSummary.totalReviews} review{ratingSummary.totalReviews === 1 ? '' : 's'}
+              </Typography>
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 220, maxWidth: 360 }}>
+              {([5, 4, 3, 2, 1] as const).map((star) => {
+                const count = ratingSummary[`rating${star}Count` as const]
+                const pct = ratingSummary.totalReviews > 0 ? (count / ratingSummary.totalReviews) * 100 : 0
+                return (
+                  <Box key={star} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                    <Typography variant="caption" sx={{ width: 12 }}>{star}</Typography>
+                    <LinearProgress variant="determinate" value={pct} sx={{ flex: 1, height: 6, borderRadius: 1 }} />
+                    <Typography variant="caption" color="text.secondary" sx={{ width: 24, textAlign: 'right' }}>{count}</Typography>
+                  </Box>
+                )
+              })}
+            </Box>
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            No reviews yet for this product.
+          </Typography>
+        )}
+
+        {reviewsLoading ? (
+          <Skeleton variant="rectangular" height={80} sx={{ borderRadius: 1 }} />
+        ) : reviews.length > 0 && (
+          <List disablePadding>
+            {reviews.map((r) => (
+              <ListItem key={r.id} disableGutters divider alignItems="flex-start">
+                <ListItemText
+                  primary={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Rating value={r.rating} size="small" readOnly />
+                      <Typography variant="body2" fontWeight={600}>{r.customerDisplayName ?? 'Customer'}</Typography>
+                    </Box>
+                  }
+                  secondary={
+                    <>
+                      {r.reviewText && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{r.reviewText}</Typography>
+                      )}
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                        {formatDateTime(r.createdAt)}
+                      </Typography>
+                    </>
+                  }
+                />
+                {canModerateReviews && (
+                  <IconButton size="small" onClick={() => setDeleteReviewId(r.id)} aria-label="Remove review">
+                    <Delete fontSize="small" />
+                  </IconButton>
+                )}
+              </ListItem>
+            ))}
+          </List>
+        )}
+      </Paper>
+
       <ProductFormDialog open={editOpen} product={product} onClose={() => setEditOpen(false)} onSaved={handleSaved} />
+
+      <ConfirmDialog
+        open={Boolean(deleteReviewId)}
+        title="Remove Review?"
+        message="This permanently removes the review from this product's listing."
+        confirmLabel="Remove"
+        destructive
+        loading={deleteReviewMutation.isPending}
+        onConfirm={() => deleteReviewId && deleteReviewMutation.mutate(deleteReviewId)}
+        onClose={() => setDeleteReviewId(null)}
+      />
     </Box>
   )
 }

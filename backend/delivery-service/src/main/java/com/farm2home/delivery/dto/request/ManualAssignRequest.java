@@ -21,9 +21,13 @@ public class ManualAssignRequest {
             example = "8f14e45f-ceea-467e-adc1-0e1d5a3a1e2b", requiredMode = Schema.RequiredMode.REQUIRED)
     private UUID deliveryPartnerId;
 
-    @NotNull(message = "Route ID is required")
-    @Schema(description = "Delivery route to assign the order to. Must reference an existing, "
-            + "non-deleted route.",
-            example = "3b1e6a2c-2f9a-4b8b-9c2e-0a1a2b3c4d5e", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Explicit admin override for the route - optional. The order's own "
+            + "automatically-selected route (Order.deliveryRouteId, computed at order-creation "
+            + "time from the customer's delivery address - see order-service's "
+            + "verifyDeliveryEligibility) is used when this is omitted. Provide this only to "
+            + "deliberately change the route (e.g. the customer's address changed after the order "
+            + "was placed). Either way, the resolved route must reference an existing, "
+            + "non-deleted, active route.",
+            example = "3b1e6a2c-2f9a-4b8b-9c2e-0a1a2b3c4d5e")
     private UUID routeId;
 }

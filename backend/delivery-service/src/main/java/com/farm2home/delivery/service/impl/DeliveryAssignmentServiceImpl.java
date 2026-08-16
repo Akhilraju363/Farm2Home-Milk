@@ -8,6 +8,8 @@ import com.farm2home.common.core.audit.AuditEntry;
 import com.farm2home.common.core.audit.AuditLogService;
 import com.farm2home.common.core.constants.EmailTemplateConstants;
 import com.farm2home.common.core.dashboard.DeliverySummaryResponse;
+import com.farm2home.common.web.exception.BusinessException;
+import com.farm2home.common.web.exception.ConflictException;
 import com.farm2home.delivery.client.OrderDetailResponse;
 import com.farm2home.delivery.client.OrderServiceClient;
 import com.farm2home.delivery.client.PaymentServiceClient;
@@ -38,7 +40,8 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
-import reactor.core.publisher.Mono;
+import org.springframework.web.reactive.function.client.WebClientException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,14 +64,18 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
     private final PaymentServiceClient paymentServiceClient;
     private final OrderServiceClient orderServiceClient;
 
+    private static final String ORDER_STATUS_PENDING = "PENDING";
+    private static final List<AssignmentStatus> ACTIVE_ASSIGNMENT_STATUSES =
+            List.of(AssignmentStatus.ASSIGNED, AssignmentStatus.OUT_FOR_DELIVERY);
+
     @Override
     @Transactional
     public AssignmentResponse manualAssign(ManualAssignRequest request) {
         DeliveryPartner partner = partnerRepository.findByIdAndDeletedFalse(request.getDeliveryPartnerId())
                 .orElseThrow(() -> new ResourceNotFoundException("Delivery partner not found: " + request.getDeliveryPartnerId()));
-
-        DeliveryRoute route = routeRepository.findByIdAndDeletedFalse(request.getRouteId())
-                .orElseThrow(() -> new ResourceNotFoundException("Route not found: " + request.getRouteId()));
+        if (!partner.isActive()) {
+            throw new ConflictException("Delivery partner \"" + partner.getName() + "\" is not currently active.");
+        }
 
         if (assignmentRepository.existsByOrderId(request.getOrderId())) {
             throw new DeliveryException("Order " + request.getOrderId() + " already has a delivery assignment");
@@ -79,17 +86,40 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         // used to leave customerId/orderNumber null - harmless for the fields that already
         // existed, but it silently broke any future feature needing to verify a CUSTOMER owns
         // this assignment (delivery-tracking's customer-ownership check needs exactly that).
-        // Backfilling from order-service here keeps both assignment paths consistent.
-        OrderDetailResponse order = orderServiceClient.getOrder(request.getOrderId())
-                .onErrorResume(ex -> Mono.empty())
-                .block();
+        // Backfilling from order-service here keeps both assignment paths consistent. This lookup
+        // used to swallow every failure (including a genuine 404) and proceed anyway with a null
+        // customerId/orderNumber - resolveOrder() below makes "the order doesn't exist" and "the
+        // order isn't eligible for a new assignment" real, blocking checks instead.
+        OrderDetailResponse order = resolveOrder(request.getOrderId());
+        if (!ORDER_STATUS_PENDING.equals(order.getStatus())) {
+            throw new DeliveryException("Order " + order.getOrderNumber()
+                    + " is not eligible for delivery assignment (status: " + order.getStatus() + ").");
+        }
+
+        // The order's own automatically-selected route (see OrderServiceImpl.
+        // verifyDeliveryEligibility) is authoritative by default - request.getRouteId() is an
+        // explicit admin override only (e.g. the customer's address changed after the order was
+        // placed), never a customer-controlled value (this endpoint is FARM_MANAGER/SUPER_ADMIN
+        // only). An old order created before this feature existed has no deliveryRouteId, so an
+        // override becomes mandatory for it - surfaced as a clear 422, not an NPE.
+        UUID routeId = request.getRouteId() != null ? request.getRouteId() : order.getDeliveryRouteId();
+        if (routeId == null) {
+            throw new BusinessException("No active delivery route is available for order " + order.getOrderNumber()
+                    + "'s delivery address. Select a route to proceed.");
+        }
+        DeliveryRoute route = routeRepository.findByIdAndDeletedFalse(routeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Route not found: " + routeId));
+        if (!route.isActive()) {
+            throw new ConflictException("Route \"" + route.getRouteName() + "\" is not currently active.");
+        }
 
         DeliveryAssignment assignment = assignmentRepository.save(DeliveryAssignment.builder()
                 .orderId(request.getOrderId())
-                .customerId(order != null ? order.getCustomerId() : null)
-                .orderNumber(order != null ? order.getOrderNumber() : null)
+                .customerId(order.getCustomerId())
+                .orderNumber(order.getOrderNumber())
                 .deliveryPartner(partner)
                 .route(route)
+                .autoAssigned(false)
                 .build());
 
         eventProducer.publishDeliveryEvent(assignment, EmailTemplateConstants.EVENT_DELIVERY_ASSIGNED);
@@ -99,7 +129,22 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
                 .entityId(assignment.getId().toString())
                 .details("Assigned to delivery partner " + request.getDeliveryPartnerId())
                 .build());
-        return mapper.toAssignmentResponse(assignment);
+        return toResponse(assignment);
+    }
+
+    private OrderDetailResponse resolveOrder(UUID orderId) {
+        OrderDetailResponse order;
+        try {
+            order = orderServiceClient.getOrder(orderId).block();
+        } catch (WebClientResponseException.NotFound ex) {
+            throw new ResourceNotFoundException("Order not found: " + orderId);
+        } catch (WebClientException ex) {
+            throw new DeliveryException("Could not verify order details right now. Please try again.");
+        }
+        if (order == null) {
+            throw new ResourceNotFoundException("Order not found: " + orderId);
+        }
+        return order;
     }
 
     @Override
@@ -149,7 +194,7 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
                 .failureReason(next == AssignmentStatus.FAILED ? request.getFailureReason() : null)
                 .build());
 
-        return mapper.toAssignmentResponse(saved);
+        return toResponse(saved);
     }
 
     @Override
@@ -174,21 +219,21 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
                 .details("Delivery delayed: " + request.getReason())
                 .build());
 
-        return mapper.toAssignmentResponse(assignment);
+        return toResponse(assignment);
     }
 
     @Override
     @Transactional(readOnly = true)
     public AssignmentResponse findById(UUID id, UUID callerId, boolean isAdmin) {
-        return mapper.toAssignmentResponse(resolve(id, callerId, isAdmin));
+        return toResponse(resolve(id, callerId, isAdmin));
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<AssignmentResponse> findAll(UUID callerId, boolean isAdmin, Pageable pageable) {
-        if (isAdmin) return assignmentRepository.findAll(pageable).map(mapper::toAssignmentResponse);
+        if (isAdmin) return assignmentRepository.findAll(pageable).map(this::toResponse);
         return assignmentRepository.findAllByDeliveryPartnerId(resolvePartnerId(callerId), pageable)
-                .map(mapper::toAssignmentResponse);
+                .map(this::toResponse);
     }
 
     @Override
@@ -197,7 +242,7 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         List<DeliveryAssignment> assignments = assignmentRepository.findAllByOrderId(orderId);
 
         if (isAdmin) {
-            return assignments.stream().map(mapper::toAssignmentResponse).toList();
+            return assignments.stream().map(this::toResponse).toList();
         }
 
         // A caller who resolves to a DeliveryPartner profile only ever sees their own
@@ -211,13 +256,13 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         if (callerPartnerId.isPresent()) {
             return assignments.stream()
                     .filter(a -> callerPartnerId.get().equals(a.getDeliveryPartner().getId()))
-                    .map(mapper::toAssignmentResponse)
+                    .map(this::toResponse)
                     .toList();
         }
 
         return assignments.stream()
                 .filter(a -> callerId.equals(a.getCustomerId()))
-                .map(mapper::toAssignmentResponse)
+                .map(this::toResponse)
                 .toList();
     }
 
@@ -280,7 +325,7 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
     @Override
     @Transactional(readOnly = true)
     public Page<AssignmentResponse> search(UUID callerId, boolean isAdmin, String keyword, LocalDate dateFrom,
-            LocalDate dateTo, AssignmentStatus status, Pageable pageable) {
+            LocalDate dateTo, AssignmentStatus status, Boolean autoAssigned, Pageable pageable) {
         Specification<DeliveryAssignment> spec = Specification.where(null);
         if (!isAdmin) {
             spec = spec.and(DeliveryAssignmentSpecifications.hasDeliveryPartner(resolvePartnerId(callerId)));
@@ -294,7 +339,10 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         if (status != null) {
             spec = spec.and(DeliveryAssignmentSpecifications.hasStatus(status));
         }
-        return assignmentRepository.findAll(spec, pageable).map(mapper::toAssignmentResponse);
+        if (autoAssigned != null) {
+            spec = spec.and(DeliveryAssignmentSpecifications.isAutoAssigned(autoAssigned));
+        }
+        return assignmentRepository.findAll(spec, pageable).map(this::toResponse);
     }
 
     /** DeliveryAssignmentRepository.findPerformanceTrend does the real aggregation (COUNT GROUP
@@ -331,6 +379,17 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         } catch (org.springframework.web.reactive.function.client.WebClientException ex) {
             throw new DeliveryException("Could not verify payment status right now. Please try again.");
         }
+    }
+
+    /** Every AssignmentResponse goes through here (never mapper.toAssignmentResponse directly) so
+     *  partnerActiveDeliveries is always the partner's live workload, not left at the response
+     *  DTO's zero-value default - the same count PartnerSelectionServiceImpl itself uses to pick
+     *  the least-loaded partner (see DeliveryAssignmentRepository.countByDeliveryPartner_IdAndStatusIn). */
+    private AssignmentResponse toResponse(DeliveryAssignment assignment) {
+        AssignmentResponse response = mapper.toAssignmentResponse(assignment);
+        response.setPartnerActiveDeliveries(assignmentRepository.countByDeliveryPartner_IdAndStatusIn(
+                assignment.getDeliveryPartner().getId(), ACTIVE_ASSIGNMENT_STATUSES));
+        return response;
     }
 
     private DeliveryAssignment resolve(UUID id, UUID callerId, boolean isAdmin) {

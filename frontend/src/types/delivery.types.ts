@@ -26,7 +26,14 @@ export interface Assignment {
   deliveryPartnerMobile: string
   routeId: string
   routeCode: string
+  routeName: string
   status: AssignmentStatus
+  // true when OrderEventConsumer created this automatically (least-loaded eligible partner on
+  // the order's own route, see PartnerSelectionServiceImpl); false for an admin's manualAssign.
+  autoAssigned: boolean
+  // The assigned partner's current (live, not a snapshot) count of non-terminal
+  // (ASSIGNED/OUT_FOR_DELIVERY) assignments, including this one.
+  partnerActiveDeliveries: number
   assignedAt: string
   deliveredAt?: string
   failureReason?: string
@@ -44,6 +51,9 @@ export interface Partner {
   vehicleType?: string
   active: boolean
   createdAt: string
+  // Live count of non-terminal (ASSIGNED/OUT_FOR_DELIVERY) assignments - the same workload
+  // PartnerSelectionServiceImpl uses for automatic least-loaded assignment.
+  activeDeliveries?: number
 }
 
 export interface DeliveryRoute {
@@ -55,12 +65,56 @@ export interface DeliveryRoute {
   pincode: string
   active: boolean
   createdAt: string
+  // Coverage circle used for automatic route selection (DeliveryRouteSelectionServiceImpl in
+  // customer-service, the sole authoritative implementation - the frontend never computes this).
+  // Null if this route was never configured for it.
+  centerLatitude?: number | null
+  centerLongitude?: number | null
+  radiusKm?: number | null
+}
+
+export interface CreateRouteRequest {
+  routeName: string
+  routeCode: string
+  area: string
+  city: string
+  pincode: string
+  centerLatitude?: number
+  centerLongitude?: number
+  radiusKm?: number
+}
+
+// Partial update - every field optional/omit to leave unchanged (matches UpdateRouteRequest on
+// the backend). routeCode cannot be changed via this endpoint.
+export interface UpdateRouteRequest {
+  routeName?: string
+  area?: string
+  city?: string
+  pincode?: string
+  active?: boolean
+  centerLatitude?: number
+  centerLongitude?: number
+  radiusKm?: number
+}
+
+export interface UpdateRouteStatusRequest {
+  active: boolean
+}
+
+export interface RouteSearchParams {
+  keyword?: string
+  active?: boolean
+  page?: number
+  size?: number
+  sort?: string
 }
 
 export interface ManualAssignRequest {
   orderId: string
   deliveryPartnerId: string
-  routeId: string
+  // Optional explicit override - the order's own automatically-selected route
+  // (Order.deliveryRouteId) is used when this is omitted. See AssignDeliveryDialog.
+  routeId?: string
 }
 
 export interface UpdateAssignmentStatusRequest {
@@ -82,6 +136,10 @@ export interface AssignmentSearchParams {
   dateFrom?: string
   dateTo?: string
   status?: AssignmentStatus
+  // true = automatically assigned only; false = manually assigned only; omit = both. Used by the
+  // admin dashboard's "Automatically assigned"/"Manually assigned" KPI counts (search().totalElements,
+  // same pattern already used for per-status counts - no bespoke count endpoint).
+  autoAssigned?: boolean
   page?: number
   size?: number
   sort?: string

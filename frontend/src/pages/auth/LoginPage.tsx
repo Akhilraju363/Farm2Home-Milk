@@ -14,6 +14,8 @@ import type { AppDispatch } from '../../store/store'
 import { setCredentials } from '../../store/slices/authSlice'
 import { authService } from '../../services/authService'
 import { tokenStorage } from '../../services/tokenStorage'
+import { getLandingRoute } from '../../utils/roleLanding'
+import { PublicFooter } from '../../components/layout/PublicFooter'
 
 const schema = yup.object({
   // No format restriction here to match the backend (LoginRequest identifier is @NotBlank only):
@@ -69,7 +71,7 @@ export function LoginPage() {
       const { accessToken, refreshToken, user } = res.data.data
       tokenStorage.setTokens(accessToken, refreshToken, rememberMe)
       dispatch(setCredentials({ accessToken, user }))
-      navigate('/dashboard', { replace: true })
+      navigate(getLandingRoute(user.roles), { replace: true })
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Invalid credentials. Please try again.')
     }
@@ -224,6 +226,8 @@ export function LoginPage() {
               Create Account
             </Typography>
           </Typography>
+
+          <PublicFooter variant="compact" />
         </Box>
       </Box>
     </Box>

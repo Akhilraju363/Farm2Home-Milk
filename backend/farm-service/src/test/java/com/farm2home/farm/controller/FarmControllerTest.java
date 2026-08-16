@@ -4,6 +4,7 @@ import com.farm2home.farm.config.GatewayHeaderAuthFilter;
 import com.farm2home.farm.config.SecurityConfig;
 import com.farm2home.farm.dto.request.CreateFarmRequest;
 import com.farm2home.farm.dto.response.FarmResponse;
+import com.farm2home.farm.service.impl.BusinessSettingsServiceImpl;
 import com.farm2home.farm.service.impl.FarmServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -48,6 +49,7 @@ class FarmControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @MockBean private FarmServiceImpl farmService;
+    @MockBean private BusinessSettingsServiceImpl businessSettingsService;
 
     private final UUID farmId = UUID.randomUUID();
 

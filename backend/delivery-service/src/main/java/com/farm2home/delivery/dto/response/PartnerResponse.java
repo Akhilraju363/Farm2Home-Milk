@@ -40,4 +40,9 @@ public class PartnerResponse {
 
     @Schema(description = "When the partner record was created.", example = "2026-01-15T10:00:00")
     private LocalDateTime createdAt;
+
+    @Schema(description = "Current count of non-terminal (ASSIGNED/OUT_FOR_DELIVERY) assignments - "
+            + "the same live workload PartnerSelectionServiceImpl uses to pick the least-loaded "
+            + "partner, exposed here for admin visibility (see DeliveryPartnerServiceImpl).", example = "2")
+    private long activeDeliveries;
 }

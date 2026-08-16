@@ -1,7 +1,7 @@
 import axiosClient from './axiosClient'
 import type {
   Customer, CustomerAddress, CreateAddressRequest, UpdateAddressRequest,
-  UpdateCustomerRequest, CustomerSearchParams,
+  UpdateCustomerRequest, CustomerSearchParams, DeliveryAvailability,
 } from '../types/customer.types'
 import type { ApiResponse, PageResponse } from '../types/common.types'
 
@@ -97,4 +97,11 @@ export const customerService = {
 
   setDefaultAddress: (customerId: string, addressId: string) =>
     axiosClient.patch<ApiResponse<CustomerAddress>>(`${BASE}/${customerId}/addresses/${addressId}/default`),
+
+  // Backend-authoritative 10 KM delivery-radius check (see order-service/customer-service's
+  // Haversine calculation) - addressId omitted checks the caller's default address.
+  getDeliveryAvailability: (addressId?: string) =>
+    axiosClient.get<ApiResponse<DeliveryAvailability>>(`${BASE}/me/delivery-availability`, {
+      params: addressId ? { addressId } : undefined,
+    }),
 }

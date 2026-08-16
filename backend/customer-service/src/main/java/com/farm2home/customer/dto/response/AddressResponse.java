@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -24,6 +25,10 @@ public class AddressResponse {
     private String district;
     @Schema(example = "400001")
     private String pincode;
+    @Schema(description = "Null if this address has no captured location yet.", example = "13.6275")
+    private BigDecimal latitude;
+    @Schema(description = "Null if this address has no captured location yet.", example = "78.9691")
+    private BigDecimal longitude;
     private boolean defaultAddress;
     @Schema(example = "2026-06-15T09:20:00")
     private LocalDateTime createdAt;

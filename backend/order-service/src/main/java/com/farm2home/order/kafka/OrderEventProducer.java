@@ -28,12 +28,15 @@ public class OrderEventProducer {
                 .orderNumber(order.getOrderNumber())
                 .customerId(order.getCustomerId())
                 .subscriptionId(order.getSubscriptionId())
+                .deliveryRouteId(order.getDeliveryRouteId())
                 .orderDate(order.getOrderDate())
                 .orderType(order.getOrderType().name())
                 .totalAmount(order.getTotalAmount())
+                // milkType is null for a product-based item (see OrderItem's V4 migration comment
+                // - exactly one of milkType/productId is ever set) - .name() would NPE otherwise.
                 .items(order.getItems() == null ? Collections.emptyList() :
                         order.getItems().stream().map(item -> OrderEvent.OrderItem.builder()
-                                .milkType(item.getMilkType().name())
+                                .milkType(item.getMilkType() != null ? item.getMilkType().name() : null)
                                 .quantity(item.getQuantity())
                                 .unitPrice(item.getUnitPrice())
                                 .totalPrice(item.getTotalPrice())
