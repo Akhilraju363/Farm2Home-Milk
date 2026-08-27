@@ -3,6 +3,8 @@ package com.farm2home.auth.controller;
 import com.farm2home.auth.domain.entity.User;
 import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
+import com.farm2home.auth.dto.response.GoogleAuthResponse;
+import com.farm2home.auth.dto.response.OtpVerifyResponse;
 import com.farm2home.auth.service.AuthService;
 import com.farm2home.common.web.dto.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -156,25 +158,63 @@ public class AuthController {
     @PostMapping("/verify-otp")
     @Operation(summary = "Verify OTP",
             description = "Validates the OTP against the most recently generated, still-unused record for the "
-                    + "given mobile + otpType. When otpType=REGISTRATION, also marks the matching user account "
-                    + "verified=true. No authentication required — this is a pre-login, public endpoint "
+                    + "given mobile + otpType (bounded to a few attempts - see OtpProperties.maxAttempts - "
+                    + "before the code is burned). When otpType=REGISTRATION, also marks the matching user "
+                    + "account verified=true. When otpType=LOGIN, this IS the Mobile OTP Login endpoint: an "
+                    + "existing account is signed in immediately (response.data.auth populated, identical "
+                    + "shape to POST /login), and a mobile with no account yet returns "
+                    + "response.data.registrationRequired=true so the caller can continue into "
+                    + "POST /register. No authentication required — this is a pre-login, public endpoint "
                     + "(listed in SecurityConfig's PUBLIC_ENDPOINTS).")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                description = "OTP verified"),
+                description = "OTP verified",
+                content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                        examples = @ExampleObject(value = """
+                                {
+                                  "success": true,
+                                  "message": "OTP verified successfully.",
+                                  "data": { "registrationRequired": false, "auth": null }
+                                }"""))),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
                 description = "Validation failed (OTP not exactly 6 digits, or invalid mobile format)",
                 content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
-                description = "No (unused) OTP exists for this mobile + otpType, it has expired, or it does "
-                        + "not match", content = @Content),
+                description = "No (unused) OTP exists for this mobile + otpType, it has expired, it does not "
+                        + "match, or the maximum number of incorrect attempts was exceeded", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
                 description = "Edge case only: otpType=REGISTRATION but no user exists for the mobile number",
                 content = @Content)
     })
-    public ResponseEntity<ApiResponse<Void>> verifyOtp(@Valid @RequestBody VerifyOtpRequest request) {
-        authService.verifyOtp(request);
-        return ResponseEntity.ok(ApiResponse.success("OTP verified successfully.", null));
+    public ResponseEntity<ApiResponse<OtpVerifyResponse>> verifyOtp(@Valid @RequestBody VerifyOtpRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("OTP verified successfully.", authService.verifyOtp(request)));
+    }
+
+    @PostMapping("/google")
+    @Operation(summary = "Sign in (or continue registration) with Google",
+            description = "Validates the Google Identity Services credential server-side (signature, issuer, "
+                    + "audience, expiry - see GoogleTokenValidator) - the browser-supplied email/name/subject "
+                    + "are never trusted directly. A Google identity already linked to a Farm2Home account, or "
+                    + "one whose Google-verified email matches an existing account, signs straight in "
+                    + "(response.data.auth populated). A Google identity matching no account returns "
+                    + "response.data.registrationRequired=true (with firstName/lastName/email pre-fill values) "
+                    + "so the caller can continue into POST /register with the same credential attached - no "
+                    + "account is created here, since Farm2Home accounts require a mobile number Google never "
+                    + "supplies. The resulting account's role is always CUSTOMER; a Google identity can never "
+                    + "select or elevate its own role. No authentication required — this is a pre-login, public "
+                    + "endpoint (listed in SecurityConfig's PUBLIC_ENDPOINTS).")
+    @ApiResponses({
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                description = "Credential validated - either signed in or registration-continuation info returned"),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
+                description = "Validation failed (blank credential)", content = @Content),
+        @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
+                description = "Invalid/expired/unverifiable Google credential, Google Sign-In not configured on "
+                        + "this server, or the email matches an existing account without Google-verified email "
+                        + "ownership (never auto-links in that case)", content = @Content)
+    })
+    public ResponseEntity<ApiResponse<GoogleAuthResponse>> google(@Valid @RequestBody GoogleAuthRequest request) {
+        return ResponseEntity.ok(ApiResponse.success("Google credential verified", authService.googleAuth(request)));
     }
 
     @PostMapping("/refresh-token")

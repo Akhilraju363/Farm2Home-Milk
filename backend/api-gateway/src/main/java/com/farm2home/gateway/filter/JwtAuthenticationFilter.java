@@ -38,6 +38,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         ApiConstants.API_V1 + "/auth/send-otp",
         ApiConstants.API_V1 + "/auth/verify-otp",
         ApiConstants.API_V1 + "/auth/refresh-token",
+        ApiConstants.API_V1 + "/auth/google",
         // Razorpay calls this directly and cannot attach our JWT - safe to expose because the
         // payload's own HMAC-SHA256 signature (RazorpaySignature, checked before anything else
         // in PaymentServiceImpl.handleWebhook) is the real authentication here, not JWT.

@@ -27,6 +27,20 @@ public class NotificationLog {
     @Column(name = "event_type", nullable = false, length = 50)
     private String eventType;
 
+    // The producing event's own entity id (orderId/paymentId/assignmentId/subscriptionId - see
+    // KafkaEventDto.getDedupeEntityId()) plus the moment the source event was published, used
+    // together to dedupe a Kafka redelivery of the same message for the same channel (see
+    // NotificationServiceImpl.sendForChannel()) without also suppressing a genuinely new
+    // occurrence of a recurring event type for the same entity (e.g. a subscription paused,
+    // resumed, then paused again - same subscriptionId, different eventOccurredAt). Both null
+    // for event types that carry no entity id at all (OTP, CUSTOMER_CREATED) - those are simply
+    // never deduped.
+    @Column(name = "source_event_id")
+    private UUID sourceEventId;
+
+    @Column(name = "event_occurred_at")
+    private LocalDateTime eventOccurredAt;
+
     @Column(nullable = false, length = 255)
     private String recipient;
 

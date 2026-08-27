@@ -46,6 +46,16 @@ app:
   mail:
     from: ${MAIL_FROM:no-reply@farm2homemilk.example}
 
+# email.enabled=false (default) selects the safe logging-only provider - matches sms.provider/
+# push.provider's "logging by default" convention, so local dev/CI never attempts a real SMTP
+# handshake to the Mailtrap sandbox host above unless explicitly opted in.
+email:
+  enabled: ${EMAIL_ENABLED:false}
+  provider: ${EMAIL_PROVIDER:smtp}
+  from-name: ${EMAIL_FROM_NAME:Farm2Home}
+  max-attempts: ${EMAIL_MAX_ATTEMPTS:3}
+  retry-backoff-millis: ${EMAIL_RETRY_BACKOFF_MILLIS:150}
+
 sms:
   provider: ${SMS_PROVIDER:logging}
   max-attempts: ${SMS_MAX_ATTEMPTS:3}

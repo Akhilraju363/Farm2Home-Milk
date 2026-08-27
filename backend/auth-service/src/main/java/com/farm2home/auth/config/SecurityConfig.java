@@ -42,7 +42,8 @@ public class SecurityConfig {
                     ApiConstants.API_V1 + "/auth/login",
                     ApiConstants.API_V1 + "/auth/send-otp",
                     ApiConstants.API_V1 + "/auth/verify-otp",
-                    ApiConstants.API_V1 + "/auth/refresh-token"
+                    ApiConstants.API_V1 + "/auth/refresh-token",
+                    ApiConstants.API_V1 + "/auth/google"
             )
     ).toArray(String[]::new);
 

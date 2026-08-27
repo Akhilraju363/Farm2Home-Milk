@@ -14,7 +14,7 @@ import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, Link as RouterLink } from 'react-router-dom'
+import { useLocation, useNavigate, Link as RouterLink } from 'react-router-dom'
 import { useDispatch } from 'react-redux'
 import milkPourImage from '../../assets/images/milk-pour.png'
 import farmFieldImage from '../../assets/images/farm-field-milk.png'
@@ -810,10 +810,24 @@ function VerificationStep({
   )
 }
 
+// Carried via router state from LoginPage's Google button (firstName/lastName/email, server-
+// validated) or MobileOtpDialog (mobile, server-verified via a real OTP the customer just
+// entered) when either found no existing Farm2Home account - see GoogleAuthResponse/
+// OtpVerifyResponse's registrationRequired. Absent for a normal, direct /register visit.
+interface RegisterPrefillState {
+  mobile?: string
+  firstName?: string
+  lastName?: string
+  email?: string
+  googleCredential?: string
+}
+
 export function RegisterPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const dispatch = useDispatch<AppDispatch>()
   const { user } = useAuth()
+  const prefill = (location.state as RegisterPrefillState | null) ?? undefined
   const [step, setStep] = useState(1)
   const [error, setError] = useState('')
   const [addressWarning, setAddressWarning] = useState('')
@@ -834,6 +848,10 @@ export function RegisterPage() {
         mobile: data.mobile,
         email: data.email || undefined,
         password: data.password,
+        // Only ever set when this registration continues a Google Sign-In (see
+        // GoogleAuthResponse.registrationRequired) - the backend re-validates the same credential
+        // and links it to the new account. Omitted for every other registration.
+        googleCredential: prefill?.googleCredential,
       })
       const { accessToken, refreshToken, user } = res.data.data
       tokenStorage.setTokens(accessToken, refreshToken, true)
@@ -999,7 +1017,10 @@ export function RegisterPage() {
 
             {step === 1 && (
               <PersonalDetailsStep
-                defaultValues={personalDetails}
+                // personalDetails (set once step 1 is actually submitted) always wins over the
+                // one-time router-state prefill, e.g. if the customer navigates back to step 1
+                // and edits a value.
+                defaultValues={personalDetails ?? prefill}
                 error={error}
                 submitting={submitting}
                 onNext={handlePersonalDetailsNext}

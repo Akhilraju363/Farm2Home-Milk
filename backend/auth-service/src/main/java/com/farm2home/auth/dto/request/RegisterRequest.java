@@ -41,4 +41,13 @@ public class RegisterRequest {
             + "letter, one digit, and one special character. Stored only as a BCrypt hash.",
             example = "Str0ng!Pass")
     private String password;
+
+    @Schema(description = "Optional - present only when this registration continues a Google Sign-In "
+            + "that found no existing Farm2Home account (see POST /auth/google's "
+            + "registrationRequired=true response). The same Google ID token is re-validated "
+            + "server-side here (see GoogleTokenValidator); if present, its email must match the "
+            + "email field above exactly, and the resulting account is immediately linked to that "
+            + "Google identity. Omit entirely for a normal password-only registration - this changes "
+            + "nothing about that path.")
+    private String googleCredential;
 }

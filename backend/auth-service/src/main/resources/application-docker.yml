@@ -25,6 +25,15 @@ sms:
   max-attempts: ${SMS_MAX_ATTEMPTS:3}
   retry-backoff-millis: ${SMS_RETRY_BACKOFF_MILLIS:150}
 
+otp:
+  expiry-seconds: ${OTP_EXPIRY_SECONDS:300}
+  max-attempts: ${OTP_MAX_ATTEMPTS:5}
+  resend-cooldown-seconds: ${OTP_RESEND_COOLDOWN_SECONDS:30}
+  max-resends: ${OTP_MAX_RESENDS:3}
+
+google:
+  client-id: ${GOOGLE_CLIENT_ID:}
+
 management:
   endpoints:
     web:
