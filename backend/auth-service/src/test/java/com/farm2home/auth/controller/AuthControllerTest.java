@@ -3,6 +3,8 @@ package com.farm2home.auth.controller;
 import com.farm2home.auth.domain.enums.OtpType;
 import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
+import com.farm2home.auth.dto.response.GoogleAuthResponse;
+import com.farm2home.auth.dto.response.OtpVerifyResponse;
 import com.farm2home.auth.exception.AuthException;
 import com.farm2home.auth.service.AuthService;
 import com.farm2home.auth.service.JwtService;
@@ -135,19 +137,172 @@ class AuthControllerTest {
         }
 
         @Test
-        @DisplayName("verify-otp → 200, delegates")
-        void verifyOtp_ok() throws Exception {
+        @DisplayName("verify-otp REGISTRATION → 200, no auth in response")
+        void verifyOtp_registration_ok() throws Exception {
             VerifyOtpRequest req = new VerifyOtpRequest();
             req.setMobile("9876543210");
             req.setOtp("123456");
             req.setOtpType(OtpType.REGISTRATION);
+            when(authService.verifyOtp(any(VerifyOtpRequest.class))).thenReturn(
+                    OtpVerifyResponse.builder().registrationRequired(false).auth(null).build());
 
             mockMvc.perform(post("/api/v1/auth/verify-otp")
                             .contentType("application/json")
                             .content(objectMapper.writeValueAsString(req)))
-                    .andExpect(status().isOk());
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.registrationRequired").value(false))
+                    .andExpect(jsonPath("$.data.auth").doesNotExist());
+        }
 
-            verify(authService).verifyOtp(any(VerifyOtpRequest.class));
+        @Test
+        @DisplayName("verify-otp LOGIN, existing account → 200 with tokens")
+        void verifyOtp_login_existingAccount_returnsTokens() throws Exception {
+            VerifyOtpRequest req = new VerifyOtpRequest();
+            req.setMobile("9876543210");
+            req.setOtp("123456");
+            req.setOtpType(OtpType.LOGIN);
+            when(authService.verifyOtp(any(VerifyOtpRequest.class))).thenReturn(
+                    OtpVerifyResponse.builder().registrationRequired(false)
+                            .auth(AuthResponse.builder().accessToken("at").refreshToken("rt").build())
+                            .build());
+
+            mockMvc.perform(post("/api/v1/auth/verify-otp")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.auth.accessToken").value("at"));
+        }
+
+        @Test
+        @DisplayName("verify-otp LOGIN, no account yet → 200, registrationRequired=true, no tokens")
+        void verifyOtp_login_noAccount_registrationRequired() throws Exception {
+            VerifyOtpRequest req = new VerifyOtpRequest();
+            req.setMobile("9876543210");
+            req.setOtp("123456");
+            req.setOtpType(OtpType.LOGIN);
+            when(authService.verifyOtp(any(VerifyOtpRequest.class))).thenReturn(
+                    OtpVerifyResponse.builder().registrationRequired(true).auth(null).build());
+
+            mockMvc.perform(post("/api/v1/auth/verify-otp")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.registrationRequired").value(true))
+                    .andExpect(jsonPath("$.data.auth").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("verify-otp: OTP response body never echoes back the submitted code")
+        void verifyOtp_responseNeverContainsOtp() throws Exception {
+            VerifyOtpRequest req = new VerifyOtpRequest();
+            req.setMobile("9876543210");
+            req.setOtp("482913");
+            req.setOtpType(OtpType.LOGIN);
+            when(authService.verifyOtp(any(VerifyOtpRequest.class))).thenReturn(
+                    OtpVerifyResponse.builder().registrationRequired(true).auth(null).build());
+
+            String body = mockMvc.perform(post("/api/v1/auth/verify-otp")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andReturn().getResponse().getContentAsString();
+
+            org.assertj.core.api.Assertions.assertThat(body).doesNotContain("482913");
+        }
+
+        @Test
+        @DisplayName("invalid/expired OTP → 401 via GlobalExceptionHandler")
+        void verifyOtp_invalid_unauthorized() throws Exception {
+            VerifyOtpRequest req = new VerifyOtpRequest();
+            req.setMobile("9876543210");
+            req.setOtp("123456");
+            req.setOtpType(OtpType.LOGIN);
+            when(authService.verifyOtp(any(VerifyOtpRequest.class)))
+                    .thenThrow(new AuthException("Invalid OTP. Please check and try again."));
+
+            mockMvc.perform(post("/api/v1/auth/verify-otp")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isUnauthorized());
+        }
+    }
+
+    @Nested
+    @DisplayName("POST /api/v1/auth/google")
+    class Google {
+
+        @Test
+        @DisplayName("valid credential, existing/linked user → 200 with tokens")
+        void validCredential_existingUser_returnsTokens() throws Exception {
+            GoogleAuthRequest req = new GoogleAuthRequest();
+            req.setCredential("valid-credential");
+            when(authService.googleAuth(any(GoogleAuthRequest.class))).thenReturn(
+                    GoogleAuthResponse.builder().registrationRequired(false)
+                            .auth(AuthResponse.builder().accessToken("at").refreshToken("rt").build())
+                            .build());
+
+            mockMvc.perform(post("/api/v1/auth/google")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.auth.accessToken").value("at"));
+        }
+
+        @Test
+        @DisplayName("valid credential, no matching account → 200, registrationRequired=true with pre-fill")
+        void validCredential_noMatch_registrationRequired() throws Exception {
+            GoogleAuthRequest req = new GoogleAuthRequest();
+            req.setCredential("valid-credential");
+            when(authService.googleAuth(any(GoogleAuthRequest.class))).thenReturn(
+                    GoogleAuthResponse.builder().registrationRequired(true)
+                            .firstName("Jane").lastName("Smith").email("jane@example.com").build());
+
+            mockMvc.perform(post("/api/v1/auth/google")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.registrationRequired").value(true))
+                    .andExpect(jsonPath("$.data.firstName").value("Jane"))
+                    .andExpect(jsonPath("$.data.auth").doesNotExist());
+        }
+
+        @Test
+        @DisplayName("invalid/unverifiable credential → 401 via GlobalExceptionHandler")
+        void invalidCredential_unauthorized() throws Exception {
+            GoogleAuthRequest req = new GoogleAuthRequest();
+            req.setCredential("bogus");
+            when(authService.googleAuth(any(GoogleAuthRequest.class)))
+                    .thenThrow(new AuthException("Invalid or expired Google credential."));
+
+            mockMvc.perform(post("/api/v1/auth/google")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        @DisplayName("blank credential → 400, service never called")
+        void blankCredential_badRequest() throws Exception {
+            GoogleAuthRequest req = new GoogleAuthRequest();
+            req.setCredential("");
+
+            mockMvc.perform(post("/api/v1/auth/google")
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
+        }
+
+        @Test
+        @DisplayName("SECURITY: a client-supplied role field on the request is ignored - GoogleAuthRequest has no such field")
+        void requestHasNoRoleField() {
+            // Compile-time guarantee, not a runtime check: GoogleAuthRequest only ever exposes
+            // `credential` - there is no field a client could set to request a role, admin
+            // account, or any other elevated identity. See AuthServiceImpl.googleAuth(), which
+            // never reads anything from the request except the credential either.
+            org.assertj.core.api.Assertions.assertThat(GoogleAuthRequest.class.getDeclaredFields())
+                    .extracting(java.lang.reflect.Field::getName)
+                    .containsExactly("credential");
         }
     }
 

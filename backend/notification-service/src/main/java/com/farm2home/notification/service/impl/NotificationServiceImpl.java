@@ -1,8 +1,5 @@
 package com.farm2home.notification.service.impl;
 
-import com.farm2home.common.core.audit.AuditAction;
-import com.farm2home.common.core.audit.AuditEntry;
-import com.farm2home.common.core.audit.AuditLogService;
 import com.farm2home.common.core.constants.EmailTemplateConstants;
 import com.farm2home.common.core.dashboard.NotificationSummaryItem;
 import com.farm2home.common.core.push.PushSendResult;
@@ -19,18 +16,17 @@ import com.farm2home.notification.domain.repository.NotificationLogRepository;
 import com.farm2home.notification.domain.repository.NotificationTemplateRepository;
 import com.farm2home.notification.dto.KafkaEventDto;
 import com.farm2home.notification.dto.response.NotificationLogResponse;
+import com.farm2home.notification.email.EmailSendResult;
+import com.farm2home.notification.email.EmailService;
 import com.farm2home.notification.mapper.NotificationMapper;
 import com.farm2home.notification.service.NotificationClassifier;
-import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,14 +47,10 @@ public class NotificationServiceImpl {
     private final NotificationLogRepository logRepository;
     private final NotificationTemplateRepository templateRepository;
     private final NotificationMapper mapper;
-    private final Optional<JavaMailSender> mailSender;
-    private final AuditLogService auditLogService;
     private final SmsService smsService;
     private final PushService pushService;
+    private final EmailService emailService;
     private final CustomerServiceClient customerServiceClient;
-
-    @Value("${app.mail.from}")
-    private String mailFrom;
 
     @Transactional
     public void process(KafkaEventDto event) {
@@ -134,6 +126,26 @@ public class NotificationServiceImpl {
                                  String templateCode, String recipient) {
         if (recipient == null) return;
 
+        // Idempotency: a Kafka redelivery (consumer restart/rebalance before offset commit)
+        // would otherwise re-run this whole method and double-send. Keyed on (entity id,
+        // occurredAt) together, not entity id alone - a recurring event type for the same entity
+        // (a subscription paused, resumed, then paused again; a second DELIVERY_DELAYED ping for
+        // the same assignment) is a genuinely new occurrence with a new occurredAt, not a
+        // redelivery of the same message, and must still be sent. Only events with an entity id
+        // (see KafkaEventDto.getDedupeEntityId()) can be deduped this way; OTP/CUSTOMER_CREATED
+        // have none (OTP resends are intentional and must never be blocked; CUSTOMER_CREATED
+        // fires exactly once per customer in practice) and are simply not deduped - documented
+        // gap, not an oversight. Checked against SENT only, so a previously-FAILED attempt can
+        // still be retried by a genuine redelivery.
+        UUID dedupeEntityId = event.getDedupeEntityId();
+        if (dedupeEntityId != null && event.getOccurredAt() != null
+                && logRepository.existsByChannelAndEventTypeAndSourceEventIdAndEventOccurredAtAndStatus(
+                        channel, event.getEventType(), dedupeEntityId, event.getOccurredAt(), NotificationStatus.SENT)) {
+            log.debug("Skipping duplicate {} notification for event {} ({} @ {}): already sent",
+                    channel, event.getEventType(), dedupeEntityId, event.getOccurredAt());
+            return;
+        }
+
         Optional<NotificationTemplate> templateOpt =
                 templateRepository.findByTemplateCodeAndActiveTrue(templateCode);
 
@@ -151,13 +163,14 @@ public class NotificationServiceImpl {
                 .recipientId(event.getCustomerId())
                 .channel(channel)
                 .eventType(event.getEventType())
+                .sourceEventId(dedupeEntityId)
+                .eventOccurredAt(event.getOccurredAt())
                 .recipient(recipient)
                 .subject(renderedSubject)
                 .message(renderedBody)
                 .status(NotificationStatus.PENDING)
                 .build();
 
-        String failureReason = null;
         try {
             dispatch(channel, event, recipient, renderedSubject, renderedBody);
             notifLog.setStatus(NotificationStatus.SENT);
@@ -166,25 +179,22 @@ public class NotificationServiceImpl {
             log.error("Failed to send {} notification to {}: {}", channel, recipient, ex.getMessage());
             notifLog.setStatus(NotificationStatus.FAILED);
             notifLog.setFailureReason(ex.getMessage());
-            failureReason = ex.getMessage();
         }
 
-        NotificationLog saved = logRepository.save(notifLog);
-
-        // SMS and PUSH sends are already audited by SmsService/PushService themselves
-        // (entityType "Sms"/"Push", action *_SENT/*_FAILED) - recording it again here under the
-        // Notification entity would just duplicate the same information under a different name.
-        // EMAIL has no such provider-level abstraction yet, so it's still audited here.
-        if (channel == NotificationChannel.EMAIL) {
-            auditLogService.record(AuditEntry.builder()
-                    .action(AuditAction.EMAIL_SENT)
-                    .entityType("Notification")
-                    .entityId(saved.getId() != null ? saved.getId().toString() : null)
-                    .username(recipient)
-                    .success(saved.getStatus() == NotificationStatus.SENT)
-                    .failureReason(failureReason)
-                    .details(channel + " notification for event " + event.getEventType())
-                    .build());
+        // SMS/PUSH/EMAIL sends are already audited by SmsService/PushService/EmailService
+        // themselves (entityType "Sms"/"Push"/"Email", action *_SENT/*_FAILED) - recording it
+        // again here under the Notification entity would just duplicate the same information
+        // under a different name.
+        try {
+            logRepository.save(notifLog);
+        } catch (DataIntegrityViolationException ex) {
+            // Belt-and-suspenders for the same idempotency case checked above: only reachable if
+            // two threads raced past the existsBy... check for the same (channel, eventType,
+            // sourceEventId) - the partial unique index on notification_logs is the real
+            // guarantee, this check is just the fast path. The send itself already happened by
+            // this point (can't be un-sent), so this only prevents a duplicate history row.
+            log.warn("Duplicate {} notification log for event {} ({}) - already recorded by a concurrent send",
+                    channel, event.getEventType(), event.getSourceEventId());
         }
     }
 
@@ -198,7 +208,13 @@ public class NotificationServiceImpl {
                             result.failureReason() != null ? result.failureReason() : "SMS delivery failed");
                 }
             }
-            case EMAIL -> sendEmail(recipient, subject, body);
+            case EMAIL -> {
+                EmailSendResult result = emailService.sendEmail(recipient, subject, body, event.getEventType());
+                if (!result.success()) {
+                    throw new IllegalStateException(
+                            result.failureReason() != null ? result.failureReason() : "Email delivery failed");
+                }
+            }
             case PUSH -> {
                 PushSendResult result = pushService.sendPush(recipient, subject, body, event.getEventType());
                 if (!result.success()) {
@@ -207,20 +223,6 @@ public class NotificationServiceImpl {
                 }
             }
         }
-    }
-
-    private void sendEmail(String to, String subject, String body) throws Exception {
-        if (mailSender.isEmpty()) {
-            log.warn("Mail sender not configured; skipping email to {}", to);
-            return;
-        }
-        MimeMessage message = mailSender.get().createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, false, "UTF-8");
-        helper.setFrom(mailFrom);
-        helper.setTo(to);
-        helper.setSubject(subject != null ? subject : "Farm2Home Notification");
-        helper.setText(body, true);
-        mailSender.get().send(message);
     }
 
     private String render(String template, Map<String, String> payload) {

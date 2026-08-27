@@ -3,13 +3,18 @@ package com.farm2home.auth.service;
 import com.farm2home.auth.domain.entity.RefreshToken;
 import com.farm2home.auth.domain.entity.Role;
 import com.farm2home.auth.domain.entity.User;
+import com.farm2home.auth.domain.entity.UserIdentity;
+import com.farm2home.auth.domain.enums.IdentityProvider;
 import com.farm2home.auth.domain.enums.OtpType;
 import com.farm2home.auth.domain.enums.RoleType;
 import com.farm2home.auth.domain.repository.RefreshTokenRepository;
 import com.farm2home.auth.domain.repository.RoleRepository;
+import com.farm2home.auth.domain.repository.UserIdentityRepository;
 import com.farm2home.auth.domain.repository.UserRepository;
 import com.farm2home.auth.dto.request.*;
 import com.farm2home.auth.dto.response.AuthResponse;
+import com.farm2home.auth.dto.response.GoogleAuthResponse;
+import com.farm2home.auth.dto.response.OtpVerifyResponse;
 import com.farm2home.auth.exception.AuthException;
 import com.farm2home.auth.exception.DuplicateResourceException;
 import com.farm2home.auth.exception.ResourceNotFoundException;
@@ -23,6 +28,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -50,10 +56,12 @@ class AuthServiceImplTest {
     @Mock private UserRepository userRepository;
     @Mock private RoleRepository roleRepository;
     @Mock private RefreshTokenRepository refreshTokenRepository;
+    @Mock private UserIdentityRepository userIdentityRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private AuthenticationManager authenticationManager;
     @Mock private JwtService jwtService;
     @Mock private OtpService otpService;
+    @Mock private GoogleTokenValidator googleTokenValidator;
     @Mock private UserMapper userMapper;
     @Mock private AuditLogService auditLogService;
     @Mock private CustomerEventProducer customerEventProducer;
@@ -165,6 +173,74 @@ class AuthServiceImplTest {
             assertThatThrownBy(() -> service.register(req))
                     .isInstanceOf(ResourceNotFoundException.class);
         }
+
+        @Test
+        @DisplayName("continuing a Google Sign-In (googleCredential present, matching email) → creates account and links the identity")
+        void withGoogleCredential_matchingEmail_linksIdentity() {
+            RegisterRequest req = new RegisterRequest();
+            req.setFirstName("John");
+            req.setLastName("Doe");
+            req.setMobile(mobile);
+            req.setEmail("john@example.com");
+            req.setPassword("Passw0rd!");
+            req.setGoogleCredential("valid-credential");
+
+            GooglePayload payload = new GooglePayload("google-sub-9", "john@example.com", true, "John", "Doe");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-9"))
+                    .thenReturn(Optional.empty());
+            when(userRepository.existsByMobileAndDeletedFalse(mobile)).thenReturn(false);
+            when(userRepository.existsByEmailAndDeletedFalse("john@example.com")).thenReturn(false);
+            when(roleRepository.findByNameAndDeletedFalse(RoleType.CUSTOMER)).thenReturn(Optional.of(customerRole()));
+            when(userMapper.toEntity(req)).thenReturn(new User());
+            when(passwordEncoder.encode("Passw0rd!")).thenReturn("hashed-pw");
+            User saved = buildUser(false);
+            when(userRepository.save(any(User.class))).thenReturn(saved);
+            when(userIdentityRepository.existsByUserIdAndProvider(userId, IdentityProvider.GOOGLE)).thenReturn(false);
+            stubJwtAndMapperForBuildAuthResponse(saved);
+
+            service.register(req);
+
+            ArgumentCaptor<UserIdentity> captor = ArgumentCaptor.forClass(UserIdentity.class);
+            verify(userIdentityRepository).save(captor.capture());
+            assertThat(captor.getValue().getProviderUserId()).isEqualTo("google-sub-9");
+            verify(otpService).generateAndSend(mobile, OtpType.REGISTRATION); // still re-verifies the mobile
+        }
+
+        @Test
+        @DisplayName("SECURITY: googleCredential present but its email doesn't match the request email → rejected, no account created")
+        void withGoogleCredential_mismatchedEmail_throws() {
+            RegisterRequest req = new RegisterRequest();
+            req.setMobile(mobile);
+            req.setEmail("john@example.com");
+            req.setGoogleCredential("valid-credential");
+
+            GooglePayload payload = new GooglePayload("google-sub-10", "someone-else@example.com", true, "X", "Y");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+
+            assertThatThrownBy(() -> service.register(req))
+                    .isInstanceOf(AuthException.class)
+                    .hasMessageContaining("does not match");
+            verify(userRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("googleCredential's identity is already linked to a different account → rejected, no duplicate link")
+        void withGoogleCredential_alreadyLinked_throws() {
+            RegisterRequest req = new RegisterRequest();
+            req.setMobile(mobile);
+            req.setEmail("john@example.com");
+            req.setGoogleCredential("valid-credential");
+
+            GooglePayload payload = new GooglePayload("google-sub-11", "john@example.com", true, "John", "Doe");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-11"))
+                    .thenReturn(Optional.of(UserIdentity.builder().build()));
+
+            assertThatThrownBy(() -> service.register(req))
+                    .isInstanceOf(DuplicateResourceException.class);
+            verify(userRepository, never()).save(any());
+        }
     }
 
     // ── login() ──────────────────────────────────────────────────────────────────
@@ -271,7 +347,7 @@ class AuthServiceImplTest {
         }
 
         @Test
-        @DisplayName("verifyOtp with REGISTRATION type → marks user verified")
+        @DisplayName("verifyOtp with REGISTRATION type → marks user verified, returns no tokens")
         void verifyOtp_registration_marksVerified() {
             VerifyOtpRequest req = new VerifyOtpRequest();
             req.setMobile(mobile);
@@ -281,26 +357,179 @@ class AuthServiceImplTest {
             User user = buildUser(false);
             when(userRepository.findByMobileAndDeletedFalse(mobile)).thenReturn(Optional.of(user));
 
-            service.verifyOtp(req);
+            OtpVerifyResponse response = service.verifyOtp(req);
 
             verify(otpService).verify(mobile, "123456", OtpType.REGISTRATION);
             assertThat(user.isVerified()).isTrue();
             verify(userRepository).save(user);
+            assertThat(response.isRegistrationRequired()).isFalse();
+            assertThat(response.getAuth()).isNull();
         }
 
         @Test
-        @DisplayName("verifyOtp with LOGIN type → does not touch verified flag")
-        void verifyOtp_login_doesNotMarkVerified() {
+        @DisplayName("verifyOtp with FORGOT_PASSWORD type → does not touch verified flag, returns no tokens")
+        void verifyOtp_forgotPassword_returnsNoTokens() {
+            VerifyOtpRequest req = new VerifyOtpRequest();
+            req.setMobile(mobile);
+            req.setOtp("123456");
+            req.setOtpType(OtpType.FORGOT_PASSWORD);
+
+            OtpVerifyResponse response = service.verifyOtp(req);
+
+            verify(otpService).verify(mobile, "123456", OtpType.FORGOT_PASSWORD);
+            verify(userRepository, never()).save(any());
+            assertThat(response.isRegistrationRequired()).isFalse();
+            assertThat(response.getAuth()).isNull();
+        }
+
+        @Test
+        @DisplayName("verifyOtp with LOGIN type, existing account → signs in, returns tokens")
+        void verifyOtp_login_existingAccount_signsIn() {
             VerifyOtpRequest req = new VerifyOtpRequest();
             req.setMobile(mobile);
             req.setOtp("123456");
             req.setOtpType(OtpType.LOGIN);
 
-            service.verifyOtp(req);
+            User user = buildUser(true);
+            when(userRepository.findByMobileAndDeletedFalse(mobile)).thenReturn(Optional.of(user));
+            stubJwtAndMapperForBuildAuthResponse(user);
+
+            OtpVerifyResponse response = service.verifyOtp(req);
 
             verify(otpService).verify(mobile, "123456", OtpType.LOGIN);
-            verify(userRepository, never()).findByMobileAndDeletedFalse(any());
+            verify(refreshTokenRepository).revokeAllByUser(user);
+            assertThat(response.isRegistrationRequired()).isFalse();
+            assertThat(response.getAuth().getAccessToken()).isEqualTo("access-token");
+            verify(auditLogService).record(eq(AuditAction.LOGIN), eq("User"), eq(userId.toString()), eq(mobile), any());
+        }
+
+        @Test
+        @DisplayName("verifyOtp with LOGIN type, no account for this mobile → registrationRequired, no tokens, no account created")
+        void verifyOtp_login_noAccount_registrationRequired() {
+            VerifyOtpRequest req = new VerifyOtpRequest();
+            req.setMobile(mobile);
+            req.setOtp("123456");
+            req.setOtpType(OtpType.LOGIN);
+
+            when(userRepository.findByMobileAndDeletedFalse(mobile)).thenReturn(Optional.empty());
+
+            OtpVerifyResponse response = service.verifyOtp(req);
+
+            verify(otpService).verify(mobile, "123456", OtpType.LOGIN);
+            assertThat(response.isRegistrationRequired()).isTrue();
+            assertThat(response.getAuth()).isNull();
             verify(userRepository, never()).save(any());
+        }
+    }
+
+    // ── googleAuth() ─────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("googleAuth()")
+    class GoogleAuth {
+
+        private GoogleAuthRequest req() {
+            GoogleAuthRequest r = new GoogleAuthRequest();
+            r.setCredential("valid-credential");
+            return r;
+        }
+
+        @Test
+        @DisplayName("returning Google user (already linked) → signs in by (provider, subject), never by email")
+        void returningGoogleUser_signsIn() {
+            GooglePayload payload = new GooglePayload("google-sub-1", "john@example.com", true, "John", "Doe");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            User user = buildUser(true);
+            UserIdentity identity = UserIdentity.builder().user(user).provider(IdentityProvider.GOOGLE)
+                    .providerUserId("google-sub-1").build();
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-1"))
+                    .thenReturn(Optional.of(identity));
+            stubJwtAndMapperForBuildAuthResponse(user);
+
+            GoogleAuthResponse response = service.googleAuth(req());
+
+            assertThat(response.isRegistrationRequired()).isFalse();
+            assertThat(response.getAuth().getAccessToken()).isEqualTo("access-token");
+            verify(userRepository, never()).findByEmailAndDeletedFalse(any());
+            verify(userIdentityRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("first Google sign-in, verified email matches an existing account → auto-links and signs in")
+        void firstSignIn_verifiedEmailMatch_autoLinksAndSignsIn() {
+            GooglePayload payload = new GooglePayload("google-sub-2", "john@example.com", true, "John", "Doe");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-2"))
+                    .thenReturn(Optional.empty());
+            User user = buildUser(true);
+            when(userRepository.findByEmailAndDeletedFalse("john@example.com")).thenReturn(Optional.of(user));
+            when(userIdentityRepository.existsByUserIdAndProvider(userId, IdentityProvider.GOOGLE)).thenReturn(false);
+            stubJwtAndMapperForBuildAuthResponse(user);
+
+            GoogleAuthResponse response = service.googleAuth(req());
+
+            assertThat(response.isRegistrationRequired()).isFalse();
+            assertThat(response.getAuth().getAccessToken()).isEqualTo("access-token");
+            ArgumentCaptor<UserIdentity> captor = ArgumentCaptor.forClass(UserIdentity.class);
+            verify(userIdentityRepository).save(captor.capture());
+            assertThat(captor.getValue().getProviderUserId()).isEqualTo("google-sub-2");
+            assertThat(captor.getValue().getUser()).isEqualTo(user);
+        }
+
+        @Test
+        @DisplayName("SECURITY: first Google sign-in with an UNVERIFIED email matching an existing account → never auto-links, never signs in")
+        void firstSignIn_unverifiedEmailMatch_neverLinksOrSignsIn() {
+            GooglePayload payload = new GooglePayload("google-sub-3", "john@example.com", false, "John", "Doe");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-3"))
+                    .thenReturn(Optional.empty());
+            when(userRepository.findByEmailAndDeletedFalse("john@example.com")).thenReturn(Optional.of(buildUser(true)));
+
+            assertThatThrownBy(() -> service.googleAuth(req()))
+                    .isInstanceOf(AuthException.class)
+                    .hasMessageContaining("already exists");
+
+            verify(userIdentityRepository, never()).save(any());
+            verify(jwtService, never()).generateAccessToken(any());
+        }
+
+        @Test
+        @DisplayName("no existing identity and no matching email → registrationRequired, pre-filled from Google, no account created")
+        void noMatch_registrationRequired() {
+            GooglePayload payload = new GooglePayload("google-sub-4", "new@example.com", true, "Jane", "Smith");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-4"))
+                    .thenReturn(Optional.empty());
+            when(userRepository.findByEmailAndDeletedFalse("new@example.com")).thenReturn(Optional.empty());
+
+            GoogleAuthResponse response = service.googleAuth(req());
+
+            assertThat(response.isRegistrationRequired()).isTrue();
+            assertThat(response.getAuth()).isNull();
+            assertThat(response.getFirstName()).isEqualTo("Jane");
+            assertThat(response.getLastName()).isEqualTo("Smith");
+            assertThat(response.getEmail()).isEqualTo("new@example.com");
+            verify(userRepository, never()).save(any());
+            verify(userIdentityRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("SECURITY: role is never accepted from the Google credential - existing user keeps their own role")
+        void existingUserRole_neverOverriddenByGoogle() {
+            GooglePayload payload = new GooglePayload("google-sub-5", "john@example.com", true, "John", "Doe");
+            when(googleTokenValidator.validate("valid-credential")).thenReturn(payload);
+            User user = buildUser(true); // CUSTOMER role, from buildUser()
+            UserIdentity identity = UserIdentity.builder().user(user).provider(IdentityProvider.GOOGLE)
+                    .providerUserId("google-sub-5").build();
+            when(userIdentityRepository.findByProviderAndProviderUserId(IdentityProvider.GOOGLE, "google-sub-5"))
+                    .thenReturn(Optional.of(identity));
+            stubJwtAndMapperForBuildAuthResponse(user);
+
+            service.googleAuth(req());
+
+            // The only role-bearing object anywhere in this flow is the pre-existing User itself -
+            // never reassigned, never read from GooglePayload (which has no role field at all).
+            assertThat(user.getRoles()).extracting(r -> r.getName()).containsExactly(RoleType.CUSTOMER);
         }
     }
 

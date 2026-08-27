@@ -3,7 +3,7 @@ import {
   InputAdornment, IconButton, CircularProgress, Alert, Tooltip,
 } from '@mui/material'
 import { Visibility, VisibilityOff, Person, Lock, Sms, Agriculture } from '@mui/icons-material'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
 import * as yup from 'yup'
@@ -16,6 +16,29 @@ import { authService } from '../../services/authService'
 import { tokenStorage } from '../../services/tokenStorage'
 import { getLandingRoute } from '../../utils/roleLanding'
 import { PublicFooter } from '../../components/layout/PublicFooter'
+import { MobileOtpDialog } from '../../components/auth/MobileOtpDialog'
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
+
+// Minimal shape of the two window.google APIs this page actually calls - Google Identity
+// Services (loaded via the <script> tag in index.html) has no published npm types package for
+// this surface, so this is scoped to exactly what's used rather than pulling in a full @types
+// dependency for a handful of calls.
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        id?: {
+          initialize: (config: { client_id: string; callback: (response: { credential: string }) => void; cancel_on_tap_outside?: boolean }) => void
+          prompt: (momentListener?: (notification: {
+            isNotDisplayed: () => boolean
+            isSkippedMoment: () => boolean
+          }) => void) => void
+        }
+      }
+    }
+  }
+}
 
 const schema = yup.object({
   // No format restriction here to match the backend (LoginRequest identifier is @NotBlank only):
@@ -58,6 +81,11 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
   const [error, setError] = useState('')
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [otpDialogOpen, setOtpDialogOpen] = useState(false)
+  // Guards against a second /auth/google call landing while the first's callback is still in
+  // flight (e.g. a fast double-click before Google Identity Services even opens its own popup).
+  const googleInFlight = useRef(false)
   const justRegistered = Boolean((location.state as { registered?: boolean } | null)?.registered)
 
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormData>({
@@ -75,6 +103,60 @@ export function LoginPage() {
     } catch (err: any) {
       setError(err.response?.data?.message ?? 'Invalid credentials. Please try again.')
     }
+  }
+
+  const handleGoogleCredentialResponse = useCallback(async (response: { credential: string }) => {
+    setError('')
+    try {
+      const res = await authService.googleAuth({ credential: response.credential })
+      const { registrationRequired, auth, firstName, lastName, email } = res.data.data
+      if (auth) {
+        tokenStorage.setTokens(auth.accessToken, auth.refreshToken, rememberMe)
+        dispatch(setCredentials({ accessToken: auth.accessToken, user: auth.user }))
+        navigate(getLandingRoute(auth.user.roles), { replace: true })
+        return
+      }
+      if (registrationRequired) {
+        // No Farm2Home account for this Google identity yet - continue into the existing
+        // registration wizard, pre-filled with the server-validated name/email (never re-trusted
+        // client-side beyond display) rather than creating an incomplete account here. The same
+        // credential is carried along so RegisterPage can attach it to the final POST /register
+        // call - re-validated server-side there too, never taken on faith from this navigation.
+        navigate('/register', { state: { firstName, lastName, email, googleCredential: response.credential } })
+        return
+      }
+      setError('Something went wrong signing in with Google. Please try again.')
+    } catch (err: any) {
+      setError(err.response?.data?.message ?? 'Google sign-in failed. Please try again.')
+    } finally {
+      setGoogleLoading(false)
+      googleInFlight.current = false
+    }
+  }, [dispatch, navigate, rememberMe])
+
+  const handleGoogleClick = () => {
+    if (googleInFlight.current) return
+    if (!GOOGLE_CLIENT_ID || !window.google?.accounts?.id) {
+      setError('Google Sign-In is not available right now. Please try again later or use another method.')
+      return
+    }
+    setError('')
+    setGoogleLoading(true)
+    googleInFlight.current = true
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleCredentialResponse,
+      cancel_on_tap_outside: true,
+    })
+    window.google.accounts.id.prompt((notification) => {
+      // A successful sign-in never reaches this callback - only cancellation/unavailability does
+      // (the credential itself always arrives via the `callback` passed to initialize above).
+      if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+        setGoogleLoading(false)
+        googleInFlight.current = false
+        setError('Google sign-in was cancelled or is unavailable in this browser. Please try again or use another method.')
+      }
+    })
   }
 
   return (
@@ -199,25 +281,28 @@ export function LoginPage() {
           </Divider>
 
           <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
-            <Tooltip title="Google sign-in isn't available yet">
-              <span style={{ flex: 1 }}>
-                <Button fullWidth variant="outlined" startIcon={<GoogleLogo />} disabled>
-                  Google
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title="Mobile OTP sign-in isn't available yet">
+            <Tooltip title={GOOGLE_CLIENT_ID ? '' : 'Google sign-in is not configured'}>
               <span style={{ flex: 1 }}>
                 <Button
                   fullWidth
                   variant="outlined"
-                  startIcon={<Sms fontSize="small" sx={{ color: '#0b57d0 !important' }} />}
-                  disabled
+                  startIcon={googleLoading ? undefined : <GoogleLogo />}
+                  disabled={!GOOGLE_CLIENT_ID || googleLoading}
+                  onClick={handleGoogleClick}
                 >
-                  Mobile OTP
+                  {googleLoading ? <CircularProgress size={20} /> : 'Google'}
                 </Button>
               </span>
             </Tooltip>
+            <Button
+              fullWidth
+              variant="outlined"
+              startIcon={<Sms fontSize="small" sx={{ color: '#0b57d0 !important' }} />}
+              onClick={() => setOtpDialogOpen(true)}
+              sx={{ flex: 1 }}
+            >
+              Mobile OTP
+            </Button>
           </Box>
 
           <Typography variant="body2" sx={{ textAlign: 'center' }} color="text.secondary">
@@ -230,6 +315,8 @@ export function LoginPage() {
           <PublicFooter variant="compact" />
         </Box>
       </Box>
+
+      <MobileOtpDialog open={otpDialogOpen} onClose={() => setOtpDialogOpen(false)} />
     </Box>
   )
 }

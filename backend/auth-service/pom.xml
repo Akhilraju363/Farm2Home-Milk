@@ -115,6 +115,16 @@
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
         </dependency>
+        <!-- Google's own official library for verifying a Google Identity Services ID token
+             server-side (signature against Google's rotating public keys, issuer, audience,
+             expiry) - see GoogleTokenValidator. No client secret is needed anywhere for this
+             ID-token-verification flow (unlike an authorization-code exchange), which is why
+             none exists in this codebase's configuration. -->
+        <dependency>
+            <groupId>com.google.api-client</groupId>
+            <artifactId>google-api-client</artifactId>
+            <version>2.7.0</version>
+        </dependency>
     </dependencies>
 
     <build>

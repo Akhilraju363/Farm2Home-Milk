@@ -1,6 +1,5 @@
 package com.farm2home.notification.service;
 
-import com.farm2home.common.core.audit.AuditLogService;
 import com.farm2home.common.core.constants.EmailTemplateConstants;
 import com.farm2home.common.core.push.PushSendResult;
 import com.farm2home.common.core.push.PushService;
@@ -15,6 +14,8 @@ import com.farm2home.notification.domain.enums.NotificationStatus;
 import com.farm2home.notification.domain.repository.NotificationLogRepository;
 import com.farm2home.notification.domain.repository.NotificationTemplateRepository;
 import com.farm2home.notification.dto.KafkaEventDto;
+import com.farm2home.notification.email.EmailSendResult;
+import com.farm2home.notification.email.EmailService;
 import com.farm2home.notification.mapper.NotificationMapper;
 import com.farm2home.notification.service.impl.NotificationServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,8 +27,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
 
 import java.util.Optional;
@@ -45,10 +44,9 @@ class NotificationServiceImplTest {
     @Mock private NotificationLogRepository logRepository;
     @Mock private NotificationTemplateRepository templateRepository;
     @Mock private NotificationMapper mapper;
-    @Mock private Optional<JavaMailSender> mailSender;
-    @Mock private AuditLogService auditLogService;
     @Mock private SmsService smsService;
     @Mock private PushService pushService;
+    @Mock private EmailService emailService;
     @Mock private CustomerServiceClient customerServiceClient;
 
     @InjectMocks private NotificationServiceImpl service;
@@ -111,7 +109,6 @@ class NotificationServiceImplTest {
             verify(smsService).sendSms(eq("9876543210"), any(), eq("ORDER_CREATED"));
             // SmsService already publishes its own audit entry for this send - NotificationServiceImpl
             // must not duplicate it under the Notification entity.
-            verifyNoInteractions(auditLogService);
         }
 
         @Test
@@ -133,7 +130,6 @@ class NotificationServiceImplTest {
             NotificationLog saved = captor.getValue();
             assertThat(saved.getStatus()).isEqualTo(NotificationStatus.FAILED);
             assertThat(saved.getFailureReason()).isEqualTo("gateway unreachable");
-            verifyNoInteractions(auditLogService);
         }
 
         @Test
@@ -167,7 +163,6 @@ class NotificationServiceImplTest {
             verify(pushService).sendPush(eq(customerId.toString()), eq("Order Confirmed"), any(), eq("ORDER_CREATED"));
             // PushService already publishes its own audit entry for this send - NotificationServiceImpl
             // must not duplicate it under the Notification entity.
-            verifyNoInteractions(auditLogService);
         }
 
         @Test
@@ -192,13 +187,11 @@ class NotificationServiceImplTest {
             assertThat(saved.getChannel()).isEqualTo(NotificationChannel.PUSH);
             assertThat(saved.getStatus()).isEqualTo(NotificationStatus.FAILED);
             assertThat(saved.getFailureReason()).isEqualTo("device unreachable");
-            verifyNoInteractions(auditLogService);
         }
 
         @Test
-        @DisplayName("recipientEmail set, matching EMAIL template, mail sender unconfigured → logs FAILED... " +
-                "actually SENT (dispatch swallows the missing sender) with a warning")
-        void emailBranch_mailSenderNotConfigured() {
+        @DisplayName("recipientEmail set, matching EMAIL template → saves SENT log, sent via EmailService")
+        void emailTemplateSent() {
             KafkaEventDto event = buildEvent("ORDER_CREATED");
             event.setRecipientEmail("customer@example.com");
             NotificationTemplate smsTemplate = buildTemplate("ORDER_CREATED_SMS", NotificationChannel.SMS);
@@ -208,7 +201,7 @@ class NotificationServiceImplTest {
             when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_EMAIL"))
                     .thenReturn(Optional.of(emailTemplate));
             when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
-            when(mailSender.isEmpty()).thenReturn(true);
+            when(emailService.sendEmail(any(), any(), any(), any())).thenReturn(EmailSendResult.success("email-1"));
             when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             service.process(event);
@@ -216,34 +209,110 @@ class NotificationServiceImplTest {
             ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
             verify(logRepository, times(2)).save(captor.capture());
             assertThat(captor.getAllValues())
-                    .anySatisfy(l -> assertThat(l.getChannel()).isEqualTo(NotificationChannel.EMAIL));
+                    .anySatisfy(l -> {
+                        assertThat(l.getChannel()).isEqualTo(NotificationChannel.EMAIL);
+                        assertThat(l.getStatus()).isEqualTo(NotificationStatus.SENT);
+                        assertThat(l.getRecipient()).isEqualTo("customer@example.com");
+                    });
+            verify(emailService).sendEmail(eq("customer@example.com"), any(), any(), eq("ORDER_CREATED"));
         }
 
         @Test
-        @DisplayName("recipientEmail set, mail sender configured → actually sends via JavaMailSender")
-        void emailBranch_mailSenderConfigured() throws Exception {
+        @DisplayName("EMAIL delivery fails → saves FAILED log with the failure reason, no duplicate audit")
+        void emailDeliveryFails_logsFailed() {
             KafkaEventDto event = buildEvent("ORDER_CREATED");
             event.setRecipientEmail("customer@example.com");
-            NotificationTemplate smsTemplate = buildTemplate("ORDER_CREATED_SMS", NotificationChannel.SMS);
             NotificationTemplate emailTemplate = buildTemplate("ORDER_CREATED_EMAIL", NotificationChannel.EMAIL);
-            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS"))
-                    .thenReturn(Optional.of(smsTemplate));
+            lenient().when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS"))
+                    .thenReturn(Optional.empty());
             when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_EMAIL"))
                     .thenReturn(Optional.of(emailTemplate));
-            org.springframework.mail.javamail.JavaMailSender realSender =
-                    mock(org.springframework.mail.javamail.JavaMailSender.class);
-            jakarta.mail.Session mailSession =
-                    jakarta.mail.Session.getDefaultInstance(new java.util.Properties());
-            when(realSender.createMimeMessage()).thenReturn(new jakarta.mail.internet.MimeMessage(mailSession));
-            when(mailSender.isEmpty()).thenReturn(false);
-            when(mailSender.get()).thenReturn(realSender);
-            when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
+            when(emailService.sendEmail(any(), any(), any(), any()))
+                    .thenReturn(EmailSendResult.failure("SMTP connection refused"));
             when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-            ReflectionTestUtils.setField(service, "mailFrom", "no-reply@farm2homemilk.example");
 
             service.process(event);
 
-            verify(realSender).send(any(jakarta.mail.internet.MimeMessage.class));
+            ArgumentCaptor<NotificationLog> captor = ArgumentCaptor.forClass(NotificationLog.class);
+            verify(logRepository).save(captor.capture());
+            NotificationLog saved = captor.getValue();
+            assertThat(saved.getChannel()).isEqualTo(NotificationChannel.EMAIL);
+            assertThat(saved.getStatus()).isEqualTo(NotificationStatus.FAILED);
+            assertThat(saved.getFailureReason()).isEqualTo("SMTP connection refused");
+        }
+
+        @Test
+        @DisplayName("event carries no recipientEmail → EMAIL branch skipped entirely, EmailService never called")
+        void noRecipientEmail_emailSkipped() {
+            KafkaEventDto event = buildEvent("ORDER_CREATED");
+            NotificationTemplate smsTemplate = buildTemplate("ORDER_CREATED_SMS", NotificationChannel.SMS);
+            when(templateRepository.findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS"))
+                    .thenReturn(Optional.of(smsTemplate));
+            when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            verifyNoInteractions(emailService);
+        }
+
+        @Test
+        @DisplayName("Kafka redelivery of an already-SENT event (same entity id + occurredAt) → skipped, no duplicate send")
+        void duplicateEvent_sameEntityAndOccurredAt_skipped() {
+            KafkaEventDto event = buildEvent("ORDER_CREATED");
+            java.time.LocalDateTime occurredAt = java.time.LocalDateTime.of(2026, 1, 1, 10, 0);
+            event.setOrderId(UUID.randomUUID());
+            event.setOccurredAt(occurredAt);
+            when(logRepository.existsByChannelAndEventTypeAndSourceEventIdAndEventOccurredAtAndStatus(
+                    eq(NotificationChannel.SMS), eq("ORDER_CREATED"), eq(event.getOrderId()), eq(occurredAt), eq(NotificationStatus.SENT)))
+                    .thenReturn(true);
+            lenient().when(templateRepository.findByTemplateCodeAndActiveTrue(anyString()))
+                    .thenReturn(Optional.empty());
+
+            service.process(event);
+
+            verify(smsService, never()).sendSms(any(), any(), any());
+            verify(templateRepository, never()).findByTemplateCodeAndActiveTrue("ORDER_CREATED_SMS");
+        }
+
+        @Test
+        @DisplayName("same entity id but a different occurredAt → treated as a new occurrence, sent normally")
+        void sameEntityDifferentOccurredAt_notSkipped() {
+            KafkaEventDto event = buildEvent("SUBSCRIPTION_PAUSED");
+            UUID subscriptionId = UUID.randomUUID();
+            event.setSourceEventId(subscriptionId);
+            event.setOccurredAt(java.time.LocalDateTime.of(2026, 2, 1, 9, 0));
+            NotificationTemplate template = buildTemplate("SUBSCRIPTION_PAUSED_SMS", NotificationChannel.SMS);
+            // A prior (different) occurrence of the same event type for the same subscription
+            // was already sent - only an exact (entityId, occurredAt) match should be skipped.
+            when(logRepository.existsByChannelAndEventTypeAndSourceEventIdAndEventOccurredAtAndStatus(
+                    eq(NotificationChannel.SMS), eq("SUBSCRIPTION_PAUSED"), eq(subscriptionId), eq(event.getOccurredAt()), eq(NotificationStatus.SENT)))
+                    .thenReturn(false);
+            when(templateRepository.findByTemplateCodeAndActiveTrue("SUBSCRIPTION_PAUSED_SMS"))
+                    .thenReturn(Optional.of(template));
+            when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            verify(smsService).sendSms(any(), any(), eq("SUBSCRIPTION_PAUSED"));
+        }
+
+        @Test
+        @DisplayName("event has no entity id (e.g. OTP) → idempotency check skipped entirely, always sent")
+        void noEntityId_idempotencyNotChecked() {
+            KafkaEventDto event = buildEvent(EmailTemplateConstants.EVENT_OTP);
+            event.setOtp("123456");
+            NotificationTemplate template = buildTemplate("OTP_SMS", NotificationChannel.SMS);
+            when(templateRepository.findByTemplateCodeAndActiveTrue("OTP_SMS")).thenReturn(Optional.of(template));
+            when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
+            when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            service.process(event);
+
+            verify(logRepository, never()).existsByChannelAndEventTypeAndSourceEventIdAndEventOccurredAtAndStatus(
+                    any(), any(), any(), any(), any());
+            verify(smsService).sendSms(any(), any(), eq(EmailTemplateConstants.EVENT_OTP));
         }
 
         @Test
@@ -321,7 +390,7 @@ class NotificationServiceImplTest {
             when(templateRepository.findByTemplateCodeAndActiveTrue("PAYMENT_SUCCESS_EMAIL"))
                     .thenReturn(Optional.of(emailTemplate));
             when(smsService.sendSms(any(), any(), any())).thenReturn(SmsSendResult.success("msg-1"));
-            when(mailSender.isEmpty()).thenReturn(true);
+            when(emailService.sendEmail(any(), any(), any(), any())).thenReturn(EmailSendResult.success("email-1"));
             when(logRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
             service.process(event);

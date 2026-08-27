@@ -20,6 +20,7 @@ public final class AuditAction {
     public static final String PAYMENT = "PAYMENT";
     public static final String DELIVERY = "DELIVERY";
     public static final String EMAIL_SENT = "EMAIL_SENT";
+    public static final String EMAIL_FAILED = "EMAIL_FAILED";
     public static final String OTP_SENT = "OTP_SENT";
     public static final String SMS_SENT = "SMS_SENT";
     public static final String SMS_FAILED = "SMS_FAILED";

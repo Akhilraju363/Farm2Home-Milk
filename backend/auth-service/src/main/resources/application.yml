@@ -55,6 +55,19 @@ sms:
   max-attempts: ${SMS_MAX_ATTEMPTS:3}
   retry-backoff-millis: ${SMS_RETRY_BACKOFF_MILLIS:150}
 
+otp:
+  expiry-seconds: ${OTP_EXPIRY_SECONDS:300}
+  max-attempts: ${OTP_MAX_ATTEMPTS:5}
+  resend-cooldown-seconds: ${OTP_RESEND_COOLDOWN_SECONDS:30}
+  max-resends: ${OTP_MAX_RESENDS:3}
+
+# Blank (default) disables Google Sign-In entirely - GoogleTokenValidator fails closed, every
+# POST /auth/google call returns 401 "Google Sign-In is not configured on this server" rather than
+# silently accepting an unverifiable token. No client secret is ever configured here - the
+# ID-token-verification flow this codebase uses does not need one (see GoogleTokenValidator).
+google:
+  client-id: ${GOOGLE_CLIENT_ID:}
+
 management:
   endpoints:
     web:
