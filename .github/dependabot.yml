@@ -1,0 +1,68 @@
+version: 2
+updates:
+  # ── Backend: multi-module Maven reactor (root pom aggregates all services) ──
+  - package-ecosystem: maven
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      spring:
+        patterns:
+          - "org.springframework*"
+          - "io.spring*"
+      test-tooling:
+        patterns:
+          - "org.testcontainers*"
+          - "org.mockito*"
+          - "org.junit*"
+
+  # ── Frontend ──
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      mui:
+        patterns:
+          - "@mui/*"
+          - "@emotion/*"
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+
+  # ── GitHub Actions used by the workflows ──
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+
+  # ── Base images referenced by the Dockerfiles ──
+  - package-ecosystem: docker
+    directories:
+      - /backend/api-gateway
+      - /backend/auth-service
+      - /backend/config-server
+      - /backend/customer-service
+      - /backend/dashboard-service
+      - /backend/delivery-service
+      - /backend/discovery-service
+      - /backend/farm-service
+      - /backend/inventory-service
+      - /backend/notification-service
+      - /backend/order-service
+      - /backend/payment-service
+      - /backend/production-service
+      - /backend/reports-service
+      - /backend/subscription-service
+      - /frontend
+    schedule:
+      interval: weekly
+      day: monday
