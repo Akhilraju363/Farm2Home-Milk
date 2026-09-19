@@ -68,6 +68,15 @@ public class PaymentController {
 
     private final PaymentService paymentService;
 
+    /**
+     * The legacy {@code /callback} endpoint updates payment state with no signature/secret
+     * verification, so it is disabled by default. Enable only in local dev / test
+     * ({@code PAYMENT_LEGACY_CALLBACK_ENABLED=true}) to simulate gateway outcomes under the mock
+     * provider. Real outcomes must arrive via {@code POST /{id}/verify} or {@code POST /webhook}.
+     */
+    @org.springframework.beans.factory.annotation.Value("${farm2home.payment.legacy-callback-enabled:false}")
+    private boolean legacyCallbackEnabled;
+
     @PostMapping
     @Operation(summary = "Initiate a payment for an order",
             description = "Creates a new payment for an order. Behavior depends on `paymentMethod`: WALLET "
@@ -117,14 +126,14 @@ public class PaymentController {
     }
 
     @PostMapping("/callback")
-    @SecurityRequirements
-    @Operation(summary = "Manual/legacy payment status update",
-            description = "Updates a payment by reference without gateway signature verification. Kept for "
-                    + "backward compatibility and to simulate gateway outcomes under the mock provider "
-                    + "(local dev/tests). Real gateway outcomes should arrive via POST /{id}/verify "
-                    + "(client-driven) or POST /webhook (server-to-server) instead. Public — listed in "
-                    + "SecurityConfig's PUBLIC_ENDPOINTS alongside /webhook, so no bearer token is required or "
-                    + "checked; the payment is resolved purely from `paymentReference`.")
+    @PreAuthorize("hasAnyAuthority('" + SecurityConstants.ROLE_SUPER_ADMIN + "', '" + SecurityConstants.ROLE_FARM_MANAGER + "')")
+    @Operation(summary = "Manual/legacy payment status update (disabled by default)",
+            description = "Updates a payment by reference without gateway signature verification. Disabled "
+                    + "unless farm2home.payment.legacy-callback-enabled=true (local dev / test only, to "
+                    + "simulate gateway outcomes under the mock provider); returns 404 otherwise. When "
+                    + "enabled it requires an admin bearer token (SUPER_ADMIN / FARM_MANAGER). Real gateway "
+                    + "outcomes must arrive via POST /{id}/verify (client-driven) or POST /webhook "
+                    + "(server-to-server).")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
                 description = "Payment status updated"),
@@ -132,10 +141,15 @@ public class PaymentController {
                 description = "Validation failed, or the payment is not currently in PENDING state",
                 content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
-                description = "No payment found for the given paymentReference", content = @Content)
+                description = "Endpoint disabled, or no payment found for the given paymentReference",
+                content = @Content)
     })
     public ResponseEntity<ApiResponse<PaymentResponse>> callback(
             @Valid @RequestBody PaymentCallbackRequest request) {
+        if (!legacyCallbackEnabled) {
+            // Behave as if the route does not exist when the legacy callback is disabled.
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(ApiResponse.success("Payment status updated successfully", paymentService.processCallback(request)));
     }
 

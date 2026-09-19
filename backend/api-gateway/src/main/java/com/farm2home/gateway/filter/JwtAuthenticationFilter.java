@@ -8,6 +8,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -64,15 +65,30 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     private final JwtUtil jwtUtil;
 
+    /** Shared secret proving a request originated here. Blank in local/dev - downstream
+     *  services then run with gateway-origin enforcement disabled (unchanged behaviour). */
+    @Value("${farm2home.gateway.internal-secret:}")
+    private String internalSecret;
+
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
 
+        // A client must never be able to supply these - strip every inbound copy up front,
+        // on every path (public included), before we (maybe) set our own.
+        ServerHttpRequest sanitized = exchange.getRequest().mutate()
+                .headers(h -> {
+                    for (String owned : HeaderConstants.GATEWAY_OWNED_HEADERS) {
+                        h.remove(owned);
+                    }
+                })
+                .build();
+
         if (isPublicPath(path)) {
-            return chain.filter(exchange);
+            return chain.filter(exchange.mutate().request(sanitized).build());
         }
 
-        String authHeader = exchange.getRequest().getHeaders().getFirst(HeaderConstants.AUTHORIZATION);
+        String authHeader = sanitized.getHeaders().getFirst(HeaderConstants.AUTHORIZATION);
 
         if (authHeader == null || !authHeader.startsWith(SecurityConstants.BEARER_PREFIX)) {
             return unauthorizedResponse(exchange, "Missing or invalid Authorization header");
@@ -83,6 +99,12 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         try {
             Claims claims = jwtUtil.validateAndExtractClaims(token);
 
+            // Only access tokens authenticate an API call; a refresh token must not.
+            String tokenType = claims.get(SecurityConstants.CLAIM_TYPE, String.class);
+            if (tokenType != null && !SecurityConstants.TOKEN_TYPE_ACCESS.equals(tokenType)) {
+                return unauthorizedResponse(exchange, "Invalid or expired token");
+            }
+
             String userId = claims.get(SecurityConstants.CLAIM_USER_ID, String.class);
             String mobile = claims.getSubject();
 
@@ -90,13 +112,15 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             List<String> roles = claims.get(SecurityConstants.CLAIM_ROLES, List.class);
             String rolesHeader = roles != null ? String.join(",", roles) : "";
 
-            ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+            ServerHttpRequest.Builder mutated = sanitized.mutate()
                     .header(HeaderConstants.X_USER_ID, userId != null ? userId : "")
                     .header(HeaderConstants.X_USER_MOBILE, mobile != null ? mobile : "")
-                    .header(HeaderConstants.X_USER_ROLES, rolesHeader)
-                    .build();
+                    .header(HeaderConstants.X_USER_ROLES, rolesHeader);
+            if (internalSecret != null && !internalSecret.isBlank()) {
+                mutated.header(HeaderConstants.X_INTERNAL_AUTH, internalSecret);
+            }
 
-            return chain.filter(exchange.mutate().request(mutatedRequest).build());
+            return chain.filter(exchange.mutate().request(mutated.build()).build());
 
         } catch (JwtException e) {
             log.warn("JWT validation failed for path {}: {}", path, e.getMessage());

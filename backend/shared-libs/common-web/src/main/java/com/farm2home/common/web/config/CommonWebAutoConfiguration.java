@@ -2,9 +2,12 @@ package com.farm2home.common.web.config;
 
 import com.farm2home.common.web.client.RequestHeaderForwarder;
 import com.farm2home.common.web.exception.GlobalExceptionHandler;
+import com.farm2home.common.web.security.GatewayTrust;
+import com.farm2home.common.web.security.GatewayTrustHeaderFilter;
 import com.farm2home.common.web.storage.FileStorageProperties;
 import com.farm2home.common.web.storage.FileStorageService;
 import jakarta.servlet.MultipartConfigElement;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.MultipartConfigFactory;
@@ -47,11 +50,37 @@ public class CommonWebAutoConfiguration {
         return factory.createMultipartConfig();
     }
 
-    /** Used by BFF-style aggregator/proxy services (dashboard-service, reports-service, ...) to
-     *  forward the caller's identity + correlation id onto their own downstream calls. */
+    /**
+     * Verifies that a request carrying {@code X-User-*} identity headers actually came through
+     * the api-gateway (which sets {@code X-Internal-Auth} to this shared secret). Blank in
+     * local/dev/test - enforcement is then disabled and behaviour is unchanged.
+     *
+     * <p>Env var: {@code FARM2HOME_GATEWAY_INTERNAL_SECRET} (relaxed-bound from
+     * {@code farm2home.gateway.internal-secret}).
+     */
     @Bean
-    public RequestHeaderForwarder requestHeaderForwarder() {
-        return new RequestHeaderForwarder();
+    public GatewayTrust gatewayTrust(
+            @Value("${farm2home.gateway.internal-secret:}") String internalSecret) {
+        return new GatewayTrust(internalSecret);
+    }
+
+    /**
+     * Strips forged {@code X-User-*}/{@code X-Internal-Auth} headers from any request that did
+     * not arrive through the api-gateway (once a secret is configured). Runs before Spring
+     * Security. No-op when enforcement is disabled.
+     */
+    @Bean
+    public GatewayTrustHeaderFilter gatewayTrustHeaderFilter(GatewayTrust gatewayTrust) {
+        return new GatewayTrustHeaderFilter(gatewayTrust);
+    }
+
+    /** Used by BFF-style aggregator/proxy services (dashboard-service, reports-service, ...) to
+     *  forward the caller's identity + correlation id onto their own downstream calls. Also
+     *  attaches the gateway trust secret so the downstream service accepts the forwarded
+     *  identity (the aggregator is itself a trusted, gateway-authenticated hop). */
+    @Bean
+    public RequestHeaderForwarder requestHeaderForwarder(GatewayTrust gatewayTrust) {
+        return new RequestHeaderForwarder(gatewayTrust);
     }
 
     /** Serves everything under app.upload.base-dir at /uploads/** - e.g. a file stored as

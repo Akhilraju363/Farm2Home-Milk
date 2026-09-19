@@ -29,6 +29,30 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final UserDetailsServiceImpl userDetailsService;
 
+    /**
+     * SECURITY: a bearer token only ever authenticates a request when its {@code type} claim is
+     * {@link SecurityConstants#TOKEN_TYPE_ACCESS} - a structurally valid, correctly-signed,
+     * unexpired REFRESH token no longer authenticates like an access token (it used to, since
+     * {@link JwtService#isTokenValid} only ever checked subject-match + expiry). Deliberately an
+     * explicit positive match, not "not REFRESH": an unknown/missing {@code type} is treated as
+     * insufficient, never as an implicit access grant (every access token this service has ever
+     * issued has always set {@code type=ACCESS} - see JwtService.generateAccessToken - so no
+     * previously-issued access token is affected by this).
+     *
+     * <p>On a type mismatch this method does NOT write a response or short-circuit the chain - it
+     * simply leaves the request unauthenticated and lets {@code filterChain.doFilter} continue, the
+     * same as when no bearer token is presented at all. Downstream, {@code SecurityConfig}'s
+     * {@code anyRequest().authenticated()} rule (via its new {@code AuthenticationEntryPoint}) is
+     * what turns "reached a protected endpoint unauthenticated" into a 401 - the filter itself never
+     * decides that. This matters specifically for {@code POST /api/v1/auth/refresh-token}: it is a
+     * {@code permitAll()} endpoint whose entire purpose is to receive a refresh token, so a design
+     * that has this filter reject requests outright based on the presented type (as
+     * {@code backend/app}'s {@code SpikeJwtAuthenticationFilter} does - safe there, since it never
+     * accepts a refresh token in any form) would risk incorrectly blocking that endpoint. Not
+     * authenticating and deferring the pass/fail decision to Spring Security's own per-endpoint
+     * authorization rule is safe for every current and future {@code permitAll()} path by
+     * construction, not merely because today's frontend happens not to trigger the bad case.
+     */
     @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
@@ -46,8 +70,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
             String mobile = jwtService.extractMobile(jwt);
+            String tokenType = jwtService.extractClaim(jwt, c -> c.get(SecurityConstants.CLAIM_TYPE, String.class));
+            boolean isAccessToken = SecurityConstants.TOKEN_TYPE_ACCESS.equals(tokenType);
 
-            if (mobile != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            if (mobile != null && isAccessToken && SecurityContextHolder.getContext().getAuthentication() == null) {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(mobile);
 
                 if (jwtService.isTokenValid(jwt, userDetails)) {
@@ -56,6 +82,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 }
+            } else if (mobile != null && !isAccessToken) {
+                log.warn("Rejecting bearer token with type '{}' (expected {}) for {} {}",
+                        tokenType, SecurityConstants.TOKEN_TYPE_ACCESS, request.getMethod(), request.getRequestURI());
             }
         } catch (JwtException e) {
             log.warn("JWT validation error: {}", e.getMessage());
