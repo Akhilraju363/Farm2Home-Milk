@@ -1,7 +1,7 @@
 # Farm2Home auth-service — standalone Render-deployable image (kept separate from backend/app,
 # see docs/FREE_DEPLOYMENT_ARCHITECTURE.md). Build: mvn -pl auth-service -am clean package -DskipTests
 # Run:   docker run -e PORT=8081 -e SPRING_DATASOURCE_URL=... -e JWT_SECRET=... -p 8081:8081 farm2home-auth
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:24-jre-alpine
 WORKDIR /app
 COPY target/*.jar app.jar
 
