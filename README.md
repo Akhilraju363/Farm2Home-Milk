@@ -21,7 +21,7 @@ Farm2Home Milk connects dairy farms directly to customers via a subscription-bas
 | API Docs | OpenAPI 3 / Swagger UI |
 | Messaging | Apache Kafka |
 | Containerization | Docker + Docker Compose |
-| CI/CD | GitLab CI/CD |
+| CI/CD | GitHub Actions (+ GHCR) |
 | Cloud | AWS (EC2, RDS, S3, ELB, CloudWatch) |
 | Monitoring | Prometheus + Grafana + Spring Actuator |
 
@@ -201,9 +201,21 @@ Backend logs rotate daily or at 50MB, whichever comes first, are gzip-compressed
 
 ---
 
-## CI/CD Pipeline (GitLab)
+## CI/CD Pipeline (GitHub Actions)
 
-1. Build → Test → SonarQube Scan → Docker Build → Deploy QA → Deploy UAT → Deploy Production
+Full details, local-equivalent commands, required secrets and the rollback
+procedure live in **[docs/CICD.md](docs/CICD.md)**.
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | PR, push to `main` | Backend `mvn clean verify` (unit + Testcontainers integration tests + JaCoCo gate); frontend `npm ci` → lint → type-check → tests → production build. Jobs run in parallel. |
+| `docker.yml` | PR (build only), push to `main` (build + publish) | Builds a container image for every service with a Dockerfile + the frontend; on `main` publishes to GHCR tagged `<git-sha>` and `main`. |
+| `security.yml` | PR, push to `main`, weekly | CodeQL (Java + JS/TS) and dependency review. |
+| `dependabot.yml` | weekly | Maven, npm, GitHub Actions and Docker base-image updates. |
+
+> The legacy `.gitlab-ci.yml` (SonarQube + SSH deploys to `$QA_HOST`/`$UAT_HOST`/`$PROD_HOST`)
+> is retained for reference only. Those hosts are not defined in this repository, so **no CD
+> deployment target is currently configured** — see [docs/CICD.md](docs/CICD.md#cd-status).
 
 ---
 
@@ -212,9 +224,7 @@ Backend logs rotate daily or at 50MB, whichever comes first, are gzip-compressed
 | Environment | Description |
 |---|---|
 | Development | Local Docker Compose |
-| QA | AWS EC2 — auto-deploy on merge to `develop` |
-| UAT | AWS EC2 — manual trigger |
-| Production | AWS EC2 — manual trigger after UAT sign-off |
+| Staging / Production | Not configured — CI builds and publishes images to GHCR; deployment target is TBD (see [docs/CICD.md](docs/CICD.md#cd-status)) |
 
 ---
 
@@ -230,4 +240,4 @@ Backend logs rotate daily or at 50MB, whichever comes first, are gzip-compressed
 
 ## License
 
-Proprietary — Farm2Home Milk © 2024
+Proprietary — Farm2Home Milk © 2026

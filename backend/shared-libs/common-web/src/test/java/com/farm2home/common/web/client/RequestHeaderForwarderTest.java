@@ -1,6 +1,7 @@
 package com.farm2home.common.web.client;
 
 import com.farm2home.common.core.constants.HeaderConstants;
+import com.farm2home.common.web.security.GatewayTrust;
 import com.farm2home.observability.web.RequestTraceIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.AfterEach;
@@ -15,7 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RequestHeaderForwarderTest {
 
-    private final RequestHeaderForwarder forwarder = new RequestHeaderForwarder();
+    // No internal secret configured -> GatewayTrust is not enforcing, mirroring local/dev/test.
+    private final RequestHeaderForwarder forwarder = new RequestHeaderForwarder(new GatewayTrust(""));
 
     @AfterEach
     void cleanup() {
@@ -53,6 +55,33 @@ class RequestHeaderForwarderTest {
         var headers = forwarder.forwardable();
 
         assertThat(headers.containsKey(HeaderConstants.X_USER_ID)).isFalse();
+    }
+
+    @Test
+    @DisplayName("enforcing GatewayTrust → internal-auth secret attached alongside forwarded identity")
+    void enforcing_attachesInternalAuthSecret() {
+        var enforcing = new RequestHeaderForwarder(new GatewayTrust("s3cr3t-value"));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HeaderConstants.X_USER_ID, "11111111-1111-1111-1111-111111111111");
+        request.addHeader(HeaderConstants.X_USER_MOBILE, "9876543210");
+        request.addHeader(HeaderConstants.X_USER_ROLES, "CUSTOMER");
+        bindRequest(request);
+
+        var headers = enforcing.forwardable();
+
+        assertThat(headers.getFirst(HeaderConstants.X_INTERNAL_AUTH)).isEqualTo("s3cr3t-value");
+    }
+
+    @Test
+    @DisplayName("not enforcing → no internal-auth header is added")
+    void notEnforcing_noInternalAuthHeader() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HeaderConstants.X_USER_ID, "11111111-1111-1111-1111-111111111111");
+        request.addHeader(HeaderConstants.X_USER_MOBILE, "9876543210");
+        request.addHeader(HeaderConstants.X_USER_ROLES, "CUSTOMER");
+        bindRequest(request);
+
+        assertThat(forwarder.forwardable().containsKey(HeaderConstants.X_INTERNAL_AUTH)).isFalse();
     }
 
     @Test

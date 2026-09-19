@@ -35,7 +35,11 @@ import static com.farm2home.observability.web.RequestTraceIdFilter.CORRELATION_I
 public class ReactiveRequestTraceIdFilter implements WebFilter {
 
     // Never written to logs: carry credentials/session tokens that must not end up in a log file.
-    private static final Set<String> SENSITIVE_HEADERS = Set.of("authorization", "cookie", "set-cookie");
+    // x-internal-auth is the shared FARM2HOME_GATEWAY_INTERNAL_SECRET (proof a request came from the
+    // api-gateway / a trusted service): logging it would write the secret to every service's log on
+    // every internal call.
+    private static final Set<String> SENSITIVE_HEADERS =
+            Set.of("authorization", "cookie", "set-cookie", "x-internal-auth");
 
     private static final Logger log = LoggerFactory.getLogger(ReactiveRequestTraceIdFilter.class);
 

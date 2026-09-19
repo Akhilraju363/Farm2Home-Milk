@@ -1,0 +1,45 @@
+# Render Free deployment profile for auth-service. Activate with
+# SPRING_PROFILES_ACTIVE=render,prod (the 'prod' profile additionally turns on JwtSecretGuard's
+# fail-closed check that JWT_SECRET is set and isn't the committed dev placeholder).
+#
+# Everything here is also independently settable via the env vars already read by
+# application.yml (EUREKA_CLIENT_ENABLED, DB_POOL_*, ...) - this profile only changes the
+# *defaults* for a Render-shaped deployment so a bare SPRING_PROFILES_ACTIVE=render,prod is
+# enough without having to also set every override var by hand. See docs/ENVIRONMENT_VARIABLES.md
+# for the full required/optional variable list.
+
+eureka:
+  client:
+    # No Eureka on Render. (Also independently overridable via EUREKA_CLIENT_ENABLED.)
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+spring:
+  datasource:
+    hikari:
+      # auth is low-QPS (login/register/refresh only) - keep its share of the Neon free-tier
+      # connection budget small so backend/app's aggregate pool (10) has headroom. See
+      # docs/FREE_DEPLOYMENT_ARCHITECTURE.md §11 for the worst-case connection math.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:5}
+      minimum-idle: ${DB_POOL_MIN_IDLE:0}
+
+farm2home:
+  observability:
+    # No Config Server on Render. auth-service never actually pulls config from it (no
+    # spring.config.import=configserver: anywhere in this service - Config Server was only ever
+    # pinged for this health-check side effect), but common-observability's
+    # ConfigServerHealthIndicator defaults to enabled and marks the whole /actuator/health DOWN
+    # when http://localhost:8888 is unreachable - which it always is here. Same fix backend/app
+    # already applies for the same reason (see ObservabilityAutoConfiguration).
+    config-server-health:
+      enabled: false
+
+management:
+  endpoint:
+    health:
+      # Render's health check hits /actuator/health anonymously - "when-authorized" (the
+      # application.yml default) would otherwise hide the DB/diskspace component details, which
+      # is fine for Render (it only reads overall status) but explicit here since this profile is
+      # the deployment target.
+      show-details: never

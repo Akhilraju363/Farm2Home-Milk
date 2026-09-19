@@ -261,14 +261,8 @@ spring:
               factor: 2
               basedOnPreviousValue: false
 
-      globalcors:
-        cors-configurations:
-          '[/**]':
-            allowedOriginPatterns: "*"
-            allowedMethods: "GET,POST,PUT,DELETE,OPTIONS,PATCH"
-            allowedHeaders: "*"
-            allowCredentials: true
-            maxAge: 3600
+      # CORS is configured once, in code: com.farm2home.gateway.config.CorsConfig
+      # (origins from FARM2HOME_FRONTEND_ORIGINS). No wildcard + credentials.
 
 eureka:
   client:
@@ -385,12 +379,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,gateway,prometheus,env
+        # env/metrics/gateway are NOT exposed - /actuator/env leaks the resolved jwt.secret.
+        include: health,info,prometheus
   endpoint:
     health:
-      show-details: always
+      # Anonymous callers (uptime/deploy probes) get {"status":"UP"} only; details need auth.
+      show-details: when-authorized
     gateway:
-      enabled: true
+      enabled: false
   health:
     circuitbreakers:
       enabled: true

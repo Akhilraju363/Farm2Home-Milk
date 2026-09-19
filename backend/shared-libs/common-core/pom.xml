@@ -111,6 +111,21 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <!-- Cross-service workflow test that extends BaseIntegrationTest (@SpringBootTest),
+                             but this library module has no @SpringBootApplication, so its context can never
+                             start here ("Unable to find a @SpringBootConfiguration"). BaseIntegrationTest
+                             itself is consumed by order/payment/delivery via this module's test-jar, so it
+                             stays in the jar; only running this one class in common-core is skipped. It needs
+                             to move into (or be rewritten for) a module that has an application class. -->
+                        <exclude>**/EndToEndWorkflowIntegrationTest.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

@@ -36,6 +36,9 @@
         <module>notification-service</module>
         <module>dashboard-service</module>
         <module>reports-service</module>
+        <!-- spike/render-single-jvm ONLY: throwaway single-JVM aggregation spike (farm + production).
+             Remove this line before merging anything to main. -->
+        <module>app</module>
     </modules>
 
     <properties>
@@ -127,6 +130,58 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <!-- ===================================================================
+                 P1-1 single-JVM aggregation: every business service applies
+                 spring-boot-maven-plugin, so its MAIN `*.jar` is a Boot executable
+                 (fat) jar with classes under BOOT-INF/classes/ - fine for `java -jar`
+                 and the per-service Dockerfiles, but unusable as a normal library on
+                 the `app` module's compile/test/runtime classpath (its @ComponentScan
+                 / @EnableJpaRepositories would find nothing).
+
+                 This adds a SECOND, thin, classified artifact `*-lib.jar` (plain
+                 `target/classes`, no fat packaging) that `backend/app` consumes via
+                 `<classifier>lib</classifier>`. The main `*.jar` is untouched - it is
+                 still fattened by spring-boot:repackage afterwards - so standalone
+                 service packaging and every existing Dockerfile keep working exactly
+                 as before. This is the Spring Boot reference approach ("Use the
+                 repackaged jar as a dependency"), just with the classifier on the
+                 library copy instead of the executable copy so nothing else changes.
+
+                 Excludes below keep each service's own runtime config OUT of the
+                 aggregated app: application*.yml (service ports / eureka / per-service
+                 profiles), logback-spring.xml, bootstrap*.yml, and db/migration/**
+                 (the app runs its own per-schema Flyway from copied locations - a
+                 merged classpath:db/migration would collide on V1/V2/...).
+
+                 skipIfEmpty => pom modules (parent, shared-libs parent) and any
+                 classless module simply don't produce a -lib.jar.
+                 =================================================================== -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>library-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>lib</classifier>
+                            <skipIfEmpty>true</skipIfEmpty>
+                            <excludes>
+                                <exclude>application*.yml</exclude>
+                                <exclude>application*.yaml</exclude>
+                                <exclude>application*.properties</exclude>
+                                <exclude>bootstrap*.yml</exclude>
+                                <exclude>bootstrap*.properties</exclude>
+                                <exclude>logback-spring.xml</exclude>
+                                <exclude>db/migration/**</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <!-- In <build><plugins> (not pluginManagement) so every module is instrumented
                  automatically - previously this was pluginManagement-only, which meant a

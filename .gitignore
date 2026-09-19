@@ -101,6 +101,7 @@ backend/*/uploads/
 # ========================
 .jacoco/
 jacoco.exec
+coverage/
 
 # ========================
 # Terraform

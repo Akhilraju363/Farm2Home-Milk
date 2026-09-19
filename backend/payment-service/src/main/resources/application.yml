@@ -39,6 +39,14 @@ payment:
       interval-ms: ${PAYMENT_RECONCILIATION_INTERVAL_MS:300000}
       stale-after-minutes: ${PAYMENT_RECONCILIATION_STALE_MINUTES:5}
 
+farm2home:
+  payment:
+    # The legacy POST /payments/callback updates payment state with NO signature/secret
+    # verification. Disabled (endpoint returns 404) unless explicitly turned on for local dev /
+    # test against the mock provider. MUST stay false in every deployed environment - real
+    # gateway outcomes arrive via POST /{id}/verify or the HMAC-verified POST /webhook.
+    legacy-callback-enabled: ${PAYMENT_LEGACY_CALLBACK_ENABLED:false}
+
 eureka:
   client:
     service-url:
@@ -52,10 +60,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus,env
+        include: health,info,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
 springdoc:
   api-docs:

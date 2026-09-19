@@ -1,0 +1,190 @@
+# ==========================================================================================
+# Farm2Home single-JVM aggregation (P1-1, branch spike/render-single-jvm).
+# This module's application.yml carries the aggregated runtime config directly.
+#   Groups embedded: 1 (farm, production), 2 (customer, inventory), 3 (subscription, order),
+#                    4 (payment, delivery), 5 (notification, invoice), 6 (dashboard, reports)
+# No Eureka, no Config Server, no Spring Cloud Gateway, no Kafka broker.
+# ==========================================================================================
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: farm2home-spike
+  main:
+    banner-mode: "off"
+  autoconfigure:
+    exclude:
+      # No form/basic login — SpikeSecurityConfig + the JWT filter are the only authentication.
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+
+  task:
+    scheduling:
+      # One shared TaskScheduler for every embedded @Scheduled job (inventory low-stock sweep,
+      # subscription lifecycle jobs, order daily-generation). See SchedulingConfig.
+      pool:
+        size: 8
+
+  datasource:
+    # Environment-driven. Local default = the same local Postgres the individual services use.
+    # For Neon: SPRING_DATASOURCE_URL=jdbc:postgresql://<host>/<db>?sslmode=require
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/farm2home}
+    username: ${SPRING_DATASOURCE_USERNAME:farm2home}
+    password: ${SPRING_DATASOURCE_PASSWORD:farm2home@123}
+    hikari:
+      # Neon free-tier connection budget is shared with auth-service's own pool (see
+      # docs/FREE_DEPLOYMENT_ARCHITECTURE.md §11). Defaults unchanged from Groups 1-6
+      # (local Postgres has no such constraint); override via env for Render/Neon.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:0}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:30000}
+      idle-timeout: ${DB_POOL_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${DB_POOL_MAX_LIFETIME_MS:1800000}
+      pool-name: spike-hikari
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        # Every business entity across all embedded services is @Table(schema=…) qualified
+        # (order-service uses the backtick-quoted `order` reserved word); only the shared
+        # common-core AuditLog is unqualified and resolves here. So in the aggregate every audit
+        # row (all 6 services) lands in farm.audit_log; each service's own <schema>.audit_log
+        # stays intact but unused. The dedicated `audit` schema is the P1-1 Phase-10 decision,
+        # deferred — UNCHANGED from Groups 1/2.
+        default_schema: farm
+
+  # Boot's single auto-configured Flyway is off — SpikeFlywayConfig runs ONE instance per
+  # schema (farm, production, customer, inventory, subscription, order) from distinct locations.
+  flyway:
+    enabled: false
+
+  kafka:
+    # No broker in this deployment. Producers stay lazy (a send on a mutating request completes
+    # its future exceptionally and is logged — max.block.ms is 3s in each service's own
+    # KafkaConfig). Consumers are registered but NOT started (KafkaDisabledConfig BPP), so
+    # startup never blocks on a broker connection.
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listener:
+      auto-startup: false
+    consumer:
+      # order-service's KafkaConfig / @KafkaListener(groupId = "${spring.kafka.consumer.group-id}")
+      # read this — must be present even though the listeners never start.
+      group-id: ${SPRING_KAFKA_CONSUMER_GROUP_ID:farm2home-app}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+
+  cloud:
+    config:
+      enabled: false
+      import-check:
+        enabled: false
+    # No Eureka and no Spring Cloud LoadBalancer. Embedded clients' lb://<service> calls are
+    # rewritten to an in-process http://localhost:<port> loopback by LoadBalancerClientConfig.
+    discovery:
+      enabled: false
+    loadbalancer:
+      enabled: false
+
+# Eureka must not be required.
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+# The gateway is not running, so this JVM validates JWTs itself (SpikeJwtAuthenticationFilter).
+jwt:
+  secret: ${JWT_SECRET:ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
+
+farm2home:
+  cors:
+    # No gateway in the Render deployment — this JVM answers its own CORS preflight
+    # (SpikeSecurityConfig). Comma-separated exact origins; must match auth-service's
+    # CORS_ALLOWED_ORIGINS. Defaults to the local Vite dev origins.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+  observability:
+    # No Config Server — turn off common-observability's ConfigServerHealthIndicator so an
+    # unreachable localhost:8888 can't make /actuator/health report DOWN.
+    config-server-health:
+      enabled: false
+  # Business schedulers ON by default (Render runs exactly 1 instance). Aggregation tests set
+  # this false so a run at 23:00 can't fire order's daily-order-generation. See SchedulingConfig.
+  scheduling:
+    enabled: ${FARM2HOME_SCHEDULING_ENABLED:true}
+  payment:
+    # POST /api/v1/payments/callback updates payment state with NO signature verification.
+    # Secure default: disabled -> the endpoint returns 404. MUST stay false in every deployed
+    # environment (real outcomes arrive via POST /{id}/verify or the HMAC-verified POST /webhook).
+    legacy-callback-enabled: ${PAYMENT_LEGACY_CALLBACK_ENABLED:false}
+
+# dashboard-service (Group 6): per-downstream timeout for the parallel Mono.zip fan-out to the
+# 8 owning services' /summary endpoints. Each call independently degrades to a safe fallback on
+# timeout/error (DashboardServiceImpl#withFallback) so one slow service never fails the summary.
+dashboard:
+  downstream-timeout-ms: ${DASHBOARD_DOWNSTREAM_TIMEOUT_MS:3000}
+
+app:
+  upload:
+    base-dir: uploads
+  mail:
+    # Only used as the "From" address label by notification-service's email layer, which runs
+    # LoggingEmailProvider by default (see NotificationEmailAppConfig / `email.enabled`).
+    from: ${MAIL_FROM:no-reply@farm2homemilk.example}
+
+# order-service milk pricing (INR/litre) — verbatim from order-service/application.yml.
+# Bound to order.config.MilkPriceProperties via app OrderPricingConfig (@EnableConfigurationProperties).
+milk:
+  prices:
+    FULL_CREAM: 80.00
+    TONED: 65.00
+    DOUBLE_TONED: 55.00
+    SKIMMED: 75.00
+
+# payment-service gateway — verbatim shape from payment-service/application.yml.
+# 'mock' = no external HTTP, no credentials (default; used by every test and the default deploy).
+# Set PAYMENT_GATEWAY_PROVIDER=razorpay + RAZORPAY_* only where real keys exist. No secrets here.
+payment:
+  gateway:
+    provider: ${PAYMENT_GATEWAY_PROVIDER:mock}
+    razorpay:
+      key-id: ${RAZORPAY_KEY_ID:}
+      key-secret: ${RAZORPAY_KEY_SECRET:}
+      webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+    reconciliation:
+      # PaymentReconciliationJob: every 5 min, re-checks stale PENDING gateway payments. Under
+      # the mock provider every check is a no-op. Also gated by farm2home.scheduling.enabled.
+      enabled: ${PAYMENT_RECONCILIATION_ENABLED:true}
+
+# notification-service SMS — logging provider by default (no gateway, no credentials).
+sms:
+  provider: ${SMS_PROVIDER:logging}
+  max-attempts: ${SMS_MAX_ATTEMPTS:3}
+  retry-backoff-millis: ${SMS_RETRY_BACKOFF_MILLIS:150}
+
+# notification-service email — LoggingEmailProvider by default (no SMTP, no credentials).
+# spring.mail.host is deliberately NOT set here, so Boot never auto-configures a JavaMailSender.
+email:
+  enabled: ${EMAIL_ENABLED:false}
+  from-name: ${EMAIL_FROM_NAME:Farm2Home}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+
+logging:
+  level:
+    com.farm2home.app: INFO
+    org.flywaydb: INFO
+    # No broker in this deployment — consumer containers are stopped (see KafkaDisabledConfig);
+    # any lazy producer send just logs its failed future.
+    org.apache.kafka.clients.NetworkClient: ERROR

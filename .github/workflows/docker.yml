@@ -1,0 +1,117 @@
+name: Docker
+
+# Builds a container image for every service that ships a Dockerfile.
+# - Pull requests: build only (validation), nothing is published.
+# - Push to main:  build and publish to GHCR with an immutable <git-sha> tag
+#                  plus a moving `main` tag.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Backend services that have a Dockerfile (backend/invoice-service intentionally has none yet).
+  BACKEND_SERVICES: >-
+    api-gateway auth-service config-server customer-service dashboard-service
+    delivery-service discovery-service farm-service inventory-service
+    notification-service order-service payment-service production-service
+    reports-service subscription-service
+
+jobs:
+  backend-images:
+    name: Backend images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # The backend Dockerfiles are thin (COPY target/*.jar) and expect the jar
+      # to already exist, so the Maven package step must run first.
+      - name: Package services
+        working-directory: backend
+        run: mvn -B --no-transfer-progress -DskipTests clean package
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix (lowercase owner)
+        id: meta
+        run: echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/farm2home" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on main) each service
+        run: |
+          set -euo pipefail
+          PUSH=false
+          if [ "${{ github.event_name }}" != "pull_request" ]; then PUSH=true; fi
+          PREFIX='${{ steps.meta.outputs.prefix }}'
+          for svc in $BACKEND_SERVICES; do
+            echo "::group::$svc"
+            if [ "$PUSH" = "true" ]; then
+              docker buildx build \
+                --file "backend/$svc/Dockerfile" \
+                --tag "$PREFIX/$svc:${{ github.sha }}" \
+                --tag "$PREFIX/$svc:main" \
+                --push \
+                "backend/$svc"
+            else
+              # PR: build for validation only, do not publish.
+              docker buildx build \
+                --file "backend/$svc/Dockerfile" \
+                --tag "$PREFIX/$svc:${{ github.sha }}" \
+                "backend/$svc"
+            fi
+            echo "::endgroup::"
+          done
+
+  frontend-image:
+    name: Frontend image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix (lowercase owner)
+        id: meta
+        run: echo "prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/farm2home" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.meta.outputs.prefix }}/frontend:${{ github.sha }}
+            ${{ steps.meta.outputs.prefix }}/frontend:main

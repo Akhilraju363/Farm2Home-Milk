@@ -1,18 +1,27 @@
 server:
-  port: 8081
+  # Render sets $PORT; the app must bind to it, not a hardcoded port. Local/docker default 8081.
+  port: ${PORT:8081}
 
 spring:
   application:
     name: auth-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/farm2home?currentSchema=auth
-    username: farm2home
-    password: farm2home@123
+    # Environment-driven (was hardcoded to local Postgres). Local default unchanged.
+    # For Neon: SPRING_DATASOURCE_URL=jdbc:postgresql://<host>/<db>?currentSchema=auth&sslmode=require
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/farm2home?currentSchema=auth}
+    username: ${SPRING_DATASOURCE_USERNAME:farm2home}
+    password: ${SPRING_DATASOURCE_PASSWORD:farm2home@123}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 30000
+      # Neon free-tier connection budget is shared with backend/app's own pool (see
+      # docs/FREE_DEPLOYMENT_ARCHITECTURE.md §11) — auth is low-QPS (login/register/refresh
+      # only), so its share should stay smaller than the aggregate's. Defaults unchanged from
+      # before (local Postgres has no such constraint); override via env for Render/Neon.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:30000}
+      idle-timeout: ${DB_POOL_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${DB_POOL_MAX_LIFETIME_MS:1800000}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -29,13 +38,18 @@ spring:
     baseline-on-migrate: true
     create-schemas: true
   kafka:
-    bootstrap-servers: localhost:9092
-    # Producer tuning (e.g. max.block.ms) lives in KafkaConfig.java's explicit ProducerFactory
-    # config maps, NOT here - both producer beans are built with a hardcoded Map.of(...) that
-    # never reads spring.kafka.producer.* properties, so settings here would be silently inert.
+    # No broker in the Render deployment. Producers stay lazy/non-fatal (KafkaConfig.java sets
+    # max.block.ms=1500 on both explicit ProducerFactory config maps, and both event producers
+    # are @Async) — a send on register()/send-otp just logs a failed future, never blocks the
+    # HTTP response or fails the request. Producer tuning otherwise lives in KafkaConfig.java's
+    # explicit maps, NOT here - spring.kafka.producer.* would be silently inert.
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
 eureka:
   client:
+    # Must be disableable for Render (no Eureka there). Default true preserves existing
+    # local/docker-compose behaviour unchanged.
+    enabled: ${EUREKA_CLIENT_ENABLED:true}
     service-url:
       defaultZone: http://eureka:eurekaSecret@localhost:8761/eureka
     register-with-eureka: true
@@ -47,6 +61,13 @@ jwt:
   secret: ${JWT_SECRET:ZmFybTJob21lLXNlY3JldC1rZXktbXVzdC1iZS1hdC1sZWFzdC0yNTYtYml0cy1sb25n}
   expiration: 86400000        # 24h in ms
   refresh-expiration: 604800000 # 7d in ms
+
+farm2home:
+  cors:
+    # No gateway in the Render deployment — auth-service answers its own CORS preflight
+    # (see CorsConfig). Comma-separated exact origins; must match backend/app's
+    # CORS_ALLOWED_ORIGINS. Defaults to the local Vite dev origins.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
 
 sms:
   # logging (default, no external calls/credentials — used by every automated test) | a future
@@ -72,10 +93,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus,env
+        include: health,info,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
 springdoc:
   api-docs:

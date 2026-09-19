@@ -27,9 +27,9 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // Same as every other service's SecurityConfig - the Docker healthcheck
-                        // (and any external monitoring) calls this unauthenticated.
-                        .requestMatchers("/actuator/**").permitAll()
+                        // Only the liveness/readiness probe is unauthenticated; every other
+                        // actuator endpoint (env, metrics, ...) stays behind Basic auth.
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         .anyRequest().authenticated())
                 .httpBasic(Customizer.withDefaults())
                 .build();

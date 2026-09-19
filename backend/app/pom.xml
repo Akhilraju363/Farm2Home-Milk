@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.farm2home</groupId>
+        <artifactId>farm2home-milk</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>app</artifactId>
+    <name>Farm2Home - Single-JVM Application (Render deployable)</name>
+    <description>
+        P1-1 full single-JVM aggregation. Embeds the 13 business services in ONE Spring Boot
+        servlet application for $0 Render deployment (Vercel -> this app -> Neon Postgres).
+        api-gateway / discovery-service / config-server are deliberately NOT embedded and remain
+        available for PATH B multi-service deployment. This module produces the executable
+        deployment JAR (app.jar / java -jar app.jar).
+    </description>
+
+    <dependencies>
+        <!-- ==========================================================================
+             Business modules aggregated by DEPENDENCY (never by copying source), each
+             consumed as its thin `-lib` classified artifact (see parent pom's
+             maven-jar-plugin `library-jar` execution): the main `*.jar` stays a Boot
+             executable for standalone / PATH B use; `*-lib.jar` is the plain-classes
+             copy this app can actually component-scan.
+
+             `-lib` excludes each service's application*.yml / logback-spring.xml /
+             db/migration/** so no service's runtime config or migrations leak in.
+
+             Added GROUP BY GROUP (P1-1 Phase 3). Current groups embedded:
+               Group 1: farm, production
+               Group 2: customer, inventory
+               Group 3: subscription, order
+               Group 4: payment, delivery
+               Group 5: notification, invoice
+               Group 6: dashboard, reports
+             ========================================================================== -->
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>farm-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>production-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>customer-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>inventory-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>subscription-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>order-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>payment-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>delivery-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>notification-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>invoice-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <!-- Group 6: pure BFF/aggregators — no DB, no Flyway, no Kafka, no scheduling, no @Async.
+             reports-service pulls common-export (POI SXSSF streaming + PDFBox); both were already
+             on the classpath from earlier groups (customer-service / invoice-service), so Group 6
+             adds NO new heavy dependency. -->
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>dashboard-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.farm2home</groupId>
+            <artifactId>reports-service</artifactId>
+            <version>${project.version}</version>
+            <classifier>lib</classifier>
+        </dependency>
+
+        <!-- The gateway is not running in this deployment, so this JVM validates JWTs itself.
+             The business services never had jjwt on their own classpath (they trust gateway
+             headers), so it is declared here. Same coordinates/version as auth-service / gateway. -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- spring-boot-starter-test / spring-security-test are inherited from the parent pom. -->
+    </dependencies>
+
+    <build>
+        <finalName>app</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- app is the deployable, never a dependency: keep the executable as the
+                         plain `app.jar` (no classifier) so the Dockerfile is `java -jar app.jar`. -->
+                    <mainClass>com.farm2home.app.Application</mainClass>
+                </configuration>
+            </plugin>
+
+            <!-- app itself has no need for a thin -lib copy. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>library-jar</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- The parent binds a JaCoCo 80%-line BUNDLE gate to `verify`. This aggregation
+                 module is wiring + tests, not business logic carrying its own coverage
+                 obligation (each service's coverage is still enforced in its own module), so
+                 the gate is disabled HERE ONLY. The parent gate for every real module is
+                 untouched. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>check</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -251,8 +251,13 @@ function Invoke-BackendBuild {
 function Resolve-ServiceJar {
     param([string]$ModuleName)
     $targetDir = Join-Path $BackendDir "$ModuleName\target"
+    # Excludes sources/javadoc jars, and the thin "-lib" classifier jar every module also
+    # emits (parent pom's library-jar maven-jar-plugin execution, for backend/app's
+    # aggregation build) - that jar has no Spring Boot manifest/Main-Class and no bundled
+    # application*.yml, so launching it here fails instantly with "no main manifest
+    # attribute" before Spring's logging even initializes, which looks like a silent hang.
     return Get-ChildItem -Path $targetDir -Filter '*.jar' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notmatch '(sources|javadoc)\.jar$' } |
+        Where-Object { $_.Name -notmatch '(sources|javadoc|-lib)\.jar$' } |
         Select-Object -First 1
 }
 

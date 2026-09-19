@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -75,10 +76,16 @@ public class ObservabilityAutoConfiguration {
     // second still crashes on the name collision. Excluding this whole nested class by classpath
     // presence sidesteps registration order entirely.
 
+    // Opt-out switch (default on): a deployment that genuinely runs without a Config Server -
+    // e.g. the single-JVM render spike - sets farm2home.observability.config-server-health.enabled=false
+    // so an unreachable localhost:8888 does not drag /actuator/health to DOWN. Every existing
+    // service leaves it unset and is completely unaffected.
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
     @ConditionalOnClass(OncePerRequestFilter.class)
     @ConditionalOnMissingClass("org.springframework.cloud.config.server.config.ConfigServerProperties")
+    @ConditionalOnProperty(prefix = "farm2home.observability.config-server-health",
+            name = "enabled", havingValue = "true", matchIfMissing = true)
     static class ServletConfigServerHealthConfiguration {
 
         @Bean
@@ -93,6 +100,8 @@ public class ObservabilityAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.REACTIVE)
     @ConditionalOnClass(WebFilter.class)
+    @ConditionalOnProperty(prefix = "farm2home.observability.config-server-health",
+            name = "enabled", havingValue = "true", matchIfMissing = true)
     static class ReactiveConfigServerHealthConfiguration {
 
         @Bean

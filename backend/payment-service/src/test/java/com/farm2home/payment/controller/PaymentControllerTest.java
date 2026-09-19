@@ -106,21 +106,40 @@ class PaymentControllerTest {
     }
 
     @Nested
-    @DisplayName("POST /api/v1/payments/callback")
+    @DisplayName("POST /api/v1/payments/callback (legacy, disabled by default)")
     class Callback {
 
         @Test
-        @DisplayName("public endpoint → 200 without authentication")
-        void noAuth_ok() throws Exception {
+        @DisplayName("disabled by default → 404, service never called")
+        void disabledByDefault_notFound() throws Exception {
             PaymentCallbackRequest req = new PaymentCallbackRequest();
             req.setPaymentReference("PAY-TEST-1234");
             req.setSuccess(true);
-            when(paymentService.processCallback(any())).thenReturn(buildResponse());
+
+            mockMvc.perform(post("/api/v1/payments/callback")
+                            .with(authentication(authFor(customerId, true)))
+                            .contentType("application/json")
+                            .content(objectMapper.writeValueAsString(req)))
+                    .andExpect(status().isNotFound());
+
+            verify(paymentService, org.mockito.Mockito.never()).processCallback(any());
+        }
+
+        @Test
+        @DisplayName("no authentication → rejected (no longer a public endpoint)")
+        void noAuth_rejected() throws Exception {
+            PaymentCallbackRequest req = new PaymentCallbackRequest();
+            req.setPaymentReference("PAY-TEST-1234");
+            req.setSuccess(true);
 
             mockMvc.perform(post("/api/v1/payments/callback")
                             .contentType("application/json")
                             .content(objectMapper.writeValueAsString(req)))
-                    .andExpect(status().isOk());
+                    .andExpect(status().is4xxClientError())
+                    .andExpect(result -> {
+                        int s = result.getResponse().getStatus();
+                        org.assertj.core.api.Assertions.assertThat(s).isIn(401, 403);
+                    });
         }
     }
 

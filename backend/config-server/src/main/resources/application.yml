@@ -29,10 +29,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,refresh,metrics,prometheus,env
+        include: health,info,refresh,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
 logging:
   level:

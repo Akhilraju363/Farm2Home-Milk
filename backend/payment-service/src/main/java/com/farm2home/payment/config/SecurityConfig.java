@@ -19,10 +19,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private static final String[] PUBLIC_ENDPOINTS = {
-            "/swagger-ui/**", "/api-docs/**", "/actuator/**",
-            ApiConstants.API_V1 + "/payments/callback",
-            // The gateway calls this server-to-server and cannot attach our JWT — every payload's
+            "/swagger-ui/**", "/api-docs/**",
+            "/actuator/health", "/actuator/health/**", "/actuator/info",
+            // Razorpay calls this server-to-server and cannot attach our JWT - every payload's
             // signature is verified inside PaymentServiceImpl.handleWebhook() before it's acted on.
+            // NOTE: /payments/callback is deliberately NOT public any more - it now requires an
+            // admin token and is disabled unless farm2home.payment.legacy-callback-enabled=true.
             ApiConstants.API_V1 + "/payments/webhook"
     };
 
