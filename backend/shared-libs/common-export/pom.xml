@@ -17,7 +17,7 @@
          libraries only end up on the classpath of the handful of services that actually
          export data, instead of every service in the platform. -->
     <properties>
-        <poi.version>5.2.5</poi.version>
+        <poi.version>5.5.1</poi.version>
         <pdfbox.version>3.0.3</pdfbox.version>
         <commons-csv.version>1.11.0</commons-csv.version>
     </properties>
