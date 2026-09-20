@@ -426,7 +426,11 @@ $microservices = @(
     @{ Name = 'order-service';         Port = 8084 },
     @{ Name = 'payment-service';       Port = 8085 },
     @{ Name = 'delivery-service';      Port = 8086 },
-    @{ Name = 'notification-service';  Port = 8090 },
+    # LOCAL-ONLY override, deliberately not committed upstream: 8096, not the documented
+    # default 8090, because this machine's Wondershare NativePush helper
+    # (WsToastNotification.exe) occupies 8090. Other services reach it via Eureka
+    # (lb://notification-service), so nothing else needs to know the port.
+    @{ Name = 'notification-service';  Port = 8096; ExtraJavaArgs = @('-Dserver.port=8096') },
     @{ Name = 'dashboard-service';     Port = 8092 },
     @{ Name = 'reports-service';       Port = 8093 }
 )
