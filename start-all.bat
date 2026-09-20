@@ -8,11 +8,4 @@ setlocal
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-all-services.ps1" %*
 set EXIT_CODE=%ERRORLEVEL%
 
-if not %EXIT_CODE%==0 (
-    echo.
-    echo start-all-services.ps1 exited with code %EXIT_CODE%.
-    pause
-)
-
-endlocal
-exit /b %EXIT_CODE%
+endlocal & exit /b %EXIT_CODE%
