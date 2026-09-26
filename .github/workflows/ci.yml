@@ -58,7 +58,7 @@ jobs:
           done < <(find . -path '*/target/surefire-reports/TEST-*.xml' -type f)
 
       - name: Publish test report
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         if: ${{ !cancelled() }}
         with:
           name: Backend test results
