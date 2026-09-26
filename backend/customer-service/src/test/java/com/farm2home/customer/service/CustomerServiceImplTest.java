@@ -40,6 +40,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -571,6 +572,62 @@ class CustomerServiceImplTest {
 
             assertThatThrownBy(() -> service.updateAddress(customerId, addressId, new UpdateAddressRequest(), ownerPrincipal))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("clearCoordinates=true → nulls out existing latitude/longitude before the mapper runs")
+        void clearCoordinates_nullsExistingCoordinates() {
+            CustomerAddress entity = buildAddress();
+            entity.setLatitude(new BigDecimal("19.07600000"));
+            entity.setLongitude(new BigDecimal("72.87770000"));
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setAddressLine1("A new street entirely");
+            req.setClearCoordinates(true);
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            // addressMapper.updateEntityFromRequest is mocked (no-op), so only this method's own
+            // explicit clearing code could have nulled these - proves the clear happens
+            // independently of whatever the real mapper would later apply.
+            assertThat(entity.getLatitude()).isNull();
+            assertThat(entity.getLongitude()).isNull();
+        }
+
+        @Test
+        @DisplayName("clearCoordinates=true with fresh coordinates also in the request → new values win over the clear")
+        void clearCoordinates_doesNotBlockFreshlyProvidedCoordinates() {
+            CustomerAddress entity = buildAddress();
+            entity.setLatitude(new BigDecimal("19.07600000"));
+            entity.setLongitude(new BigDecimal("72.87770000"));
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setClearCoordinates(true);
+            req.setLatitude(new BigDecimal("13.62750000"));
+            req.setLongitude(new BigDecimal("78.96910000"));
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+            // addressMapper is a mock (a no-op by default) everywhere else in this class, so this
+            // simulates just the one piece of the real mapper's NullValuePropertyMappingStrategy.
+            // IGNORE semantics this test needs - a non-null request field overwrites the entity -
+            // to prove the service clears BEFORE the mapper runs, so a non-null value in the same
+            // request still wins over that clear.
+            doAnswer(invocation -> {
+                UpdateAddressRequest r = invocation.getArgument(0);
+                CustomerAddress a = invocation.getArgument(1);
+                if (r.getLatitude() != null) a.setLatitude(r.getLatitude());
+                if (r.getLongitude() != null) a.setLongitude(r.getLongitude());
+                return null;
+            }).when(addressMapper).updateEntityFromRequest(req, entity);
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            assertThat(entity.getLatitude()).isEqualByComparingTo("13.6275");
+            assertThat(entity.getLongitude()).isEqualByComparingTo("78.9691");
         }
     }
 

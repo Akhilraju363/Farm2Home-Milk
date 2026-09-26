@@ -180,6 +180,14 @@ public class CustomerServiceImpl {
     public AddressResponse updateAddress(UUID customerId, UUID addressId, UpdateAddressRequest request, UserPrincipal principal) {
         getCustomerScoped(customerId, principal);
         CustomerAddress address = getAddressScoped(customerId, addressId);
+        // Clear first, then let the mapper's partial update apply - so a request that clears
+        // stale coordinates AND provides freshly re-captured ones in the same call still ends up
+        // with the new, non-null values (mapper's NullValuePropertyMappingStrategy.IGNORE only
+        // skips null request fields, never overwrites a null-ed field with another null).
+        if (Boolean.TRUE.equals(request.getClearCoordinates())) {
+            address.setLatitude(null);
+            address.setLongitude(null);
+        }
         addressMapper.updateEntityFromRequest(request, address);
         return addressMapper.toResponse(addressRepository.save(address));
     }
