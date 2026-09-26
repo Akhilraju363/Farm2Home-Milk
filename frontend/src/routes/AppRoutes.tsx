@@ -41,6 +41,8 @@ import { InvoicesPage } from '../pages/invoices/InvoicesPage'
 import { InvoiceDetailsPage } from '../pages/invoices/InvoiceDetailsPage'
 import { PrivacyPolicyPage } from '../pages/legal/PrivacyPolicyPage'
 import { TermsPage } from '../pages/legal/TermsPage'
+import { CookiePolicyPage } from '../pages/legal/CookiePolicyPage'
+import { RefundPolicyPage } from '../pages/legal/RefundPolicyPage'
 import { DataRightsRequestPage } from '../pages/legal/DataRightsRequestPage'
 import { useAuth } from '../hooks/useAuth'
 import { getLandingRoute } from '../utils/roleLanding'
@@ -66,6 +68,8 @@ export function AppRoutes() {
           in AuthThemeScope - they follow the app's normal light/dark toggle. */}
       <Route path="/privacy" element={<PrivacyPolicyPage />} />
       <Route path="/terms" element={<TermsPage />} />
+      <Route path="/cookie-policy" element={<CookiePolicyPage />} />
+      <Route path="/refund-policy" element={<RefundPolicyPage />} />
       <Route path="/data-rights-request" element={<DataRightsRequestPage />} />
 
       {/* Public auth routes - always light-themed regardless of the app-wide dark mode toggle,

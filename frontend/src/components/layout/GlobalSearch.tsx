@@ -80,6 +80,7 @@ export function GlobalSearch() {
           <SearchIcon fontSize="small" sx={{ color: 'text.secondary', mr: 1 }} />
           <InputBase
             placeholder="Global Search..."
+            aria-label="Global search"
             fullWidth
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true) }}

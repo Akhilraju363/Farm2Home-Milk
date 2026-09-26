@@ -3,6 +3,7 @@ import { Link as RouterLink } from 'react-router-dom'
 import { LegalPageLayout } from '../../components/legal/LegalPageLayout'
 import { LegalReviewNote } from '../../components/legal/LegalReviewNote'
 import { GRIEVANCE_OFFICER, COMPANY_LEGAL_NAME, DATA_PROTECTION_BOARD_NOTE } from '../../constants/legal'
+import { isGoogleMapsConfigured } from '../../utils/googleMapsConfig'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -97,13 +98,37 @@ export function PrivacyPolicyPage() {
           <ListItem disableGutters>
             <ListItemText primary="Our delivery partners" secondary="See your name, delivery address, and contact number needed to complete your delivery." />
           </ListItem>
+          <ListItem disableGutters>
+            <ListItemText
+              primary="Google Identity Services"
+              secondary={'Loaded on every page so you can use "Sign in with Google." If you use it, the credential Google returns is sent to us to sign you in. Google\'s own script may set its own identifiers under google.com, outside our control.'}
+            />
+          </ListItem>
+          {isGoogleMapsConfigured() && (
+            <ListItem disableGutters>
+              <ListItemText
+                primary="Google Maps"
+                secondary="Used to display live delivery-tracking maps. Loading the map exchanges data directly between your device and Google, per Google's own terms."
+              />
+            </ListItem>
+          )}
         </List>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          See our{' '}
+          <Typography component={RouterLink} to="/cookie-policy" variant="body2" color="primary.main" sx={{ textDecoration: 'none' }}>
+            Cookie Policy
+          </Typography>{' '}
+          for the full detail on what's stored in your browser and which third-party scripts run.
+        </Typography>
         <LegalReviewNote>
           [LEGAL REVIEW / ENGINEERING NOTE] As of this audit, Farm2Home does not use any
-          third-party analytics, advertising, or tracking service, and SMS/push notifications are
-          not yet connected to a real provider (they currently only log locally in our systems).
-          If either of those changes before this notice is published, this section and the
-          consent-banner copy must be updated to name the new provider(s).
+          third-party analytics, advertising, or marketing-tracking service, and SMS/push
+          notifications are not yet connected to a real provider (they currently only log locally
+          in our systems). Google Identity Services (Sign-In) and, where configured, Google Maps
+          are genuine third-party integrations already in use and are listed above - confirm this
+          disclosure is sufficient. If the analytics/SMS/push situation changes before this notice
+          is published, this section and the consent-banner copy must be updated to name the new
+          provider(s).
         </LegalReviewNote>
       </Section>
 

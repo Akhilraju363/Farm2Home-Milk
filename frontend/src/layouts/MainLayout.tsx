@@ -60,10 +60,32 @@ export function MainLayout() {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Visually hidden until focused - lets a keyboard/screen-reader user jump past the
+          Sidebar's nav links straight to page content instead of tabbing through every one of
+          them on every single page. */}
+      <Box
+        component="a"
+        href="#main-content"
+        sx={{
+          position: 'absolute',
+          left: -9999,
+          top: 'auto',
+          zIndex: (theme) => theme.zIndex.tooltip + 1,
+          p: 1.5,
+          bgcolor: 'primary.main',
+          color: 'primary.contrastText',
+          borderRadius: 1,
+          '&:focus': { left: 8, top: 8 },
+        }}
+      >
+        Skip to main content
+      </Box>
       <TopBar onMenuClick={() => setMobileOpen(true)} title={title} />
       <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
       <Box
         component="main"
+        id="main-content"
+        tabIndex={-1}
         sx={{
           flexGrow: 1,
           minWidth: 0,
