@@ -40,6 +40,23 @@ jobs:
         working-directory: backend
         run: mvn -B --no-transfer-progress clean verify
 
+      # Purely a reporting-accuracy cleanup, not a test-execution fix. A JUnit 5 class organized
+      # entirely into @Nested inner classes (e.g. every *ServiceImplTest/*ControllerTest in this
+      # repo) makes Surefire emit its own empty outer TEST-*.xml (tests="0") alongside the real
+      # TEST-*$NestedClass.xml that actually holds the results - dorny/test-reporter otherwise
+      # renders that outer file as a confusing "no tests found" entry. Removes only files that are
+      # genuinely empty (tests="0"); every report with real results is left untouched.
+      - name: Remove empty Surefire reports
+        if: ${{ !cancelled() }}
+        working-directory: backend
+        shell: bash
+        run: |
+          while IFS= read -r report; do
+            if grep -qE '<testsuite[^>]*tests="0"' "$report"; then
+              rm -f "$report"
+            fi
+          done < <(find . -path '*/target/surefire-reports/TEST-*.xml' -type f)
+
       - name: Publish test report
         uses: dorny/test-reporter@v1
         if: ${{ !cancelled() }}

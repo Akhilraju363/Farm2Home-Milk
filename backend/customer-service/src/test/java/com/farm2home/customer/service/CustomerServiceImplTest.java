@@ -670,6 +670,10 @@ class CustomerServiceImplTest {
 
             service.updateAddress(customerId, addressId, req, ownerPrincipal);
 
+            // "Valid update persists correctly" - not just that save() was called on some entity,
+            // but that the mapper step which actually copies the new values onto it ran with
+            // exactly this request/entity pair, and that the saved entity is the one returned.
+            verify(addressMapper).updateEntityFromRequest(req, entity);
             verify(addressRepository).save(entity);
         }
 
@@ -679,6 +683,9 @@ class CustomerServiceImplTest {
             UUID stateId = UUID.randomUUID();
             LocationState state = buildState(stateId);
             CustomerAddress entity = buildAddress();
+            String originalCity = entity.getCity();
+            String originalState = entity.getState();
+            String originalDistrict = entity.getDistrict();
             UpdateAddressRequest req = new UpdateAddressRequest();
             req.setState("Andhra Pradesh");
             req.setDistrict("Some Other District");
@@ -690,6 +697,12 @@ class CustomerServiceImplTest {
 
             assertThatThrownBy(() -> service.updateAddress(customerId, addressId, req, ownerPrincipal))
                     .isInstanceOf(CustomerException.class);
+            // "Invalid hierarchy does not mutate the address" - proven directly on the entity's own
+            // fields (rejection happens before the mapper ever runs), not just inferred from save()
+            // never being called.
+            assertThat(entity.getCity()).isEqualTo(originalCity);
+            assertThat(entity.getState()).isEqualTo(originalState);
+            assertThat(entity.getDistrict()).isEqualTo(originalDistrict);
             verify(addressRepository, never()).save(any());
             verify(addressMapper, never()).updateEntityFromRequest(any(), any());
         }
@@ -702,6 +715,9 @@ class CustomerServiceImplTest {
             LocationState state = buildState(stateId);
             LocationDistrict district = buildDistrict(districtId, stateId);
             CustomerAddress entity = buildAddress();
+            String originalCity = entity.getCity();
+            String originalState = entity.getState();
+            String originalDistrict = entity.getDistrict();
             UpdateAddressRequest req = new UpdateAddressRequest();
             req.setState("Andhra Pradesh");
             req.setDistrict("Annamayya");
@@ -714,7 +730,11 @@ class CustomerServiceImplTest {
 
             assertThatThrownBy(() -> service.updateAddress(customerId, addressId, req, ownerPrincipal))
                     .isInstanceOf(CustomerException.class);
+            assertThat(entity.getCity()).isEqualTo(originalCity);
+            assertThat(entity.getState()).isEqualTo(originalState);
+            assertThat(entity.getDistrict()).isEqualTo(originalDistrict);
             verify(addressRepository, never()).save(any());
+            verify(addressMapper, never()).updateEntityFromRequest(any(), any());
         }
 
         @Test
