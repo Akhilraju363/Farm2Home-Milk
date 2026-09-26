@@ -47,7 +47,7 @@ jobs:
         run: mvn -B --no-transfer-progress -DskipTests clean package
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Compute image prefix (lowercase owner)
         id: meta
@@ -93,7 +93,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Compute image prefix (lowercase owner)
         id: meta
