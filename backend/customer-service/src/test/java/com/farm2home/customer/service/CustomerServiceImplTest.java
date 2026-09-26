@@ -13,9 +13,15 @@ import com.farm2home.common.web.storage.FileStorageService;
 import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.entity.Customer;
 import com.farm2home.customer.domain.entity.CustomerAddress;
+import com.farm2home.customer.domain.entity.LocationCity;
+import com.farm2home.customer.domain.entity.LocationDistrict;
+import com.farm2home.customer.domain.entity.LocationState;
 import com.farm2home.customer.domain.enums.CustomerStatus;
 import com.farm2home.customer.domain.repository.CustomerAddressRepository;
 import com.farm2home.customer.domain.repository.CustomerRepository;
+import com.farm2home.customer.domain.repository.LocationCityRepository;
+import com.farm2home.customer.domain.repository.LocationDistrictRepository;
+import com.farm2home.customer.domain.repository.LocationStateRepository;
 import com.farm2home.customer.dto.request.CreateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
@@ -59,6 +65,9 @@ class CustomerServiceImplTest {
     @Mock private FileStorageService fileStorageService;
     @Mock private CustomerAddressRepository addressRepository;
     @Mock private CustomerAddressMapper addressMapper;
+    @Mock private LocationStateRepository locationStateRepository;
+    @Mock private LocationDistrictRepository locationDistrictRepository;
+    @Mock private LocationCityRepository locationCityRepository;
 
     @InjectMocks private CustomerServiceImpl service;
 
@@ -628,6 +637,112 @@ class CustomerServiceImplTest {
 
             assertThat(entity.getLatitude()).isEqualByComparingTo("13.6275");
             assertThat(entity.getLongitude()).isEqualByComparingTo("78.9691");
+        }
+
+        private LocationState buildState(UUID id) {
+            return LocationState.builder().id(id).name("Andhra Pradesh").code("AP").active(true).build();
+        }
+
+        private LocationDistrict buildDistrict(UUID id, UUID stateId) {
+            return LocationDistrict.builder().id(id).stateId(stateId).name("Annamayya").code("AP-16").active(true).build();
+        }
+
+        @Test
+        @DisplayName("valid state/district/city combination → accepted, address updated")
+        void validLocationHierarchy_accepted() {
+            UUID stateId = UUID.randomUUID();
+            UUID districtId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            LocationDistrict district = buildDistrict(districtId, stateId);
+            LocationCity city = LocationCity.builder().id(UUID.randomUUID()).districtId(districtId).name("Pileru").active(true).build();
+            CustomerAddress entity = buildAddress();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setState("Andhra Pradesh");
+            req.setDistrict("Annamayya");
+            req.setCity("Pileru");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Annamayya")).thenReturn(Optional.of(district));
+            when(locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtId, "Pileru")).thenReturn(Optional.of(city));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            verify(addressRepository).save(entity);
+        }
+
+        @Test
+        @DisplayName("district that doesn't belong to the given state → rejected, address left untouched")
+        void districtNotInState_rejected() {
+            UUID stateId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            CustomerAddress entity = buildAddress();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setState("Andhra Pradesh");
+            req.setDistrict("Some Other District");
+            req.setCity("Pileru");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Some Other District")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.updateAddress(customerId, addressId, req, ownerPrincipal))
+                    .isInstanceOf(CustomerException.class);
+            verify(addressRepository, never()).save(any());
+            verify(addressMapper, never()).updateEntityFromRequest(any(), any());
+        }
+
+        @Test
+        @DisplayName("city that doesn't belong to the given district → rejected, address left untouched")
+        void cityNotInDistrict_rejected() {
+            UUID stateId = UUID.randomUUID();
+            UUID districtId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            LocationDistrict district = buildDistrict(districtId, stateId);
+            CustomerAddress entity = buildAddress();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setState("Andhra Pradesh");
+            req.setDistrict("Annamayya");
+            req.setCity("Not A Real City");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Annamayya")).thenReturn(Optional.of(district));
+            when(locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtId, "Not A Real City")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.updateAddress(customerId, addressId, req, ownerPrincipal))
+                    .isInstanceOf(CustomerException.class);
+            verify(addressRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("request changes only city/district, omitting state → validated against the "
+                + "address's own EXISTING state, not left null")
+        void partialUpdate_fallsBackToExistingStateForValidation() {
+            UUID stateId = UUID.randomUUID();
+            UUID districtId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            LocationDistrict district = buildDistrict(districtId, stateId);
+            LocationCity city = LocationCity.builder().id(UUID.randomUUID()).districtId(districtId).name("Pileru").active(true).build();
+            CustomerAddress entity = buildAddress();
+            entity.setState("Andhra Pradesh"); // the address's own existing value - request below never sets it
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setDistrict("Annamayya");
+            req.setCity("Pileru");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Annamayya")).thenReturn(Optional.of(district));
+            when(locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtId, "Pileru")).thenReturn(Optional.of(city));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            verify(locationStateRepository).findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh");
+            verify(addressRepository).save(entity);
         }
     }
 
