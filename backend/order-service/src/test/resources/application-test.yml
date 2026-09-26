@@ -5,6 +5,9 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: order
 
 eureka:
   client:
