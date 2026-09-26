@@ -186,7 +186,7 @@ export function LoginPage() {
             Farm Freshness,<br />Delivered to Your Doorstep.
           </Typography>
           <Typography variant="body2" sx={{ mt: 1.5, opacity: 0.9, maxWidth: 380 }}>
-            Experience the purity of farm-to-table dairy products, sourced sustainably and delivered daily.
+            Farm-to-table dairy, sourced directly from our farms and delivered daily.
           </Typography>
         </Box>
       </Box>

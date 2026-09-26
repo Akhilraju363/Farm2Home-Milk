@@ -180,6 +180,22 @@ public class CustomerServiceImpl {
     public AddressResponse updateAddress(UUID customerId, UUID addressId, UpdateAddressRequest request, UserPrincipal principal) {
         getCustomerScoped(customerId, principal);
         CustomerAddress address = getAddressScoped(customerId, addressId);
+        // Validate against the EFFECTIVE post-merge state/district/city (falling back to the
+        // address's own existing value for whichever of the three this particular request
+        // doesn't change) - not just the raw request fields, which may be partially null. Runs
+        // before any mutation below, so a rejected combination leaves the address untouched.
+        validateLocationHierarchyIfProvided(
+                request.getState() != null ? request.getState() : address.getState(),
+                request.getDistrict() != null ? request.getDistrict() : address.getDistrict(),
+                request.getCity() != null ? request.getCity() : address.getCity());
+        // Clear first, then let the mapper's partial update apply - so a request that clears
+        // stale coordinates AND provides freshly re-captured ones in the same call still ends up
+        // with the new, non-null values (mapper's NullValuePropertyMappingStrategy.IGNORE only
+        // skips null request fields, never overwrites a null-ed field with another null).
+        if (Boolean.TRUE.equals(request.getClearCoordinates())) {
+            address.setLatitude(null);
+            address.setLongitude(null);
+        }
         addressMapper.updateEntityFromRequest(request, address);
         return addressMapper.toResponse(addressRepository.save(address));
     }
@@ -188,12 +204,22 @@ public class CustomerServiceImpl {
      * cascade. Legacy management forms omit district and retain their historical free-text
      * compatibility; they are deliberately not rejected or rewritten. */
     private void validateLocationHierarchyIfProvided(CreateAddressRequest request) {
-        if (!StringUtils.hasText(request.getDistrict())) return;
-        var state = locationStateRepository.findByNameIgnoreCaseAndActiveTrue(request.getState())
+        validateLocationHierarchyIfProvided(request.getState(), request.getDistrict(), request.getCity());
+    }
+
+    /** Shared core, also used by updateAddress - CreateAddressRequest's state/city are always
+     *  present (see its own {@code @NotBlank}), while updateAddress resolves them to their
+     *  EFFECTIVE post-merge value first (the existing address's own value when this particular
+     *  request doesn't change it), since UpdateAddressRequest's partial-update semantics mean
+     *  either could be null on the request itself. Skipped entirely when no district is present -
+     *  matches "legacy management forms omit district" free-text compatibility above. */
+    private void validateLocationHierarchyIfProvided(String state, String district, String city) {
+        if (!StringUtils.hasText(district)) return;
+        var stateEntity = locationStateRepository.findByNameIgnoreCaseAndActiveTrue(state)
                 .orElseThrow(() -> new CustomerException("Select an active state from Location Master."));
-        var district = locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(state.getId(), request.getDistrict())
+        var districtEntity = locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateEntity.getId(), district)
                 .orElseThrow(() -> new CustomerException("Select a district that belongs to the chosen active state."));
-        locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(district.getId(), request.getCity())
+        locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtEntity.getId(), city)
                 .orElseThrow(() -> new CustomerException("Select a city that belongs to the chosen active district."));
     }
 

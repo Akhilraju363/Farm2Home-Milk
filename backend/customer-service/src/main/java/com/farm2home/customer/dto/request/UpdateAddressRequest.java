@@ -48,4 +48,17 @@ public class UpdateAddressRequest {
     @DecimalMax(value = "180", message = "Longitude must be between -180 and 180")
     @Schema(description = "Leave null to keep the existing value.", example = "78.9691")
     private BigDecimal longitude;
+
+    // Distinct from simply omitting latitude/longitude above (which means "leave unchanged").
+    // A caller that changes the address's physical location fields (line1/line2/city/state/
+    // district/pincode) but has no freshly re-captured device coordinates to send must set this
+    // explicitly to true so the previous, now-likely-stale coordinates are cleared rather than
+    // silently retained against a different physical address. If latitude/longitude ARE also
+    // provided in the same request, they still win - see CustomerServiceImpl.updateAddress,
+    // which clears first, then applies the mapper's partial update.
+    @Schema(description = "Set true to null out the existing latitude/longitude (e.g. the "
+            + "address text changed but no new location was captured). Ignored if latitude/"
+            + "longitude are also provided in this request - those take precedence.",
+            example = "false")
+    private Boolean clearCoordinates;
 }

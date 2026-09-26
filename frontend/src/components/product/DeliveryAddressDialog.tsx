@@ -1,8 +1,8 @@
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField, Box, CircularProgress,
-  Alert, RadioGroup, FormControlLabel, Radio, Typography, Divider, Chip,
+  Alert, RadioGroup, FormControlLabel, Radio, Typography, Divider, Chip, IconButton, Tooltip,
 } from '@mui/material'
-import { Close, Add, MyLocation, CheckCircle, LocationOff } from '@mui/icons-material'
+import { Close, Add, MyLocation, CheckCircle, LocationOff, Edit } from '@mui/icons-material'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { yupResolver } from '@hookform/resolvers/yup'
@@ -11,6 +11,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSnackbar } from 'notistack'
 import { customerService } from '../../services/customerService'
 import { useGeolocationCapture } from '../../hooks/useGeolocationCapture'
+import { EditAddressDialog } from './EditAddressDialog'
+import type { CustomerAddress } from '../../types/customer.types'
 
 const schema = yup.object({
   addressLine1: yup.string().trim().required('Address line 1 is required').max(255, 'Max 255 characters'),
@@ -38,6 +40,7 @@ export function DeliveryAddressDialog({ open, customerId, onClose, onChanged }: 
   const { enqueueSnackbar } = useSnackbar()
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
+  const [editingAddress, setEditingAddress] = useState<CustomerAddress | null>(null)
   const { coords, locating, error: locationError, capture, reset: resetLocation } = useGeolocationCapture()
 
   const { data, isLoading, isError } = useQuery({
@@ -97,14 +100,14 @@ export function DeliveryAddressDialog({ open, customerId, onClose, onChanged }: 
             onChange={(e) => setDefaultMutation.mutate(e.target.value)}
           >
             {addresses.map((a) => (
-              <Box key={a.id} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, mb: 1 }}>
+              <Box key={a.id} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 1.5, mb: 1, display: 'flex', alignItems: 'flex-start' }}>
                 <FormControlLabel
                   value={a.id}
                   disabled={setDefaultMutation.isPending}
                   control={<Radio size="small" />}
-                  sx={{ alignItems: 'flex-start', m: 0, width: '100%' }}
+                  sx={{ alignItems: 'flex-start', m: 0, width: '100%', minWidth: 0 }}
                   label={
-                    <Box sx={{ ml: 0.5 }}>
+                    <Box sx={{ ml: 0.5, minWidth: 0 }}>
                       <Typography variant="body2" fontWeight={600}>{a.addressLine1}</Typography>
                       <Typography variant="caption" color="text.secondary" display="block">
                         {[a.addressLine2, a.city, a.state, a.pincode].filter(Boolean).join(', ')}
@@ -123,6 +126,11 @@ export function DeliveryAddressDialog({ open, customerId, onClose, onChanged }: 
                     </Box>
                   }
                 />
+                <Tooltip title="Edit address">
+                  <IconButton size="small" aria-label="Edit address" onClick={() => setEditingAddress(a)} sx={{ flexShrink: 0 }}>
+                    <Edit fontSize="small" />
+                  </IconButton>
+                </Tooltip>
               </Box>
             ))}
           </RadioGroup>
@@ -190,6 +198,18 @@ export function DeliveryAddressDialog({ open, customerId, onClose, onChanged }: 
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose} startIcon={<Close />}>Close</Button>
       </DialogActions>
+
+      <EditAddressDialog
+        open={Boolean(editingAddress)}
+        customerId={customerId}
+        address={editingAddress}
+        onClose={() => setEditingAddress(null)}
+        onSaved={() => {
+          enqueueSnackbar('Address updated', { variant: 'success' })
+          setEditingAddress(null)
+          invalidate()
+        }}
+      />
     </Dialog>
   )
 }

@@ -63,6 +63,12 @@ export interface UpdateAddressRequest {
   pincode?: string
   latitude?: number
   longitude?: number
+  // Distinct from simply omitting latitude/longitude (which leaves them unchanged). Set true when
+  // the address's physical location fields changed but no freshly re-captured device coordinate is
+  // available, so the backend nulls out the old, now-likely-stale coordinates instead of silently
+  // keeping them against a different address. Ignored if latitude/longitude are also provided in
+  // the same request - see CustomerServiceImpl.updateAddress on the backend.
+  clearCoordinates?: boolean
 }
 
 // Matches order-service/customer-service's DeliveryAvailabilityResponse exactly.

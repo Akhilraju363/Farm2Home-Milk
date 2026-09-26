@@ -21,6 +21,12 @@ export function PublicFooter({ variant = 'full' }: Props) {
       <Typography component={RouterLink} to="/terms" variant="caption" color="text.secondary" sx={{ textDecoration: 'none' }}>
         Terms & Conditions
       </Typography>
+      <Typography component={RouterLink} to="/cookie-policy" variant="caption" color="text.secondary" sx={{ textDecoration: 'none' }}>
+        Cookie Policy
+      </Typography>
+      <Typography component={RouterLink} to="/refund-policy" variant="caption" color="text.secondary" sx={{ textDecoration: 'none' }}>
+        Refund & Cancellation Policy
+      </Typography>
       <Typography component={RouterLink} to="/data-rights-request" variant="caption" color="text.secondary" sx={{ textDecoration: 'none' }}>
         Data Rights / Grievance
       </Typography>

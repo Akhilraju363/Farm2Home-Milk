@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box, Paper, TextField, Button, Typography, IconButton,
-  InputAdornment, CircularProgress, Alert, LinearProgress, MenuItem,
+  InputAdornment, CircularProgress, Alert, LinearProgress,
   ToggleButton, ToggleButtonGroup, Checkbox, FormControlLabel,
 } from '@mui/material'
 import {
   Agriculture, Visibility, VisibilityOff,
-  VerifiedUser, LocalShipping, Lock, ArrowBack, ArrowForward, Spa, Schedule,
+  VerifiedUser, LocalShipping, Lock, ArrowBack, ArrowForward, Schedule,
   Pets, WaterDrop, LocalFlorist, WbTwilight, WbSunny, LightMode as SunIcon,
   MyLocation, CheckCircle,
 } from '@mui/icons-material'
@@ -28,6 +28,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useGeolocationCapture } from '../../hooks/useGeolocationCapture'
 import { getLandingRoute } from '../../utils/roleLanding'
 import { PublicFooter } from '../../components/layout/PublicFooter'
+import { LocationSelect } from '../../components/common/LocationSelect'
 import { consentService } from '../../services/consentService'
 import { CONSENT_PURPOSE_LABELS } from '../../types/consent.types'
 import type { ConsentChoice, ConsentPurpose } from '../../types/consent.types'
@@ -67,20 +68,19 @@ interface StepPanel {
 const stepPanels: Record<number, StepPanel> = {
   1: {
     heading: 'Freshness delivered, from our fields to your fridge.',
-    subtext: 'Join 50,000+ families enjoying pure, unadulterated farm produce every single morning.',
+    subtext: 'Milk sourced directly from our farms and delivered to your door every morning.',
     badgeStyle: 'card',
     badges: [
-      { icon: <VerifiedUser color="success" fontSize="small" />, title: 'Purity Guaranteed', caption: 'Zero preservatives added.' },
+      { icon: <VerifiedUser color="success" fontSize="small" />, title: 'Direct from Farm', caption: 'No middlemen.' },
       { icon: <LocalShipping color="success" fontSize="small" />, title: 'Before 7 AM', caption: 'Timely morning delivery.' },
     ],
     image: farmFieldImage,
   },
   2: {
     heading: 'Fresh from our fields to your doorstep.',
-    subtext: 'We ensure the highest quality milk through transparent sourcing and direct farm relationships.',
+    subtext: 'Sourced through transparent, direct farm relationships.',
     badgeStyle: 'inline',
     badges: [
-      { icon: <Spa fontSize="small" />, title: '100%', caption: 'ORGANIC' },
       { icon: <Schedule fontSize="small" />, title: '24h', caption: 'DELIVERY' },
     ],
   },
@@ -89,18 +89,15 @@ const stepPanels: Record<number, StepPanel> = {
     subtext: "Configure your subscription to match your family's needs perfectly. Change anytime with a single tap.",
     badgeStyle: 'inline',
     badges: [
-      { icon: <LocalFlorist fontSize="small" />, title: '100%', caption: 'ORGANIC' },
       { icon: <Schedule fontSize="small" />, title: '24h', caption: 'DELIVERY' },
     ],
     image: milkPourImage,
   },
   4: {
     heading: 'Digital Freshness Delivered',
-    subtext: 'We ensure every drop of freshness is verified and protected until it reaches your doorstep.',
+    subtext: "You're almost done - review your details and confirm to start your Farm2Home account.",
     badgeStyle: 'inline',
-    badges: [
-      { icon: <VerifiedUser color="success" fontSize="small" />, title: 'Secure', caption: 'END-TO-END ENCRYPTED' },
-    ],
+    badges: [],
   },
 }
 
@@ -352,67 +349,6 @@ function PersonalDetailsStep({
         </Typography>
       </Typography>
     </Box>
-  )
-}
-
-interface LocationSelectItem {
-  id: string
-  name: string
-}
-
-/** One cascading State/District/City dropdown. Values are always the backend's own location id -
- *  never a hardcoded string - and the three loading/empty/error states are shown explicitly
- *  rather than silently rendering an empty or fake-looking list. */
-function LocationSelect({
-  label, value, onChange, disabled, disabledReason, items, isLoading, isError, onRetry, showRequiredError,
-}: {
-  label: string
-  value: string
-  onChange: (id: string) => void
-  disabled: boolean
-  disabledReason?: string
-  items: LocationSelectItem[]
-  isLoading: boolean
-  isError: boolean
-  onRetry: () => void
-  showRequiredError: boolean
-}) {
-  const empty = !isLoading && !isError && items.length === 0
-  const fieldDisabled = disabled || isLoading || isError || empty
-
-  let helperText: React.ReactNode = ' '
-  if (disabled) helperText = disabledReason
-  else if (isLoading) helperText = `Loading ${label.toLowerCase()}s...`
-  else if (isError) {
-    helperText = (
-      <>
-        {`Unable to load ${label.toLowerCase()}s. `}
-        <Typography component="span" variant="caption" color="primary.main" fontWeight={700}
-          sx={{ cursor: 'pointer' }} onClick={onRetry}>
-          Retry
-        </Typography>
-      </>
-    )
-  } else if (empty) helperText = `No ${label.toLowerCase()}s available`
-  else if (showRequiredError) helperText = `Select a ${label.toLowerCase()}`
-
-  return (
-    <TextField
-      select
-      fullWidth
-      margin="normal"
-      label={label}
-      value={fieldDisabled ? '' : value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={fieldDisabled}
-      error={showRequiredError && !disabled && !isLoading}
-      helperText={helperText}
-      SelectProps={{ displayEmpty: true }}
-    >
-      {items.map((item) => (
-        <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>
-      ))}
-    </TextField>
   )
 }
 

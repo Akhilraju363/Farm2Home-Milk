@@ -13,9 +13,15 @@ import com.farm2home.common.web.storage.FileStorageService;
 import com.farm2home.customer.config.UserPrincipal;
 import com.farm2home.customer.domain.entity.Customer;
 import com.farm2home.customer.domain.entity.CustomerAddress;
+import com.farm2home.customer.domain.entity.LocationCity;
+import com.farm2home.customer.domain.entity.LocationDistrict;
+import com.farm2home.customer.domain.entity.LocationState;
 import com.farm2home.customer.domain.enums.CustomerStatus;
 import com.farm2home.customer.domain.repository.CustomerAddressRepository;
 import com.farm2home.customer.domain.repository.CustomerRepository;
+import com.farm2home.customer.domain.repository.LocationCityRepository;
+import com.farm2home.customer.domain.repository.LocationDistrictRepository;
+import com.farm2home.customer.domain.repository.LocationStateRepository;
 import com.farm2home.customer.dto.request.CreateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateAddressRequest;
 import com.farm2home.customer.dto.request.UpdateCustomerRequest;
@@ -40,6 +46,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -58,6 +65,9 @@ class CustomerServiceImplTest {
     @Mock private FileStorageService fileStorageService;
     @Mock private CustomerAddressRepository addressRepository;
     @Mock private CustomerAddressMapper addressMapper;
+    @Mock private LocationStateRepository locationStateRepository;
+    @Mock private LocationDistrictRepository locationDistrictRepository;
+    @Mock private LocationCityRepository locationCityRepository;
 
     @InjectMocks private CustomerServiceImpl service;
 
@@ -571,6 +581,188 @@ class CustomerServiceImplTest {
 
             assertThatThrownBy(() -> service.updateAddress(customerId, addressId, new UpdateAddressRequest(), ownerPrincipal))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("clearCoordinates=true → nulls out existing latitude/longitude before the mapper runs")
+        void clearCoordinates_nullsExistingCoordinates() {
+            CustomerAddress entity = buildAddress();
+            entity.setLatitude(new BigDecimal("19.07600000"));
+            entity.setLongitude(new BigDecimal("72.87770000"));
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setAddressLine1("A new street entirely");
+            req.setClearCoordinates(true);
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            // addressMapper.updateEntityFromRequest is mocked (no-op), so only this method's own
+            // explicit clearing code could have nulled these - proves the clear happens
+            // independently of whatever the real mapper would later apply.
+            assertThat(entity.getLatitude()).isNull();
+            assertThat(entity.getLongitude()).isNull();
+        }
+
+        @Test
+        @DisplayName("clearCoordinates=true with fresh coordinates also in the request → new values win over the clear")
+        void clearCoordinates_doesNotBlockFreshlyProvidedCoordinates() {
+            CustomerAddress entity = buildAddress();
+            entity.setLatitude(new BigDecimal("19.07600000"));
+            entity.setLongitude(new BigDecimal("72.87770000"));
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setClearCoordinates(true);
+            req.setLatitude(new BigDecimal("13.62750000"));
+            req.setLongitude(new BigDecimal("78.96910000"));
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+            // addressMapper is a mock (a no-op by default) everywhere else in this class, so this
+            // simulates just the one piece of the real mapper's NullValuePropertyMappingStrategy.
+            // IGNORE semantics this test needs - a non-null request field overwrites the entity -
+            // to prove the service clears BEFORE the mapper runs, so a non-null value in the same
+            // request still wins over that clear.
+            doAnswer(invocation -> {
+                UpdateAddressRequest r = invocation.getArgument(0);
+                CustomerAddress a = invocation.getArgument(1);
+                if (r.getLatitude() != null) a.setLatitude(r.getLatitude());
+                if (r.getLongitude() != null) a.setLongitude(r.getLongitude());
+                return null;
+            }).when(addressMapper).updateEntityFromRequest(req, entity);
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            assertThat(entity.getLatitude()).isEqualByComparingTo("13.6275");
+            assertThat(entity.getLongitude()).isEqualByComparingTo("78.9691");
+        }
+
+        private LocationState buildState(UUID id) {
+            return LocationState.builder().id(id).name("Andhra Pradesh").code("AP").active(true).build();
+        }
+
+        private LocationDistrict buildDistrict(UUID id, UUID stateId) {
+            return LocationDistrict.builder().id(id).stateId(stateId).name("Annamayya").code("AP-16").active(true).build();
+        }
+
+        @Test
+        @DisplayName("valid state/district/city combination → accepted, address updated")
+        void validLocationHierarchy_accepted() {
+            UUID stateId = UUID.randomUUID();
+            UUID districtId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            LocationDistrict district = buildDistrict(districtId, stateId);
+            LocationCity city = LocationCity.builder().id(UUID.randomUUID()).districtId(districtId).name("Pileru").active(true).build();
+            CustomerAddress entity = buildAddress();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setState("Andhra Pradesh");
+            req.setDistrict("Annamayya");
+            req.setCity("Pileru");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Annamayya")).thenReturn(Optional.of(district));
+            when(locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtId, "Pileru")).thenReturn(Optional.of(city));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            // "Valid update persists correctly" - not just that save() was called on some entity,
+            // but that the mapper step which actually copies the new values onto it ran with
+            // exactly this request/entity pair, and that the saved entity is the one returned.
+            verify(addressMapper).updateEntityFromRequest(req, entity);
+            verify(addressRepository).save(entity);
+        }
+
+        @Test
+        @DisplayName("district that doesn't belong to the given state → rejected, address left untouched")
+        void districtNotInState_rejected() {
+            UUID stateId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            CustomerAddress entity = buildAddress();
+            String originalCity = entity.getCity();
+            String originalState = entity.getState();
+            String originalDistrict = entity.getDistrict();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setState("Andhra Pradesh");
+            req.setDistrict("Some Other District");
+            req.setCity("Pileru");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Some Other District")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.updateAddress(customerId, addressId, req, ownerPrincipal))
+                    .isInstanceOf(CustomerException.class);
+            // "Invalid hierarchy does not mutate the address" - proven directly on the entity's own
+            // fields (rejection happens before the mapper ever runs), not just inferred from save()
+            // never being called.
+            assertThat(entity.getCity()).isEqualTo(originalCity);
+            assertThat(entity.getState()).isEqualTo(originalState);
+            assertThat(entity.getDistrict()).isEqualTo(originalDistrict);
+            verify(addressRepository, never()).save(any());
+            verify(addressMapper, never()).updateEntityFromRequest(any(), any());
+        }
+
+        @Test
+        @DisplayName("city that doesn't belong to the given district → rejected, address left untouched")
+        void cityNotInDistrict_rejected() {
+            UUID stateId = UUID.randomUUID();
+            UUID districtId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            LocationDistrict district = buildDistrict(districtId, stateId);
+            CustomerAddress entity = buildAddress();
+            String originalCity = entity.getCity();
+            String originalState = entity.getState();
+            String originalDistrict = entity.getDistrict();
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setState("Andhra Pradesh");
+            req.setDistrict("Annamayya");
+            req.setCity("Not A Real City");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Annamayya")).thenReturn(Optional.of(district));
+            when(locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtId, "Not A Real City")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.updateAddress(customerId, addressId, req, ownerPrincipal))
+                    .isInstanceOf(CustomerException.class);
+            assertThat(entity.getCity()).isEqualTo(originalCity);
+            assertThat(entity.getState()).isEqualTo(originalState);
+            assertThat(entity.getDistrict()).isEqualTo(originalDistrict);
+            verify(addressRepository, never()).save(any());
+            verify(addressMapper, never()).updateEntityFromRequest(any(), any());
+        }
+
+        @Test
+        @DisplayName("request changes only city/district, omitting state → validated against the "
+                + "address's own EXISTING state, not left null")
+        void partialUpdate_fallsBackToExistingStateForValidation() {
+            UUID stateId = UUID.randomUUID();
+            UUID districtId = UUID.randomUUID();
+            LocationState state = buildState(stateId);
+            LocationDistrict district = buildDistrict(districtId, stateId);
+            LocationCity city = LocationCity.builder().id(UUID.randomUUID()).districtId(districtId).name("Pileru").active(true).build();
+            CustomerAddress entity = buildAddress();
+            entity.setState("Andhra Pradesh"); // the address's own existing value - request below never sets it
+            UpdateAddressRequest req = new UpdateAddressRequest();
+            req.setDistrict("Annamayya");
+            req.setCity("Pileru");
+            when(repository.findByIdAndDeletedFalse(customerId)).thenReturn(Optional.of(buildCustomer()));
+            when(addressRepository.findByIdAndCustomerIdAndDeletedFalse(addressId, customerId)).thenReturn(Optional.of(entity));
+            when(locationStateRepository.findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh")).thenReturn(Optional.of(state));
+            when(locationDistrictRepository.findByStateIdAndNameIgnoreCaseAndActiveTrue(stateId, "Annamayya")).thenReturn(Optional.of(district));
+            when(locationCityRepository.findByDistrictIdAndNameIgnoreCaseAndActiveTrue(districtId, "Pileru")).thenReturn(Optional.of(city));
+            when(addressRepository.save(entity)).thenReturn(entity);
+            when(addressMapper.toResponse(entity)).thenReturn(buildAddressResponse());
+
+            service.updateAddress(customerId, addressId, req, ownerPrincipal);
+
+            verify(locationStateRepository).findByNameIgnoreCaseAndActiveTrue("Andhra Pradesh");
+            verify(addressRepository).save(entity);
         }
     }
 

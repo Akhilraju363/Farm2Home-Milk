@@ -59,7 +59,7 @@ function NotificationBell() {
   return (
     <>
       <Tooltip title="Recent notifications">
-        <IconButton onClick={(e) => setAnchor(e.currentTarget)} size="small" sx={{ mr: 1 }}>
+        <IconButton onClick={(e) => setAnchor(e.currentTarget)} size="small" sx={{ mr: 1 }} aria-label="Recent notifications">
           <Badge badgeContent={badgeCount} color="error">
             <Notifications />
           </Badge>
@@ -126,7 +126,7 @@ function CartButton() {
 
   return (
     <Tooltip title="Cart">
-      <IconButton onClick={() => navigate('/cart')} size="small" sx={{ mr: 1 }}>
+      <IconButton onClick={() => navigate('/cart')} size="small" sx={{ mr: 1 }} aria-label="Cart">
         <Badge badgeContent={itemCount} color="error">
           <ShoppingCartOutlined />
         </Badge>
@@ -170,7 +170,7 @@ export function TopBar({ onMenuClick, title }: Props) {
       }}
     >
       <Toolbar>
-        <IconButton edge="start" onClick={onMenuClick} sx={{ mr: 2, display: { sm: 'none' } }}>
+        <IconButton edge="start" onClick={onMenuClick} sx={{ mr: 2, display: { sm: 'none' } }} aria-label="Open navigation menu">
           <MenuIcon />
         </IconButton>
         <Typography variant="h6" fontWeight={600} sx={{ mr: 3, display: { xs: 'none', md: 'block' } }}>
@@ -186,13 +186,18 @@ export function TopBar({ onMenuClick, title }: Props) {
         <NotificationBell />
 
         <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-          <IconButton onClick={toggleMode} size="small" sx={{ mr: 1 }}>
+          <IconButton
+            onClick={toggleMode}
+            size="small"
+            sx={{ mr: 1 }}
+            aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
             {mode === 'dark' ? <LightMode /> : <DarkMode />}
           </IconButton>
         </Tooltip>
 
         <Tooltip title="Account">
-          <IconButton onClick={(e) => setAnchor(e.currentTarget)} size="small">
+          <IconButton onClick={(e) => setAnchor(e.currentTarget)} size="small" aria-label="Account menu">
             <Avatar sx={{ width: 34, height: 34, bgcolor: 'primary.main', fontSize: 14 }}>
               {initials}
             </Avatar>
