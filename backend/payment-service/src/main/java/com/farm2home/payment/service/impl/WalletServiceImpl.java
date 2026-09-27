@@ -31,7 +31,9 @@ public class WalletServiceImpl implements WalletService {
     private final PaymentMapper mapper;
 
     @Override
-    @Transactional(readOnly = true)
+    // Read-write, not readOnly: findOrCreateWallet() may insert the customer's first wallet, and a
+    // readOnly transaction puts Hibernate in MANUAL flush mode, so that insert was silently dropped.
+    @Transactional
     public WalletResponse getWallet(UUID customerId) {
         return mapper.toWalletResponse(findOrCreateWallet(customerId));
     }
@@ -107,7 +109,9 @@ public class WalletServiceImpl implements WalletService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    // Read-write, not readOnly: findOrCreateWallet() may insert the customer's first wallet, and a
+    // readOnly transaction puts Hibernate in MANUAL flush mode, so that insert was silently dropped.
+    @Transactional
     public Page<WalletTransactionResponse> getTransactions(UUID customerId, Pageable pageable) {
         Wallet wallet = findOrCreateWallet(customerId);
         return txRepository.findAllByWalletIdOrderByCreatedAtDesc(wallet.getId(), pageable)

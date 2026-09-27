@@ -2,6 +2,10 @@ package com.farm2home.order.integration;
 
 import com.farm2home.core.test.BaseIntegrationTest;
 import com.farm2home.core.test.AuthenticationTestBuilder;
+import com.farm2home.order.client.CustomerServiceClient;
+import com.farm2home.order.client.DailyProductionResponse;
+import com.farm2home.order.client.DeliveryAvailabilityResponse;
+import com.farm2home.order.client.ProductionServiceClient;
 import com.farm2home.order.domain.entity.Order;
 import com.farm2home.order.domain.enums.MilkType;
 import com.farm2home.order.domain.enums.OrderStatus;
@@ -15,8 +19,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -26,12 +32,19 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
  * Integration tests for the Order Service using Testcontainers and PostgreSQL.
  * Tests complete order workflows with real database operations.
+ *
+ * <p>Only the two cross-service HTTP clients the manual-order path calls are mocked - production-service
+ * (same-day milk capacity) and customer-service (delivery availability) are separate deployables that
+ * don't exist in this test's context. Everything inside order-service itself (controller, security
+ * filter, service, JPA, Flyway schema) runs for real.
  */
 @DisplayName("Order Service Integration Tests")
 class OrderServiceIntegrationTest extends BaseIntegrationTest {
@@ -45,17 +58,38 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @MockBean
+    private ProductionServiceClient productionServiceClient;
+
+    @MockBean
+    private CustomerServiceClient customerServiceClient;
+
     private UUID customerId;
     private AuthenticationTestBuilder authBuilder;
+    private AuthenticationTestBuilder adminAuthBuilder;
 
     @BeforeEach
     void setUp() {
         customerId = UUID.randomUUID();
         authBuilder = new AuthenticationTestBuilder()
                 .withUserId(customerId)
-                .withUsername("customer@farm2home.com")
+                .withMobile("9876543210")
                 .withRoles("CUSTOMER");
+        adminAuthBuilder = new AuthenticationTestBuilder()
+                .withMobile("9876500000")
+                .withRoles("FARM_MANAGER");
         orderRepository.deleteAll();
+
+        // Today's production comfortably covers every order these tests place, so the same-day
+        // capacity check runs (and passes) instead of being bypassed with a future order date.
+        var todaysProduction = new DailyProductionResponse();
+        todaysProduction.setDate(LocalDate.now());
+        todaysProduction.setTotalLiters(BigDecimal.valueOf(100));
+        when(productionServiceClient.getDailySummary(any(), any())).thenReturn(Mono.just(List.of(todaysProduction)));
+
+        var availability = new DeliveryAvailabilityResponse();
+        availability.setDeliveryAvailable(true);
+        when(customerServiceClient.getDeliveryAvailability(any())).thenReturn(Mono.just(availability));
     }
 
     @Nested
@@ -80,12 +114,12 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
                     .content(objectMapper.writeValueAsString(orderRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.id", notNullValue()))
-                    .andExpect(jsonPath("$.orderNumber", notNullValue()))
-                    .andExpect(jsonPath("$.status").value(OrderStatus.PENDING.name()))
-                    .andExpect(jsonPath("$.items", hasSize(1)))
-                    .andExpect(jsonPath("$.items[0].milkType").value(MilkType.FULL_CREAM.name()))
-                    .andExpect(jsonPath("$.items[0].quantity").value(2));
+                    .andExpect(jsonPath("$.data.id", notNullValue()))
+                    .andExpect(jsonPath("$.data.orderNumber", notNullValue()))
+                    .andExpect(jsonPath("$.data.status").value(OrderStatus.PENDING.name()))
+                    .andExpect(jsonPath("$.data.items", hasSize(1)))
+                    .andExpect(jsonPath("$.data.items[0].milkType").value(MilkType.FULL_CREAM.name()))
+                    .andExpect(jsonPath("$.data.items[0].quantity").value(2));
 
             var savedOrders = orderRepository.findAll();
             assertThat(savedOrders).hasSize(1);
@@ -120,8 +154,8 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
                     .content(objectMapper.writeValueAsString(orderRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.items", hasSize(3)))
-                    .andExpect(jsonPath("$.totalAmount", notNullValue()));
+                    .andExpect(jsonPath("$.data.items", hasSize(3)))
+                    .andExpect(jsonPath("$.data.totalAmount", notNullValue()));
 
             var savedOrders = orderRepository.findAll();
             assertThat(savedOrders).hasSize(1);
@@ -141,9 +175,9 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
             mockMvc.perform(get("/api/v1/orders/" + order.getId())
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.id").value(order.getId().toString()))
-                    .andExpect(jsonPath("$.orderNumber").value(order.getOrderNumber()))
-                    .andExpect(jsonPath("$.status").value(OrderStatus.PENDING.name()));
+                    .andExpect(jsonPath("$.data.id").value(order.getId().toString()))
+                    .andExpect(jsonPath("$.data.orderNumber").value(order.getOrderNumber()))
+                    .andExpect(jsonPath("$.data.status").value(OrderStatus.PENDING.name()));
         }
 
         @Test
@@ -157,9 +191,9 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
                     .param("size", "10")
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.content", hasSize(2)))
-                    .andExpect(jsonPath("$.totalElements").value(2))
-                    .andExpect(jsonPath("$.numberOfElements").value(2));
+                    .andExpect(jsonPath("$.data.content", hasSize(2)))
+                    .andExpect(jsonPath("$.data.totalElements").value(2))
+                    .andExpect(jsonPath("$.data.numberOfElements").value(2));
         }
 
         @Test
@@ -185,9 +219,9 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
             mockMvc.perform(patch("/api/v1/orders/" + order.getId() + "/status")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(updateRequest))
-                    .with(authBuilder.build()))
+                    .with(adminAuthBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(OrderStatus.ASSIGNED.name()));
+                    .andExpect(jsonPath("$.data.status").value(OrderStatus.ASSIGNED.name()));
 
             var updatedOrder = orderRepository.findById(order.getId()).orElseThrow();
             assertThat(updatedOrder.getStatus()).isEqualTo(OrderStatus.ASSIGNED);
@@ -205,7 +239,7 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
                     .content(objectMapper.writeValueAsString(updateRequest))
                     .with(authBuilder.build()))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.status").value(OrderStatus.CANCELLED.name()));
+                    .andExpect(jsonPath("$.data.status").value(OrderStatus.CANCELLED.name()));
         }
 
         @Test
@@ -222,7 +256,8 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(updateRequest))
                     .with(authBuilder.build()))
-                    .andExpect(status().isBadRequest());
+                    // OrderException is @ResponseStatus(UNPROCESSABLE_ENTITY)
+                    .andExpect(status().isUnprocessableEntity());
         }
     }
 
@@ -230,7 +265,7 @@ class OrderServiceIntegrationTest extends BaseIntegrationTest {
     private Order createTestOrder() {
         var order = Order.builder()
                 .customerId(customerId)
-                .orderNumber("ORD-" + System.currentTimeMillis())
+                .orderNumber("ORD-TEST-" + UUID.randomUUID().toString().substring(0, 8))
                 .orderDate(LocalDate.now())
                 .status(OrderStatus.PENDING)
                 .totalAmount(BigDecimal.valueOf(160))
