@@ -123,6 +123,10 @@ export function OrderDetailsPage() {
   })
   const payments = paymentsRes?.data.data ?? []
   const hasPayableProgress = payments.some((p) => p.paymentStatus === 'SUCCESS' || p.paymentStatus === 'PENDING')
+  // An online payment the customer started but didn't finish (closed Razorpay Checkout) stays
+  // PENDING - it can be resumed on the same gateway order rather than blocking payment entirely.
+  const openOnlinePayment = !payments.some((p) => p.paymentStatus === 'SUCCESS')
+    && payments.some((p) => p.paymentStatus === 'PENDING' && (p.paymentMethod === 'RAZORPAY' || p.paymentMethod === 'UPI'))
 
   // GET /invoices/order/{orderId} - 404 means no invoice has been generated for this order yet,
   // not an error (see invoiceService.getByOrder). Fetched for any viewer who can already see this
@@ -229,13 +233,13 @@ export function OrderDetailsPage() {
             </Typography>
           </Box>
         </Box>
-        {(canManage || canCancel || Boolean(invoice) || Boolean(assignment) || (!canManage && !hasPayableProgress && order.status !== 'CANCELLED')) && (
+        {(canManage || canCancel || Boolean(invoice) || Boolean(assignment) || (!canManage && (!hasPayableProgress || openOnlinePayment) && order.status !== 'CANCELLED')) && (
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
             {/* Payment creation belongs to the order's own owner, same as Cancel below - not
                 shown to admin/staff viewers, who aren't the ones paying. */}
-            {!canManage && !hasPayableProgress && order.status !== 'CANCELLED' && (
+            {!canManage && (!hasPayableProgress || openOnlinePayment) && order.status !== 'CANCELLED' && (
               <Button variant="contained" startIcon={<PaymentIcon />} onClick={() => setPayNowOpen(true)}>
-                Pay Now
+                {openOnlinePayment ? 'Complete Payment' : 'Pay Now'}
               </Button>
             )}
             {/* Customer-facing entry point to /orders/:id/tracking - admin has its own dedicated
@@ -452,7 +456,7 @@ export function OrderDetailsPage() {
       </Grid>
 
       <PayNowDialog
-        open={payNowOpen} orderId={order.id} amount={order.totalAmount}
+        open={payNowOpen} orderId={order.id} amount={order.totalAmount} resumeOnline={openOnlinePayment}
         onClose={() => setPayNowOpen(false)}
         onPaid={() => { invalidatePayments(); invalidate() }}
       />

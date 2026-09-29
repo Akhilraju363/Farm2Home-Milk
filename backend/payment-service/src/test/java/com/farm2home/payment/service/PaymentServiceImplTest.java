@@ -12,6 +12,7 @@ import com.farm2home.payment.dto.request.VerifyPaymentRequest;
 import com.farm2home.payment.dto.response.PaymentResponse;
 import com.farm2home.payment.event.PaymentStatusChangedEvent;
 import com.farm2home.payment.exception.PaymentException;
+import com.farm2home.payment.exception.PaymentGatewayException;
 import com.farm2home.payment.exception.ResourceNotFoundException;
 import com.farm2home.payment.gateway.GatewayOrder;
 import com.farm2home.payment.gateway.GatewayPaymentState;
@@ -80,6 +81,7 @@ class PaymentServiceImplTest {
     private final UUID customerId = UUID.randomUUID();
     private final UUID orderId    = UUID.randomUUID();
     private final UUID paymentId  = UUID.randomUUID();
+    private static final BigDecimal ORDER_TOTAL = new BigDecimal("150.00");
 
     private Payment buildPayment(PaymentStatus status, PaymentMethod method) {
         return Payment.builder()
@@ -104,9 +106,16 @@ class PaymentServiceImplTest {
     /** Most initiate() tests need order-service to report a payable (non-cancelled) order;
      *  only the order-status tests themselves stub something different. */
     private void stubPayableOrder(String status) {
+        stubPayableOrder(status, customerId);
+    }
+
+    /** order-service is the source of truth for who owns the order and what it costs. */
+    private void stubPayableOrder(String status, UUID orderCustomerId) {
         OrderStatusResponse order = new OrderStatusResponse();
         order.setId(orderId);
+        order.setCustomerId(orderCustomerId);
         order.setStatus(status);
+        order.setTotalAmount(ORDER_TOTAL);
         when(orderServiceClient.getOrder(orderId)).thenReturn(Mono.just(order));
     }
 
@@ -129,29 +138,34 @@ class PaymentServiceImplTest {
     @DisplayName("initiate()")
     class Initiate {
 
+        private InitiatePaymentRequest request(PaymentMethod method, String amount) {
+            InitiatePaymentRequest req = new InitiatePaymentRequest();
+            req.setOrderId(orderId);
+            req.setAmount(new BigDecimal(amount));
+            req.setPaymentMethod(method);
+            return req;
+        }
+
         @Test
-        @DisplayName("UPI payment → creates a gateway order, stays PENDING, no wallet debit")
-        void upiPayment_createsPendingRecord() {
+        @DisplayName("online (RAZORPAY) payment → creates a gateway order for the order total, stays PENDING, no wallet debit")
+        void onlinePayment_createsPendingGatewayOrder() {
             stubPayableOrder("PENDING");
             when(paymentRepository.existsByOrderIdAndPaymentStatusInAndDeletedFalse(eq(orderId), any()))
                     .thenReturn(false);
             when(mapper.toEntity(any(InitiatePaymentRequest.class))).thenReturn(new Payment());
             stubGatewayOrder();
-            Payment saved = buildPayment(PaymentStatus.PENDING, PaymentMethod.UPI);
+            Payment saved = buildPayment(PaymentStatus.PENDING, PaymentMethod.RAZORPAY);
             when(paymentRepository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(buildResponse(PaymentStatus.PENDING));
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.UPI);
-
-            PaymentResponse result = service.initiate(req, customerId);
+            PaymentResponse result = service.initiate(request(PaymentMethod.RAZORPAY, "150.00"), customerId, false);
 
             assertThat(result.getPaymentStatus()).isEqualTo("PENDING");
             assertThat(result.getGatewayCheckoutKeyId()).isEqualTo("gw_checkout_key");
             verifyNoInteractions(walletService);
-            verify(paymentRepository).save(argThat(p -> "gw_order_1".equals(p.getGatewayOrderId())));
+            verify(gatewayProvider).createOrder(argThat(r -> r.amount().compareTo(ORDER_TOTAL) == 0));
+            verify(paymentRepository).save(argThat(p -> "gw_order_1".equals(p.getGatewayOrderId())
+                    && p.getPaymentStatus() == PaymentStatus.PENDING));
         }
 
         @Test
@@ -165,12 +179,7 @@ class PaymentServiceImplTest {
             when(paymentRepository.save(any())).thenReturn(saved);
             when(mapper.toResponse(saved)).thenReturn(buildResponse(PaymentStatus.SUCCESS));
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.WALLET);
-
-            PaymentResponse result = service.initiate(req, customerId);
+            PaymentResponse result = service.initiate(request(PaymentMethod.WALLET, "150.00"), customerId, false);
 
             assertThat(result.getPaymentStatus()).isEqualTo("SUCCESS");
             verify(walletService).debitForPayment(eq(customerId), eq(new BigDecimal("150.00")), any());
@@ -179,7 +188,7 @@ class PaymentServiceImplTest {
         }
 
         @Test
-        @DisplayName("CASH payment → stays PENDING, no gateway call")
+        @DisplayName("CASH (COD) payment → PENDING for the order total, owned by the order's customer, no gateway call")
         void cashPayment_noGatewayCall() {
             stubPayableOrder("PENDING");
             when(paymentRepository.existsByOrderIdAndPaymentStatusInAndDeletedFalse(eq(orderId), any()))
@@ -192,14 +201,11 @@ class PaymentServiceImplTest {
             });
             when(mapper.toResponse(any())).thenReturn(buildResponse(PaymentStatus.PENDING));
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.CASH);
-
-            service.initiate(req, customerId);
+            service.initiate(request(PaymentMethod.CASH, "150.00"), customerId, false);
 
             verifyNoInteractions(gatewayProvider);
+            verify(paymentRepository).save(argThat(p -> p.getPaymentStatus() == PaymentStatus.PENDING
+                    && p.getCustomerId().equals(customerId) && p.getAmount().compareTo(ORDER_TOTAL) == 0));
         }
 
         @Test
@@ -209,14 +215,63 @@ class PaymentServiceImplTest {
             when(paymentRepository.existsByOrderIdAndPaymentStatusInAndDeletedFalse(eq(orderId), any()))
                     .thenReturn(true);
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.UPI);
-
-            assertThatThrownBy(() -> service.initiate(req, customerId))
+            assertThatThrownBy(() -> service.initiate(request(PaymentMethod.UPI, "150.00"), customerId, false))
                     .isInstanceOf(PaymentException.class)
                     .hasMessageContaining("already in progress or completed");
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("online retry while an online payment is still PENDING → resumes the same gateway order")
+        void pendingOnlinePayment_resumed() {
+            stubPayableOrder("PENDING");
+            Payment pending = buildPayment(PaymentStatus.PENDING, PaymentMethod.RAZORPAY);
+            pending.setGatewayOrderId("gw_order_existing");
+            when(paymentRepository.findFirstByOrderIdAndPaymentStatusAndPaymentMethodInAndDeletedFalseOrderByCreatedAtDesc(
+                    eq(orderId), eq(PaymentStatus.PENDING), any())).thenReturn(Optional.of(pending));
+            when(gatewayProvider.checkoutKeyId()).thenReturn("gw_checkout_key");
+            when(mapper.toResponse(pending)).thenReturn(buildResponse(PaymentStatus.PENDING));
+
+            PaymentResponse result = service.initiate(request(PaymentMethod.RAZORPAY, "150.00"), customerId, false);
+
+            assertThat(result.getGatewayCheckoutKeyId()).isEqualTo("gw_checkout_key");
+            verify(gatewayProvider, never()).createOrder(any());
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("amount differs from the order total → rejected, nothing charged or saved")
+        void amountMismatch_rejected() {
+            stubPayableOrder("PENDING");
+
+            assertThatThrownBy(() -> service.initiate(request(PaymentMethod.RAZORPAY, "1.00"), customerId, false))
+                    .isInstanceOf(PaymentException.class)
+                    .hasMessageContaining("does not match the order total");
+            verifyNoInteractions(gatewayProvider, walletService);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("customer supplies another customer's id → rejected, never debits that customer's wallet")
+        void spoofedCustomerId_rejected() {
+            stubPayableOrder("PENDING");
+            InitiatePaymentRequest req = request(PaymentMethod.WALLET, "150.00");
+            req.setCustomerId(UUID.randomUUID());
+
+            assertThatThrownBy(() -> service.initiate(req, customerId, false))
+                    .isInstanceOf(PaymentException.class)
+                    .hasMessageContaining("customerId does not match");
+            verifyNoInteractions(walletService, gatewayProvider);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("non-admin paying for an order that belongs to someone else → 404")
+        void otherCustomersOrder_notFound() {
+            stubPayableOrder("PENDING", UUID.randomUUID());
+
+            assertThatThrownBy(() -> service.initiate(request(PaymentMethod.CASH, "150.00"), customerId, false))
+                    .isInstanceOf(ResourceNotFoundException.class);
             verify(paymentRepository, never()).save(any());
         }
 
@@ -225,12 +280,7 @@ class PaymentServiceImplTest {
         void cancelledOrder_throws() {
             stubPayableOrder("CANCELLED");
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.UPI);
-
-            assertThatThrownBy(() -> service.initiate(req, customerId))
+            assertThatThrownBy(() -> service.initiate(request(PaymentMethod.UPI, "150.00"), customerId, false))
                     .isInstanceOf(PaymentException.class)
                     .hasMessageContaining("cancelled order");
             verify(paymentRepository, never()).existsByOrderIdAndPaymentStatusInAndDeletedFalse(any(), any());
@@ -243,12 +293,7 @@ class PaymentServiceImplTest {
             when(orderServiceClient.getOrder(orderId))
                     .thenReturn(Mono.error(WebClientResponseException.create(404, "Not Found", null, null, null)));
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.UPI);
-
-            assertThatThrownBy(() -> service.initiate(req, customerId))
+            assertThatThrownBy(() -> service.initiate(request(PaymentMethod.UPI, "150.00"), customerId, false))
                     .isInstanceOf(ResourceNotFoundException.class);
             verify(paymentRepository, never()).save(any());
         }
@@ -263,20 +308,15 @@ class PaymentServiceImplTest {
                             java.net.URI.create("http://order-service/api/v1/orders/" + orderId),
                             new org.springframework.http.HttpHeaders())));
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.UPI);
-
-            assertThatThrownBy(() -> service.initiate(req, customerId))
+            assertThatThrownBy(() -> service.initiate(request(PaymentMethod.UPI, "150.00"), customerId, false))
                     .isInstanceOf(PaymentException.class)
                     .hasMessageContaining("Could not verify order status");
         }
 
         @Test
-        @DisplayName("admin sets explicit customerId → uses it instead of caller")
-        void adminSetsCustomerId() {
-            UUID targetCustomer = UUID.randomUUID();
+        @DisplayName("admin pays on a customer's behalf → payment belongs to the order's customer, not the admin")
+        void adminPaysForOrdersCustomer() {
+            UUID adminId = UUID.randomUUID();
             stubPayableOrder("PENDING");
             when(paymentRepository.existsByOrderIdAndPaymentStatusInAndDeletedFalse(eq(orderId), any()))
                     .thenReturn(false);
@@ -287,16 +327,12 @@ class PaymentServiceImplTest {
                 return p;
             });
             when(mapper.toResponse(any())).thenReturn(buildResponse(PaymentStatus.PENDING));
+            InitiatePaymentRequest req = request(PaymentMethod.CASH, "150.00");
+            req.setCustomerId(customerId);
 
-            InitiatePaymentRequest req = new InitiatePaymentRequest();
-            req.setCustomerId(targetCustomer);
-            req.setOrderId(orderId);
-            req.setAmount(new BigDecimal("150.00"));
-            req.setPaymentMethod(PaymentMethod.CASH);
+            service.initiate(req, adminId, true);
 
-            service.initiate(req, customerId);
-
-            verify(paymentRepository).save(argThat(p -> p.getCustomerId().equals(targetCustomer)));
+            verify(paymentRepository).save(argThat(p -> p.getCustomerId().equals(customerId)));
         }
     }
 
@@ -306,54 +342,65 @@ class PaymentServiceImplTest {
     @DisplayName("verify()")
     class Verify {
 
-        private Payment pendingWithGatewayOrder() {
-            Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.UPI);
+        private Payment lockedGatewayPayment(PaymentStatus status) {
+            Payment payment = buildPayment(status, PaymentMethod.RAZORPAY);
             payment.setGatewayOrderId("gw_order_1");
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
             return payment;
         }
 
+        private VerifyPaymentRequest request(String gatewayOrderId, String signature) {
+            VerifyPaymentRequest req = new VerifyPaymentRequest();
+            req.setGatewayOrderId(gatewayOrderId);
+            req.setGatewayPaymentId("gw_pay_1");
+            req.setSignature(signature);
+            return req;
+        }
+
         @Test
-        @DisplayName("gateway confirms valid + captured → marks SUCCESS")
+        @DisplayName("authentic signature + gateway confirms capture → SUCCESS, verified against the stored amount")
         void validAndCaptured_marksSuccess() {
-            Payment payment = pendingWithGatewayOrder();
-            when(paymentRepository.findByIdAndCustomerIdAndDeletedFalse(paymentId, customerId))
-                    .thenReturn(Optional.of(payment));
+            Payment payment = lockedGatewayPayment(PaymentStatus.PENDING);
             when(gatewayProvider.verifyPayment(any())).thenReturn(
                     new GatewayPaymentVerification(true, "gw_pay_1", GatewayPaymentState.CAPTURED, "{}"));
             when(paymentRepository.save(payment)).thenReturn(payment);
             when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.SUCCESS));
 
-            VerifyPaymentRequest req = new VerifyPaymentRequest();
-            req.setGatewayOrderId("gw_order_1");
-            req.setGatewayPaymentId("gw_pay_1");
-            req.setSignature("sig");
-
-            PaymentResponse result = service.verify(paymentId, req, customerId, false);
+            PaymentResponse result = service.verify(paymentId, request("gw_order_1", "sig"), customerId, false);
 
             assertThat(result.getPaymentStatus()).isEqualTo("SUCCESS");
             assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
             assertThat(payment.getPaidAt()).isNotNull();
             assertThat(payment.getGatewayPaymentId()).isEqualTo("gw_pay_1");
+            verify(gatewayProvider).verifyPayment(argThat(r -> r.expectedAmount().compareTo(payment.getAmount()) == 0));
             verify(eventPublisher).publishEvent(statusEvent(payment, "PAYMENT_SUCCESS"));
         }
 
         @Test
-        @DisplayName("gateway reports invalid → marks FAILED, does not throw")
-        void invalid_marksFailed() {
-            Payment payment = pendingWithGatewayOrder();
-            when(paymentRepository.findByIdAndCustomerIdAndDeletedFalse(paymentId, customerId))
-                    .thenReturn(Optional.of(payment));
+        @DisplayName("invalid signature → rejected, payment left PENDING, nothing saved or published")
+        void invalidSignature_rejectedWithoutStateChange() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.PENDING);
             when(gatewayProvider.verifyPayment(any())).thenReturn(
-                    new GatewayPaymentVerification(false, "gw_pay_1", GatewayPaymentState.FAILED, "{}"));
+                    new GatewayPaymentVerification(false, "gw_pay_1", GatewayPaymentState.UNKNOWN, "{}"));
+
+            assertThatThrownBy(() -> service.verify(paymentId, request("gw_order_1", "bad-sig"), customerId, false))
+                    .isInstanceOf(PaymentException.class)
+                    .hasMessageContaining("signature is invalid");
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+            verify(paymentRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
+
+        @Test
+        @DisplayName("authentic signature but the gateway reports the payment failed → FAILED")
+        void gatewayReportsFailed_marksFailed() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.PENDING);
+            when(gatewayProvider.verifyPayment(any())).thenReturn(
+                    new GatewayPaymentVerification(true, "gw_pay_1", GatewayPaymentState.FAILED, "{}"));
             when(paymentRepository.save(payment)).thenReturn(payment);
             when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.FAILED));
 
-            VerifyPaymentRequest req = new VerifyPaymentRequest();
-            req.setGatewayOrderId("gw_order_1");
-            req.setGatewayPaymentId("gw_pay_1");
-            req.setSignature("bad-sig");
-
-            PaymentResponse result = service.verify(paymentId, req, customerId, false);
+            PaymentResponse result = service.verify(paymentId, request("gw_order_1", "sig"), customerId, false);
 
             assertThat(result.getPaymentStatus()).isEqualTo("FAILED");
             assertThat(payment.getPaidAt()).isNull();
@@ -361,38 +408,118 @@ class PaymentServiceImplTest {
         }
 
         @Test
-        @DisplayName("payment not PENDING → throws PaymentException")
-        void notPending_throws() {
-            Payment payment = buildPayment(PaymentStatus.SUCCESS, PaymentMethod.UPI);
-            when(paymentRepository.findByIdAndCustomerIdAndDeletedFalse(paymentId, customerId))
-                    .thenReturn(Optional.of(payment));
+        @DisplayName("authentic signature but only authorized (not yet captured) → stays PENDING, never FAILED")
+        void authorizedNotCaptured_staysPending() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.PENDING);
+            when(gatewayProvider.verifyPayment(any())).thenReturn(
+                    new GatewayPaymentVerification(true, "gw_pay_1", GatewayPaymentState.AUTHORIZED, "{}"));
+            when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.PENDING));
 
-            VerifyPaymentRequest req = new VerifyPaymentRequest();
-            req.setGatewayOrderId("gw_order_1");
-            req.setGatewayPaymentId("gw_pay_1");
-            req.setSignature("sig");
+            service.verify(paymentId, request("gw_order_1", "sig"), customerId, false);
 
-            assertThatThrownBy(() -> service.verify(paymentId, req, customerId, false))
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+            verify(paymentRepository, never()).save(any());
+            verifyNoInteractions(eventPublisher);
+        }
+
+        @Test
+        @DisplayName("duplicate verify for the gateway payment that already settled it → returns SUCCESS, no reprocessing")
+        void duplicateVerify_idempotent() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.SUCCESS);
+            payment.setGatewayPaymentId("gw_pay_1");
+            when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.SUCCESS));
+
+            PaymentResponse result = service.verify(paymentId, request("gw_order_1", "sig"), customerId, false);
+
+            assertThat(result.getPaymentStatus()).isEqualTo("SUCCESS");
+            verifyNoInteractions(gatewayProvider, eventPublisher);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("payment already settled by a different gateway payment → throws PaymentException")
+        void settledByAnotherGatewayPayment_throws() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.SUCCESS);
+            payment.setGatewayPaymentId("gw_pay_OTHER");
+
+            assertThatThrownBy(() -> service.verify(paymentId, request("gw_order_1", "sig"), customerId, false))
                     .isInstanceOf(PaymentException.class)
                     .hasMessageContaining("not in PENDING state");
             verifyNoInteractions(gatewayProvider);
         }
 
         @Test
+        @DisplayName("FAILED attempt, then a retry in the same checkout is captured → recovers to SUCCESS")
+        void failedThenCapturedRetry_recoversToSuccess() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.FAILED);
+            when(gatewayProvider.verifyPayment(any())).thenReturn(
+                    new GatewayPaymentVerification(true, "gw_pay_1", GatewayPaymentState.CAPTURED, "{}"));
+            when(paymentRepository.save(payment)).thenReturn(payment);
+            when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.SUCCESS));
+
+            service.verify(paymentId, request("gw_order_1", "sig"), customerId, false);
+
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
+            verify(eventPublisher).publishEvent(statusEvent(payment, "PAYMENT_SUCCESS"));
+        }
+
+        @Test
+        @DisplayName("another customer tries to confirm the payment → 404, gateway never called")
+        void otherCustomer_notFound() {
+            lockedGatewayPayment(PaymentStatus.PENDING);
+
+            assertThatThrownBy(() -> service.verify(paymentId, request("gw_order_1", "sig"), UUID.randomUUID(), false))
+                    .isInstanceOf(ResourceNotFoundException.class);
+            verifyNoInteractions(gatewayProvider);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("gateway order id mismatch → throws PaymentException")
         void gatewayOrderMismatch_throws() {
-            Payment payment = pendingWithGatewayOrder();
-            when(paymentRepository.findByIdAndCustomerIdAndDeletedFalse(paymentId, customerId))
-                    .thenReturn(Optional.of(payment));
+            lockedGatewayPayment(PaymentStatus.PENDING);
 
-            VerifyPaymentRequest req = new VerifyPaymentRequest();
-            req.setGatewayOrderId("some_other_order");
-            req.setGatewayPaymentId("gw_pay_1");
-            req.setSignature("sig");
-
-            assertThatThrownBy(() -> service.verify(paymentId, req, customerId, false))
+            assertThatThrownBy(() -> service.verify(paymentId, request("some_other_order", "sig"), customerId, false))
                     .isInstanceOf(PaymentException.class)
                     .hasMessageContaining("does not match");
+            verifyNoInteractions(gatewayProvider);
+        }
+
+        @Test
+        @DisplayName("gateway payment already used for a different payment → rejected")
+        void gatewayPaymentReused_rejected() {
+            lockedGatewayPayment(PaymentStatus.PENDING);
+            when(paymentRepository.existsByGatewayPaymentIdAndIdNotAndDeletedFalse("gw_pay_1", paymentId)).thenReturn(true);
+
+            assertThatThrownBy(() -> service.verify(paymentId, request("gw_order_1", "sig"), customerId, false))
+                    .isInstanceOf(PaymentException.class)
+                    .hasMessageContaining("already been used");
+            verifyNoInteractions(gatewayProvider);
+        }
+
+        @Test
+        @DisplayName("gateway reports a different amount → rejected, payment left PENDING")
+        void amountMismatch_rejected() {
+            Payment payment = lockedGatewayPayment(PaymentStatus.PENDING);
+            when(gatewayProvider.verifyPayment(any())).thenThrow(
+                    new PaymentGatewayException("The paid amount does not match the order amount."));
+
+            assertThatThrownBy(() -> service.verify(paymentId, request("gw_order_1", "sig"), customerId, false))
+                    .isInstanceOf(PaymentException.class)
+                    .hasMessageContaining("amount");
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("cash-on-delivery payment → not verifiable through the gateway")
+        void cashPayment_notVerifiable() {
+            Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.CASH);
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
+
+            assertThatThrownBy(() -> service.verify(paymentId, request("gw_order_1", "sig"), customerId, false))
+                    .isInstanceOf(PaymentException.class)
+                    .hasMessageContaining("not an online payment");
             verifyNoInteractions(gatewayProvider);
         }
     }
@@ -403,14 +530,23 @@ class PaymentServiceImplTest {
     @DisplayName("handleWebhook()")
     class HandleWebhook {
 
+        private Payment lockedByGatewayOrder(PaymentStatus status) {
+            Payment payment = buildPayment(status, PaymentMethod.RAZORPAY);
+            payment.setGatewayOrderId("gw_order_1");
+            when(paymentRepository.findByGatewayOrderIdForUpdate("gw_order_1")).thenReturn(Optional.of(payment));
+            return payment;
+        }
+
+        private void stubEvent(String type, GatewayPaymentState state, BigDecimal amount) {
+            when(gatewayProvider.parseWebhookEvent("raw", "sig")).thenReturn(
+                    new GatewayWebhookEvent(type, "gw_order_1", "gw_pay_1", state, "raw", amount));
+        }
+
         @Test
         @DisplayName("CAPTURED event for a known PENDING payment → marks SUCCESS")
         void captured_marksSuccess() {
-            Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.RAZORPAY);
-            payment.setGatewayOrderId("gw_order_1");
-            when(gatewayProvider.parseWebhookEvent("raw", "sig")).thenReturn(
-                    new GatewayWebhookEvent("payment.captured", "gw_order_1", "gw_pay_1", GatewayPaymentState.CAPTURED, "raw"));
-            when(paymentRepository.findByGatewayOrderIdAndDeletedFalse("gw_order_1")).thenReturn(Optional.of(payment));
+            Payment payment = lockedByGatewayOrder(PaymentStatus.PENDING);
+            stubEvent("payment.captured", GatewayPaymentState.CAPTURED, new BigDecimal("150.00"));
             when(paymentRepository.save(payment)).thenReturn(payment);
 
             service.handleWebhook("raw", "sig");
@@ -423,11 +559,8 @@ class PaymentServiceImplTest {
         @Test
         @DisplayName("FAILED event for a known PENDING payment → marks FAILED")
         void failed_marksFailed() {
-            Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.RAZORPAY);
-            payment.setGatewayOrderId("gw_order_1");
-            when(gatewayProvider.parseWebhookEvent("raw", "sig")).thenReturn(
-                    new GatewayWebhookEvent("payment.failed", "gw_order_1", "gw_pay_1", GatewayPaymentState.FAILED, "raw"));
-            when(paymentRepository.findByGatewayOrderIdAndDeletedFalse("gw_order_1")).thenReturn(Optional.of(payment));
+            Payment payment = lockedByGatewayOrder(PaymentStatus.PENDING);
+            stubEvent("payment.failed", GatewayPaymentState.FAILED, new BigDecimal("150.00"));
             when(paymentRepository.save(payment)).thenReturn(payment);
 
             service.handleWebhook("raw", "sig");
@@ -437,13 +570,10 @@ class PaymentServiceImplTest {
         }
 
         @Test
-        @DisplayName("payment already SUCCESS → idempotently ignored, no save")
-        void alreadyTerminal_ignored() {
-            Payment payment = buildPayment(PaymentStatus.SUCCESS, PaymentMethod.RAZORPAY);
-            payment.setGatewayOrderId("gw_order_1");
-            when(gatewayProvider.parseWebhookEvent("raw", "sig")).thenReturn(
-                    new GatewayWebhookEvent("payment.captured", "gw_order_1", "gw_pay_1", GatewayPaymentState.CAPTURED, "raw"));
-            when(paymentRepository.findByGatewayOrderIdAndDeletedFalse("gw_order_1")).thenReturn(Optional.of(payment));
+        @DisplayName("duplicate CAPTURED event for an already-SUCCESS payment → idempotently ignored, no save")
+        void duplicateCaptured_ignored() {
+            lockedByGatewayOrder(PaymentStatus.SUCCESS);
+            stubEvent("payment.captured", GatewayPaymentState.CAPTURED, new BigDecimal("150.00"));
 
             service.handleWebhook("raw", "sig");
 
@@ -452,11 +582,48 @@ class PaymentServiceImplTest {
         }
 
         @Test
+        @DisplayName("late FAILED event after the payment already succeeded → ignored, never downgrades SUCCESS")
+        void failedAfterSuccess_ignored() {
+            Payment payment = lockedByGatewayOrder(PaymentStatus.SUCCESS);
+            stubEvent("payment.failed", GatewayPaymentState.FAILED, new BigDecimal("150.00"));
+
+            service.handleWebhook("raw", "sig");
+
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("CAPTURED after an earlier failed attempt → recovers to SUCCESS")
+        void capturedAfterFailed_recovers() {
+            Payment payment = lockedByGatewayOrder(PaymentStatus.FAILED);
+            stubEvent("payment.captured", GatewayPaymentState.CAPTURED, new BigDecimal("150.00"));
+            when(paymentRepository.save(payment)).thenReturn(payment);
+
+            service.handleWebhook("raw", "sig");
+
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
+        }
+
+        @Test
+        @DisplayName("CAPTURED with an amount different from the payment's → ignored, not marked SUCCESS")
+        void amountMismatch_ignored() {
+            Payment payment = lockedByGatewayOrder(PaymentStatus.PENDING);
+            stubEvent("payment.captured", GatewayPaymentState.CAPTURED, new BigDecimal("1.00"));
+
+            service.handleWebhook("raw", "sig");
+
+            assertThat(payment.getPaymentStatus()).isEqualTo(PaymentStatus.PENDING);
+            verify(paymentRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("unknown gateway order id → ignored, no exception")
         void unknownOrder_ignored() {
             when(gatewayProvider.parseWebhookEvent("raw", "sig")).thenReturn(
-                    new GatewayWebhookEvent("payment.captured", "gw_order_unknown", "gw_pay_1", GatewayPaymentState.CAPTURED, "raw"));
-            when(paymentRepository.findByGatewayOrderIdAndDeletedFalse("gw_order_unknown")).thenReturn(Optional.empty());
+                    new GatewayWebhookEvent("payment.captured", "gw_order_unknown", "gw_pay_1",
+                            GatewayPaymentState.CAPTURED, "raw", null));
+            when(paymentRepository.findByGatewayOrderIdForUpdate("gw_order_unknown")).thenReturn(Optional.empty());
 
             service.handleWebhook("raw", "sig");
 
@@ -475,7 +642,7 @@ class PaymentServiceImplTest {
         void gatewayCaptured_transitionsToSuccess() {
             Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.UPI);
             payment.setGatewayOrderId("gw_order_1");
-            when(paymentRepository.findByIdAndDeletedFalse(paymentId)).thenReturn(Optional.of(payment));
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
             when(gatewayProvider.fetchOrderStatus("gw_order_1")).thenReturn(
                     new GatewayPaymentStatus("gw_pay_1", GatewayPaymentState.CAPTURED, "{}"));
             when(paymentRepository.save(payment)).thenReturn(payment);
@@ -493,7 +660,7 @@ class PaymentServiceImplTest {
         void gatewayStillUnknown_noChange() {
             Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.UPI);
             payment.setGatewayOrderId("gw_order_1");
-            when(paymentRepository.findByIdAndDeletedFalse(paymentId)).thenReturn(Optional.of(payment));
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
             when(gatewayProvider.fetchOrderStatus("gw_order_1")).thenReturn(
                     new GatewayPaymentStatus(null, GatewayPaymentState.UNKNOWN, "{}"));
             when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.PENDING));
@@ -508,7 +675,7 @@ class PaymentServiceImplTest {
         @DisplayName("payment not PENDING → no-op, gateway never queried")
         void notPending_noop() {
             Payment payment = buildPayment(PaymentStatus.SUCCESS, PaymentMethod.UPI);
-            when(paymentRepository.findByIdAndDeletedFalse(paymentId)).thenReturn(Optional.of(payment));
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
             when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.SUCCESS));
 
             service.syncStatus(paymentId);
@@ -520,7 +687,7 @@ class PaymentServiceImplTest {
         @DisplayName("WALLET/CASH payment → no-op, gateway never queried")
         void nonGatewayMethod_noop() {
             Payment payment = buildPayment(PaymentStatus.PENDING, PaymentMethod.CASH);
-            when(paymentRepository.findByIdAndDeletedFalse(paymentId)).thenReturn(Optional.of(payment));
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
             when(mapper.toResponse(payment)).thenReturn(buildResponse(PaymentStatus.PENDING));
 
             service.syncStatus(paymentId);
@@ -531,7 +698,7 @@ class PaymentServiceImplTest {
         @Test
         @DisplayName("unknown payment id → throws ResourceNotFoundException")
         void unknownPayment_throws() {
-            when(paymentRepository.findByIdAndDeletedFalse(paymentId)).thenReturn(Optional.empty());
+            when(paymentRepository.findByIdForUpdate(paymentId)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> service.syncStatus(paymentId))
                     .isInstanceOf(ResourceNotFoundException.class);

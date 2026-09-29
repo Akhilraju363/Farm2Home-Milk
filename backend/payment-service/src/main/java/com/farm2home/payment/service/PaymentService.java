@@ -29,8 +29,13 @@ public interface PaymentService {
      *  active {@link com.farm2home.payment.gateway.PaymentGatewayProvider} and returns a public
      *  checkout key in the response - the payment stays PENDING until {@link #verify} or a
      *  webhook confirms it. WALLET and CASH are unchanged: instant SUCCESS / instant PENDING
-     *  respectively, no gateway involved. */
-    PaymentResponse initiate(InitiatePaymentRequest request, UUID customerId);
+     *  respectively, no gateway involved.
+     *
+     *  The payer and amount always come from the order itself (order-service): the request's
+     *  amount must match the order total, and its customerId (admin-only use) must match the
+     *  order's customer. A retried online payment for an order that already has a PENDING online
+     *  payment resumes that payment's gateway order instead of creating a second one. */
+    PaymentResponse initiate(InitiatePaymentRequest request, UUID callerId, boolean isAdmin);
 
     /** Manual/legacy status update by payment reference - kept for backward compatibility and as
      *  a way to simulate gateway outcomes under the mock provider (local dev/tests). Real gateway
@@ -39,14 +44,15 @@ public interface PaymentService {
     PaymentResponse processCallback(PaymentCallbackRequest request);
 
     /** Verifies a client-reported checkout completion against the gateway (signature check, plus
-     *  a confirmatory status fetch where the provider supports it) and transitions the payment to
-     *  SUCCESS or FAILED accordingly. Idempotent in effect: a payment no longer PENDING throws
-     *  rather than re-processing. */
+     *  a confirmatory status fetch where the provider supports it). An invalid signature is
+     *  rejected without changing the payment; a gateway-confirmed capture marks it SUCCESS, a
+     *  gateway-confirmed failure marks it FAILED, and anything else leaves it PENDING. Idempotent:
+     *  repeating a verify that already settled the payment returns its current state. */
     PaymentResponse verify(UUID paymentId, VerifyPaymentRequest request, UUID customerId, boolean isAdmin);
 
     /** Processes an asynchronous gateway webhook notification. Verifies the payload's signature
      *  before acting on it and is safe to call repeatedly for the same event (gateways routinely
-     *  retry webhook delivery) - a payment already out of PENDING is left untouched. */
+     *  retry webhook delivery) - an event that doesn't change the payment's state is a no-op. */
     void handleWebhook(String rawPayload, String signatureHeader);
 
     /** Re-fetches this payment's current status directly from the gateway and applies it if it

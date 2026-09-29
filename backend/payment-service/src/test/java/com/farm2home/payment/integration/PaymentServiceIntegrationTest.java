@@ -92,9 +92,17 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         walletTransactionRepository.deleteAll();
         walletRepository.deleteAll();
 
+        stubOrderTotal(BigDecimal.valueOf(500.00));
+    }
+
+    /** order-service is the source of truth for the order's customer and total - initiate()
+     *  charges that total and rejects a request whose amount doesn't match it. */
+    private void stubOrderTotal(BigDecimal total) {
         var order = new OrderStatusResponse();
         order.setId(orderId);
+        order.setCustomerId(customerId);
         order.setStatus("PENDING");
+        order.setTotalAmount(total);
         when(orderServiceClient.getOrder(any())).thenReturn(Mono.just(order));
     }
 
@@ -128,6 +136,7 @@ class PaymentServiceIntegrationTest extends BaseIntegrationTest {
         @Test
         @DisplayName("Should initiate payment via Card")
         void shouldInitiatePaymentViaCard() throws Exception {
+            stubOrderTotal(BigDecimal.valueOf(750.00));
             var paymentRequest = new InitiatePaymentRequest();
             paymentRequest.setOrderId(orderId);
             paymentRequest.setAmount(BigDecimal.valueOf(750.00));

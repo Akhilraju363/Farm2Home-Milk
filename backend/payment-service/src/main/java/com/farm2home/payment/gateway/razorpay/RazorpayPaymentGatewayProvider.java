@@ -56,6 +56,11 @@ public class RazorpayPaymentGatewayProvider implements PaymentGatewayProvider {
     }
 
     @Override
+    public String checkoutKeyId() {
+        return properties.getKeyId();
+    }
+
+    @Override
     public GatewayOrder createOrder(GatewayOrderRequest request) {
         Map<String, Object> body = Map.of(
                 "amount", toSmallestUnit(request.amount()),
@@ -78,15 +83,44 @@ public class RazorpayPaymentGatewayProvider implements PaymentGatewayProvider {
                 request.signature(), properties.getKeySecret());
 
         if (!signatureValid) {
-            return new GatewayPaymentVerification(false, request.gatewayPaymentId(), GatewayPaymentState.FAILED,
+            return new GatewayPaymentVerification(false, request.gatewayPaymentId(), GatewayPaymentState.UNKNOWN,
                     "{\"reason\":\"signature_mismatch\"}");
         }
 
         // A valid signature proves the response came from Razorpay, but not that funds were
         // actually captured — fetch the payment itself rather than trust the client's report.
-        GatewayPaymentStatus status = fetchPaymentStatus(request.gatewayPaymentId());
-        return new GatewayPaymentVerification(status.state() == GatewayPaymentState.CAPTURED,
-                request.gatewayPaymentId(), status.state(), status.rawResponse());
+        JsonNode payment = fetchPayment(request.gatewayPaymentId());
+        if (payment == null) {
+            return new GatewayPaymentVerification(true, request.gatewayPaymentId(), GatewayPaymentState.UNKNOWN, null);
+        }
+        assertMatchesExpected(payment, request);
+        return new GatewayPaymentVerification(true, request.gatewayPaymentId(),
+                mapPaymentStatus(textOrNull(payment, "status")), payment.toString());
+    }
+
+    /** Defence in depth on top of the signature: the fetched payment must belong to the gateway
+     *  order we created and carry exactly the amount/currency we asked for. Razorpay itself
+     *  enforces order amount == payment amount, so a mismatch here means something is wrong and
+     *  the payment must not be marked SUCCESS. */
+    private void assertMatchesExpected(JsonNode payment, GatewayVerificationRequest request) {
+        String orderId = textOrNull(payment, "order_id");
+        if (orderId != null && !orderId.equals(request.gatewayOrderId())) {
+            log.warn("Razorpay payment {} belongs to order {}, expected {}",
+                    request.gatewayPaymentId(), orderId, request.gatewayOrderId());
+            throw new PaymentGatewayException("The payment does not belong to this order.");
+        }
+        if (request.expectedAmount() != null && payment.hasNonNull("amount")
+                && payment.path("amount").asLong() != toSmallestUnit(request.expectedAmount())) {
+            log.warn("Razorpay payment {} amount {} does not match expected {} paise",
+                    request.gatewayPaymentId(), payment.path("amount").asLong(), toSmallestUnit(request.expectedAmount()));
+            throw new PaymentGatewayException("The paid amount does not match the order amount.");
+        }
+        String currency = textOrNull(payment, "currency");
+        if (currency != null && !currency.equalsIgnoreCase(properties.getCurrency())) {
+            log.warn("Razorpay payment {} currency {} does not match expected {}",
+                    request.gatewayPaymentId(), currency, properties.getCurrency());
+            throw new PaymentGatewayException("The payment currency does not match.");
+        }
     }
 
     @Override
@@ -107,15 +141,20 @@ public class RazorpayPaymentGatewayProvider implements PaymentGatewayProvider {
 
     @Override
     public GatewayPaymentStatus fetchPaymentStatus(String gatewayPaymentId) {
+        JsonNode response = fetchPayment(gatewayPaymentId);
+        return new GatewayPaymentStatus(gatewayPaymentId, mapPaymentStatus(textOrNull(response, "status")),
+                response == null ? null : response.toString());
+    }
+
+    /** The raw payment entity, or null when Razorpay doesn't know the id. */
+    private JsonNode fetchPayment(String gatewayPaymentId) {
         try {
-            JsonNode response = webClient.get().uri("/payments/{paymentId}", gatewayPaymentId)
+            return webClient.get().uri("/payments/{paymentId}", gatewayPaymentId)
                     .retrieve()
                     .bodyToMono(JsonNode.class)
                     .block();
-            return new GatewayPaymentStatus(gatewayPaymentId, mapPaymentStatus(textOrNull(response, "status")),
-                    response == null ? null : response.toString());
         } catch (WebClientResponseException.NotFound ex) {
-            return new GatewayPaymentStatus(gatewayPaymentId, GatewayPaymentState.UNKNOWN, null);
+            return null;
         } catch (WebClientException ex) {
             throw new PaymentGatewayException(
                     "Could not fetch payment status from Razorpay right now. Please try again.", ex);
@@ -129,13 +168,23 @@ public class RazorpayPaymentGatewayProvider implements PaymentGatewayProvider {
                     .retrieve()
                     .bodyToMono(JsonNode.class)
                     .block();
+            // A Razorpay order can hold several payment attempts (the customer may retry inside
+            // the same checkout after a failure), so any captured attempt wins over a failed one
+            // regardless of the order they are listed in.
+            JsonNode failed = null;
             if (response != null) {
                 for (JsonNode item : response.path("items")) {
                     GatewayPaymentState state = mapPaymentStatus(textOrNull(item, "status"));
-                    if (state == GatewayPaymentState.CAPTURED || state == GatewayPaymentState.FAILED) {
+                    if (state == GatewayPaymentState.CAPTURED) {
                         return new GatewayPaymentStatus(textOrNull(item, "id"), state, item.toString());
                     }
+                    if (state == GatewayPaymentState.FAILED && failed == null) {
+                        failed = item;
+                    }
                 }
+            }
+            if (failed != null) {
+                return new GatewayPaymentStatus(textOrNull(failed, "id"), GatewayPaymentState.FAILED, failed.toString());
             }
             return new GatewayPaymentStatus(null, GatewayPaymentState.UNKNOWN, response == null ? null : response.toString());
         } catch (WebClientResponseException.NotFound ex) {
@@ -159,8 +208,11 @@ public class RazorpayPaymentGatewayProvider implements PaymentGatewayProvider {
                     : eventType.startsWith("payment.failed") ? GatewayPaymentState.FAILED
                     : eventType.startsWith("refund.") ? GatewayPaymentState.REFUNDED
                     : mapPaymentStatus(textOrNull(paymentEntity, "status"));
+            BigDecimal amount = paymentEntity.hasNonNull("amount")
+                    ? BigDecimal.valueOf(paymentEntity.path("amount").asLong()).movePointLeft(2)
+                    : null;
             return new GatewayWebhookEvent(eventType, textOrNull(paymentEntity, "order_id"),
-                    textOrNull(paymentEntity, "id"), state, rawPayload);
+                    textOrNull(paymentEntity, "id"), state, rawPayload, amount);
         } catch (JsonProcessingException ex) {
             throw new PaymentGatewayException("Malformed Razorpay webhook payload", ex);
         }

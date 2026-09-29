@@ -17,6 +17,12 @@ public interface PaymentGatewayProvider {
     /** Identifies the active provider for diagnostics/audit trails (e.g. "MOCK", "RAZORPAY"). */
     String getName();
 
+    /** The public (never secret) key a client-side checkout widget needs to open this provider's
+     *  checkout for an existing gateway order - the same value {@link #createOrder} returns in
+     *  {@link GatewayOrder#checkoutKeyId()}. Lets a still-PENDING online payment be resumed without
+     *  creating a second gateway order. */
+    String checkoutKeyId();
+
     /** Creates an order on the gateway for a not-yet-collected payment. Called once per payment
      *  attempt, right after the local PENDING {@code Payment} row is built (before it's saved). */
     GatewayOrder createOrder(GatewayOrderRequest request);
