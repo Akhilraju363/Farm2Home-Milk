@@ -84,12 +84,23 @@ public class PaymentServiceImpl implements PaymentService {
     private final OrderServiceClient orderServiceClient;
     private final PaymentGatewayProvider gatewayProvider;
 
+    /** Online (gateway-backed) methods - UPI is kept for existing records and API callers, but both
+     *  go through the same configured gateway provider and the same Checkout flow. */
+    private static final List<PaymentMethod> GATEWAY_METHODS = List.of(PaymentMethod.RAZORPAY, PaymentMethod.UPI);
+
     @Override
     @Transactional
-    public PaymentResponse initiate(InitiatePaymentRequest request, UUID customerId) {
-        UUID resolvedCustomerId = request.getCustomerId() != null ? request.getCustomerId() : customerId;
+    public PaymentResponse initiate(InitiatePaymentRequest request, UUID callerId, boolean isAdmin) {
+        OrderStatusResponse order = verifyOrderIsPayable(request.getOrderId());
+        UUID resolvedCustomerId = resolvePayer(order, request, callerId, isAdmin);
+        BigDecimal amount = resolveAmount(order, request);
 
-        verifyOrderIsPayable(request.getOrderId());
+        if (isGatewayMethod(request.getPaymentMethod())) {
+            PaymentResponse resumed = resumePendingGatewayPayment(request.getOrderId(), resolvedCustomerId, amount);
+            if (resumed != null) {
+                return resumed;
+            }
+        }
 
         // Reject if a payment already exists for this order that succeeded or is still in
         // flight - only a prior FAILED/REFUNDED attempt leaves the order payable again.
@@ -103,12 +114,13 @@ public class PaymentServiceImpl implements PaymentService {
 
         Payment payment = mapper.toEntity(request);
         payment.setCustomerId(resolvedCustomerId);
+        payment.setAmount(amount);
         payment.setPaymentReference(reference);
         payment.setPaymentStatus(PaymentStatus.PENDING);
 
         if (request.getPaymentMethod() == PaymentMethod.WALLET) {
             // Debit wallet immediately — if insufficient balance, exception is thrown before saving
-            walletService.debitForPayment(resolvedCustomerId, request.getAmount(), null);
+            walletService.debitForPayment(resolvedCustomerId, amount, null);
             payment.setPaymentStatus(PaymentStatus.SUCCESS);
             payment.setPaidAt(LocalDateTime.now());
             Payment saved = paymentRepository.save(payment);
@@ -131,10 +143,10 @@ public class PaymentServiceImpl implements PaymentService {
             return mapper.toResponse(saved);
         }
 
-        // UPI / RAZORPAY — create a gateway order; stays PENDING until verify() or a webhook
-        // confirms it (or the reconciliation job catches a missed one)
+        // UPI / RAZORPAY — create a gateway order for the server-resolved amount; stays PENDING
+        // until verify() or a webhook confirms it (or the reconciliation job catches a missed one)
         GatewayOrder gatewayOrder = gatewayProvider.createOrder(
-                new GatewayOrderRequest(reference, request.getAmount(), "Order " + request.getOrderId()));
+                new GatewayOrderRequest(reference, amount, "Order " + request.getOrderId()));
         payment.setGatewayOrderId(gatewayOrder.gatewayOrderId());
         Payment saved = paymentRepository.save(payment);
         log.debug("Gateway payment {} initiated via {} for order {}", reference, gatewayProvider.getName(),
@@ -148,41 +160,112 @@ public class PaymentServiceImpl implements PaymentService {
         return response;
     }
 
+    /** The payer is always the order's own customer, as reported by order-service - never a
+     *  client-supplied id. A non-admin can only reach their own orders (order-service scopes the
+     *  lookup by the forwarded caller identity), and this re-checks that rather than relying on
+     *  it; an explicit request customerId (admin paying on a customer's behalf) must agree. */
+    private UUID resolvePayer(OrderStatusResponse order, InitiatePaymentRequest request, UUID callerId, boolean isAdmin) {
+        UUID orderCustomerId = order.getCustomerId();
+        if (orderCustomerId == null) {
+            throw new PaymentException("Could not verify the order's customer right now. Please try again.");
+        }
+        if (!isAdmin && !orderCustomerId.equals(callerId)) {
+            throw new ResourceNotFoundException("Order not found: " + request.getOrderId());
+        }
+        if (request.getCustomerId() != null && !request.getCustomerId().equals(orderCustomerId)) {
+            throw new PaymentException("customerId does not match the customer of order " + request.getOrderId());
+        }
+        return orderCustomerId;
+    }
+
+    /** The amount charged is the order's own total from order-service. The request's amount is
+     *  only accepted as a confirmation of what the customer was shown - a mismatch is rejected
+     *  rather than silently corrected, so a stale or tampered checkout can't pay the wrong sum. */
+    private BigDecimal resolveAmount(OrderStatusResponse order, InitiatePaymentRequest request) {
+        BigDecimal orderTotal = order.getTotalAmount();
+        if (orderTotal == null || orderTotal.signum() <= 0) {
+            throw new PaymentException("Could not verify the order amount right now. Please try again.");
+        }
+        if (request.getAmount().compareTo(orderTotal) != 0) {
+            throw new PaymentException(String.format(
+                    "Payment amount ₹%s does not match the order total ₹%s.", request.getAmount(), orderTotal));
+        }
+        return orderTotal;
+    }
+
+    /** Resumes checkout for an online payment that is still PENDING (the customer dismissed the
+     *  checkout, the page reloaded, or they are retrying) by handing back the same gateway order,
+     *  rather than rejecting the retry or creating a second gateway order that could also be paid. */
+    private PaymentResponse resumePendingGatewayPayment(UUID orderId, UUID customerId, BigDecimal amount) {
+        Payment pending = paymentRepository
+                .findFirstByOrderIdAndPaymentStatusAndPaymentMethodInAndDeletedFalseOrderByCreatedAtDesc(
+                        orderId, PaymentStatus.PENDING, GATEWAY_METHODS)
+                .orElse(null);
+        if (pending == null || pending.getGatewayOrderId() == null
+                || !customerId.equals(pending.getCustomerId()) || pending.getAmount().compareTo(amount) != 0) {
+            return null;
+        }
+        log.debug("Resuming PENDING gateway payment {} for order {}", pending.getPaymentReference(), orderId);
+        PaymentResponse response = mapper.toResponse(pending);
+        response.setGatewayCheckoutKeyId(gatewayProvider.checkoutKeyId());
+        return response;
+    }
+
+    /** Server-side confirmation of a client-reported checkout completion. The client's report is
+     *  never trusted on its own: the provider checks the signature and re-fetches the payment from
+     *  the gateway, and only a gateway-confirmed capture marks the payment SUCCESS.
+     *
+     *  Idempotent - the payment row is locked for the duration, and a repeat call for a payment
+     *  this same gateway payment already settled just returns the current state. */
     @Override
     @Transactional
     public PaymentResponse verify(UUID paymentId, VerifyPaymentRequest request, UUID customerId, boolean isAdmin) {
-        Payment payment = resolvePayment(paymentId, customerId, isAdmin);
+        Payment payment = paymentRepository.findByIdForUpdate(paymentId)
+                .filter(p -> isAdmin || p.getCustomerId().equals(customerId))
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found: " + paymentId));
 
-        if (payment.getPaymentStatus() != PaymentStatus.PENDING) {
-            throw new PaymentException("Payment " + payment.getPaymentReference() +
-                    " is not in PENDING state (current: " + payment.getPaymentStatus() + ")");
+        if (!isGatewayMethod(payment.getPaymentMethod())) {
+            throw new PaymentException("Payment " + payment.getPaymentReference() + " is not an online payment");
         }
         if (payment.getGatewayOrderId() == null || !payment.getGatewayOrderId().equals(request.getGatewayOrderId())) {
             throw new PaymentException("Gateway order ID does not match payment " + payment.getPaymentReference());
         }
+        if (payment.getPaymentStatus() == PaymentStatus.SUCCESS
+                && request.getGatewayPaymentId().equals(payment.getGatewayPaymentId())) {
+            log.debug("Duplicate verify for already-settled payment {}", payment.getPaymentReference());
+            return mapper.toResponse(payment);
+        }
+        // PENDING is the normal case. FAILED is still verifiable: Razorpay lets the customer retry
+        // inside the same checkout after a failed attempt, and a later attempt on the same gateway
+        // order can genuinely capture.
+        if (payment.getPaymentStatus() != PaymentStatus.PENDING && payment.getPaymentStatus() != PaymentStatus.FAILED) {
+            throw new PaymentException("Payment " + payment.getPaymentReference() +
+                    " is not in PENDING state (current: " + payment.getPaymentStatus() + ")");
+        }
+        if (paymentRepository.existsByGatewayPaymentIdAndIdNotAndDeletedFalse(request.getGatewayPaymentId(), payment.getId())) {
+            throw new PaymentException("This gateway payment has already been used for a different payment.");
+        }
 
         GatewayPaymentVerification result = gatewayProvider.verifyPayment(new GatewayVerificationRequest(
-                request.getGatewayOrderId(), request.getGatewayPaymentId(), request.getSignature()));
+                request.getGatewayOrderId(), request.getGatewayPaymentId(), request.getSignature(), payment.getAmount()));
 
-        payment.setGatewayPaymentId(result.gatewayPaymentId());
-        payment.setGatewayResponse(result.rawResponse());
-        payment.setPaymentStatus(result.valid() ? PaymentStatus.SUCCESS : PaymentStatus.FAILED);
-        if (result.valid()) {
-            payment.setPaidAt(LocalDateTime.now());
+        if (!result.signatureValid()) {
+            // A forged/garbled report changes nothing: the payment stays as it was, and the real
+            // outcome still arrives via webhook or reconciliation.
+            log.warn("Rejected verify for payment {}: invalid gateway signature", payment.getPaymentReference());
+            throw new PaymentException("Payment verification failed: the payment signature is invalid.");
         }
-        Payment saved = paymentRepository.save(payment);
 
-        String eventType = result.valid() ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : EmailTemplateConstants.EVENT_PAYMENT_FAILED;
-        publishStatusChanged(saved, eventType);
-        auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), customerId.toString(),
-                "Gateway verification for payment " + saved.getPaymentReference() + ": " + saved.getPaymentStatus());
-        return mapper.toResponse(saved);
+        String actor = customerId != null ? customerId.toString() : payment.getCustomerId().toString();
+        applyGatewayOutcome(payment, result.state(), result.gatewayPaymentId(), result.rawResponse(),
+                "Gateway verification", actor);
+        return mapper.toResponse(payment);
     }
 
-    /** Idempotent: webhooks are routinely retried/duplicated by gateways, and a payment already
-     *  out of PENDING (resolved by verify(), a prior webhook, or a manual callback) is left
-     *  untouched rather than re-processed. Unknown/unmatched events are logged and ignored rather
-     *  than rejected, since gateways send event types this service has no reason to act on. */
+    /** Idempotent: webhooks are routinely retried/duplicated by gateways, and the payment row is
+     *  locked so a webhook racing a client verify() for the same payment is serialized with it.
+     *  Unknown/unmatched events are logged and ignored rather than rejected, since gateways send
+     *  event types this service has no reason to act on. */
     @Override
     @Transactional
     public void handleWebhook(String rawPayload, String signatureHeader) {
@@ -193,75 +276,89 @@ public class PaymentServiceImpl implements PaymentService {
             return;
         }
 
-        Payment payment = paymentRepository.findByGatewayOrderIdAndDeletedFalse(event.gatewayOrderId()).orElse(null);
+        Payment payment = paymentRepository.findByGatewayOrderIdForUpdate(event.gatewayOrderId()).orElse(null);
         if (payment == null) {
             log.warn("Ignoring webhook event [{}] for unknown gateway order {}", event.eventType(), event.gatewayOrderId());
             return;
         }
-        if (payment.getPaymentStatus() != PaymentStatus.PENDING) {
-            log.debug("Ignoring webhook event [{}] for payment {} already in state {}",
-                    event.eventType(), payment.getPaymentReference(), payment.getPaymentStatus());
+        if (event.state() == GatewayPaymentState.CAPTURED && event.amount() != null
+                && event.amount().compareTo(payment.getAmount()) != 0) {
+            log.warn("Ignoring webhook event [{}] for payment {}: gateway amount {} does not match expected {}",
+                    event.eventType(), payment.getPaymentReference(), event.amount(), payment.getAmount());
             return;
         }
 
-        payment.setGatewayPaymentId(event.gatewayPaymentId());
-        payment.setGatewayResponse(event.rawPayload());
-
-        if (event.state() == GatewayPaymentState.CAPTURED) {
-            payment.setPaymentStatus(PaymentStatus.SUCCESS);
-            payment.setPaidAt(LocalDateTime.now());
-            Payment saved = paymentRepository.save(payment);
-            publishStatusChanged(saved, EmailTemplateConstants.EVENT_PAYMENT_SUCCESS);
-            auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), saved.getCustomerId().toString(),
-                    "Webhook [" + event.eventType() + "]: payment " + saved.getPaymentReference() + " succeeded");
-        } else if (event.state() == GatewayPaymentState.FAILED) {
-            payment.setPaymentStatus(PaymentStatus.FAILED);
-            Payment saved = paymentRepository.save(payment);
-            publishStatusChanged(saved, EmailTemplateConstants.EVENT_PAYMENT_FAILED);
-            auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), saved.getCustomerId().toString(),
-                    "Webhook [" + event.eventType() + "]: payment " + saved.getPaymentReference() + " failed");
-        } else {
-            log.debug("Webhook event [{}] for payment {} carries no actionable state ({})",
-                    event.eventType(), payment.getPaymentReference(), event.state());
+        boolean changed = applyGatewayOutcome(payment, event.state(), event.gatewayPaymentId(), event.rawPayload(),
+                "Webhook [" + event.eventType() + "]", payment.getCustomerId().toString());
+        if (!changed) {
+            log.debug("Webhook event [{}] for payment {} left it unchanged (state {})",
+                    event.eventType(), payment.getPaymentReference(), payment.getPaymentStatus());
         }
     }
 
     @Override
     @Transactional
     public PaymentResponse syncStatus(UUID paymentId) {
-        Payment payment = paymentRepository.findByIdAndDeletedFalse(paymentId)
+        Payment payment = paymentRepository.findByIdForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found: " + paymentId));
 
-        boolean gatewayBacked = payment.getPaymentMethod() == PaymentMethod.UPI
-                || payment.getPaymentMethod() == PaymentMethod.RAZORPAY;
-        if (payment.getPaymentStatus() != PaymentStatus.PENDING || !gatewayBacked || payment.getGatewayOrderId() == null) {
+        if (payment.getPaymentStatus() != PaymentStatus.PENDING || !isGatewayMethod(payment.getPaymentMethod())
+                || payment.getGatewayOrderId() == null) {
             return mapper.toResponse(payment);
         }
 
         GatewayPaymentStatus status = gatewayProvider.fetchOrderStatus(payment.getGatewayOrderId());
-        return applyGatewayStatus(payment, status, "Reconciliation");
+        applyGatewayOutcome(payment, status.state(), status.gatewayPaymentId(), status.rawResponse(),
+                "Reconciliation", payment.getCustomerId().toString());
+        return mapper.toResponse(payment);
     }
 
-    private PaymentResponse applyGatewayStatus(Payment payment, GatewayPaymentStatus status, String source) {
-        if (status.state() != GatewayPaymentState.CAPTURED && status.state() != GatewayPaymentState.FAILED) {
-            return mapper.toResponse(payment);
+    /** The single place a gateway-confirmed outcome changes a payment's status, shared by
+     *  verify(), the webhook and reconciliation so they can never disagree:
+     *  <ul>
+     *    <li>CAPTURED → SUCCESS, from PENDING or FAILED (money the gateway confirms it collected is
+     *        never left recorded as failed); a payment already SUCCESS is left untouched.</li>
+     *    <li>FAILED → FAILED, only from PENDING - a failure never overrides a success.</li>
+     *    <li>anything else (created/authorized/unknown) → no change; the payment stays PENDING until
+     *        the gateway reports a final state.</li>
+     *  </ul>
+     *  @return whether the payment's status changed */
+    private boolean applyGatewayOutcome(Payment payment, GatewayPaymentState state, String gatewayPaymentId,
+                                        String rawResponse, String source, String actor) {
+        PaymentStatus current = payment.getPaymentStatus();
+        PaymentStatus next;
+        if (state == GatewayPaymentState.CAPTURED
+                && (current == PaymentStatus.PENDING || current == PaymentStatus.FAILED)) {
+            next = PaymentStatus.SUCCESS;
+        } else if (state == GatewayPaymentState.FAILED && current == PaymentStatus.PENDING) {
+            next = PaymentStatus.FAILED;
+        } else {
+            return false;
         }
-        if (status.gatewayPaymentId() != null) {
-            payment.setGatewayPaymentId(status.gatewayPaymentId());
+
+        if (gatewayPaymentId != null) {
+            payment.setGatewayPaymentId(gatewayPaymentId);
         }
-        payment.setGatewayResponse(status.rawResponse());
-        payment.setPaymentStatus(status.state() == GatewayPaymentState.CAPTURED ? PaymentStatus.SUCCESS : PaymentStatus.FAILED);
-        if (status.state() == GatewayPaymentState.CAPTURED) {
+        payment.setGatewayResponse(rawResponse);
+        payment.setPaymentStatus(next);
+        if (next == PaymentStatus.SUCCESS) {
             payment.setPaidAt(LocalDateTime.now());
+            if (current == PaymentStatus.FAILED) {
+                log.warn("Payment {} was FAILED but the gateway confirms a capture - recording SUCCESS",
+                        payment.getPaymentReference());
+            }
         }
         Payment saved = paymentRepository.save(payment);
 
-        String eventType = status.state() == GatewayPaymentState.CAPTURED
-                ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : EmailTemplateConstants.EVENT_PAYMENT_FAILED;
-        publishStatusChanged(saved, eventType);
-        auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), saved.getCustomerId().toString(),
-                source + ": payment " + saved.getPaymentReference() + " synced to " + saved.getPaymentStatus());
-        return mapper.toResponse(saved);
+        publishStatusChanged(saved, next == PaymentStatus.SUCCESS
+                ? EmailTemplateConstants.EVENT_PAYMENT_SUCCESS : EmailTemplateConstants.EVENT_PAYMENT_FAILED);
+        auditLogService.record(AuditAction.PAYMENT, "Payment", saved.getId().toString(), actor,
+                source + ": payment " + saved.getPaymentReference() + " " + current + " -> " + next);
+        return true;
+    }
+
+    private static boolean isGatewayMethod(PaymentMethod method) {
+        return GATEWAY_METHODS.contains(method);
     }
 
     @Override
@@ -534,7 +631,7 @@ public class PaymentServiceImpl implements PaymentService {
      *  status, so this is a synchronous call rather than a locally-cached copy - payment
      *  initiation is infrequent enough (once per order, occasionally retried) that the extra
      *  round trip is a fair trade for never acting on stale order state. */
-    private void verifyOrderIsPayable(UUID orderId) {
+    private OrderStatusResponse verifyOrderIsPayable(UUID orderId) {
         OrderStatusResponse order;
         try {
             order = orderServiceClient.getOrder(orderId).block();
@@ -556,6 +653,7 @@ public class PaymentServiceImpl implements PaymentService {
         if ("CANCELLED".equals(order.getStatus())) {
             throw new PaymentException("Cannot pay for a cancelled order: " + orderId);
         }
+        return order;
     }
 
     /** Publishes a Spring application event from inside the current transaction; the actual

@@ -31,15 +31,24 @@ public class MockPaymentGatewayProvider implements PaymentGatewayProvider {
      *  provider's HMAC would only validate a genuine signature. */
     public static final String MOCK_VALID_SIGNATURE = "MOCK-VALID-SIGNATURE";
 
+    /** Returned as the checkout key so a client can tell it is talking to the mock gateway (a real
+     *  Razorpay key always starts with {@code rzp_}) and must not try to open Razorpay Checkout. */
+    public static final String MOCK_CHECKOUT_KEY = "mock_checkout_key";
+
     @Override
     public String getName() {
         return "MOCK";
     }
 
     @Override
+    public String checkoutKeyId() {
+        return MOCK_CHECKOUT_KEY;
+    }
+
+    @Override
     public GatewayOrder createOrder(GatewayOrderRequest request) {
         String gatewayOrderId = "mock_order_" + UUID.randomUUID().toString().replace("-", "");
-        return new GatewayOrder(gatewayOrderId, "mock_checkout_key", request.amount(), "INR");
+        return new GatewayOrder(gatewayOrderId, MOCK_CHECKOUT_KEY, request.amount(), "INR");
     }
 
     @Override

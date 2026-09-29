@@ -1,11 +1,14 @@
 package com.farm2home.payment.domain.repository;
 
 import com.farm2home.payment.domain.entity.Payment;
+import com.farm2home.payment.domain.enums.PaymentMethod;
 import com.farm2home.payment.domain.enums.PaymentStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -23,6 +26,26 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID>, JpaSpec
     Optional<Payment> findByIdAndCustomerIdAndDeletedFalse(UUID id, UUID customerId);
     Optional<Payment> findByPaymentReferenceAndDeletedFalse(String paymentReference);
     Optional<Payment> findByGatewayOrderIdAndDeletedFalse(String gatewayOrderId);
+
+    /** Row-locked lookups for every path that changes a gateway payment's status (verify, webhook,
+     *  reconciliation). A client verify and a gateway webhook for the same payment routinely
+     *  arrive at the same moment; the lock serializes them so the second one sees the first one's
+     *  outcome and becomes an idempotent no-op instead of processing the payment twice. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Payment p WHERE p.id = :id AND p.deleted = false")
+    Optional<Payment> findByIdForUpdate(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Payment p WHERE p.gatewayOrderId = :gatewayOrderId AND p.deleted = false")
+    Optional<Payment> findByGatewayOrderIdForUpdate(@Param("gatewayOrderId") String gatewayOrderId);
+
+    /** A still-PENDING online payment for the order that checkout can resume (same gateway order)
+     *  instead of creating a second one after the customer dismissed or retried checkout. */
+    Optional<Payment> findFirstByOrderIdAndPaymentStatusAndPaymentMethodInAndDeletedFalseOrderByCreatedAtDesc(
+            UUID orderId, PaymentStatus status, Collection<PaymentMethod> methods);
+
+    /** One gateway payment can only ever settle one of our payments. */
+    boolean existsByGatewayPaymentIdAndIdNotAndDeletedFalse(String gatewayPaymentId, UUID id);
 
     List<Payment> findAllByOrderIdAndDeletedFalse(UUID orderId);
 

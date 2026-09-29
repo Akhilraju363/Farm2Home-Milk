@@ -21,12 +21,12 @@ export interface Payment {
 
 export type PaymentMethod = 'UPI' | 'RAZORPAY' | 'WALLET' | 'CASH'
 export const PAYMENT_METHODS: PaymentMethod[] = ['UPI', 'RAZORPAY', 'WALLET', 'CASH']
-// Backend method names are the source of truth - UPI and RAZORPAY are presented as distinct
-// selectable methods here because that's what InitiatePaymentRequest.paymentMethod accepts, even
-// though both currently route through the same configured gateway provider server-side.
+// Backend method names are the source of truth. RAZORPAY is the customer-facing "Online Payment"
+// (Razorpay Checkout: cards, UPI, UPI apps, netbanking); UPI is an older value that routes through
+// the same gateway and is kept only so existing payments still display correctly.
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  UPI: 'UPI',
-  RAZORPAY: 'Razorpay',
+  UPI: 'UPI (Online)',
+  RAZORPAY: 'Online Payment',
   WALLET: 'Wallet',
   CASH: 'Cash on Delivery',
 }

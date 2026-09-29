@@ -94,7 +94,7 @@ class PaymentControllerTest {
             req.setOrderId(UUID.randomUUID());
             req.setAmount(new BigDecimal("150.00"));
             req.setPaymentMethod(PaymentMethod.UPI);
-            when(paymentService.initiate(any(), eq(customerId))).thenReturn(buildResponse());
+            when(paymentService.initiate(any(), eq(customerId), eq(false))).thenReturn(buildResponse());
 
             mockMvc.perform(post("/api/v1/payments")
                             .with(authentication(authFor(customerId, false)))

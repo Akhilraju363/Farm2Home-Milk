@@ -108,8 +108,10 @@ public class PaymentController {
                                   }
                                 }"""))),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                description = "Validation failed; the order is CANCELLED; or the order already has a "
-                        + "SUCCESS/PENDING payment", content = @Content),
+                description = "Validation failed; the order is CANCELLED; amount does not match the order "
+                        + "total; customerId does not match the order's customer; or the order already has a "
+                        + "SUCCESS/PENDING payment (a PENDING online payment is resumed instead when the new "
+                        + "request is also online)", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
@@ -122,7 +124,7 @@ public class PaymentController {
             @Valid @RequestBody InitiatePaymentRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Payment initiated successfully", paymentService.initiate(request, principal.userId())));
+                .body(ApiResponse.success("Payment initiated successfully", paymentService.initiate(request, principal.userId(), principal.isAdmin())));
     }
 
     @PostMapping("/callback")
@@ -157,10 +159,14 @@ public class PaymentController {
     @Operation(summary = "Verify a client-reported checkout completion",
             description = "Called by the frontend right after the gateway's checkout widget reports success — "
                     + "verifies the signature (and, where the provider supports it, re-confirms the payment's "
-                    + "status directly with the gateway) before transitioning PENDING to SUCCESS or FAILED.")
+                    + "status directly with the gateway). Only a gateway-confirmed capture marks the payment "
+                    + "SUCCESS; a gateway-confirmed failure marks it FAILED; a payment the gateway has not yet "
+                    + "settled (e.g. authorized) stays PENDING until the webhook/reconciliation sees it. An "
+                    + "invalid signature is rejected without changing the payment. Repeating a verify that "
+                    + "already settled the payment returns its current state (idempotent).")
     @ApiResponses({
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
-                description = "Verification completed — payment transitioned to SUCCESS or FAILED",
+                description = "Verification completed — the payment's resulting state (SUCCESS, FAILED, or still PENDING)",
                 content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                         examples = @ExampleObject(value = """
                                 {
@@ -181,8 +187,10 @@ public class PaymentController {
                                   }
                                 }"""))),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400",
-                description = "Validation failed; the payment is not PENDING; the supplied gatewayOrderId "
-                        + "does not match the payment's stored one; or the gateway signature is invalid",
+                description = "Validation failed; the payment is not an online payment or is already settled "
+                        + "by a different gateway payment; the supplied gatewayOrderId does not match the "
+                        + "payment's stored one; the gateway signature is invalid; or the gateway payment's "
+                        + "amount/currency/order does not match",
                 content = @Content),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "401",
                 description = "Missing or invalid bearer token", content = @Content),

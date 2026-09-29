@@ -64,15 +64,40 @@ returned `gatewayOrderId` on the `Payment` row before it's saved. The response c
 safe to ship to a browser; it is never the key secret) — for a client-side checkout widget to
 launch with. The payment stays `PENDING` until one of the following resolves it.
 
+The payer and the amount always come from the order itself (order-service's `GET /orders/{id}`,
+called with the caller's own forwarded identity): the payment's customer is the order's customer,
+a request `customerId` (admin use only) must match it, and the request `amount` must equal the
+order's `totalAmount` - a mismatch is rejected (400), never silently charged. If the order already
+has a `PENDING` online payment and the new request is also online, that payment's gateway order is
+returned again (resumed) instead of creating a second gateway order the customer could also pay.
+
+### Frontend checkout (`CheckoutPage`, `PayNowDialog`)
+
+The customer picks **Online Payment** (`RAZORPAY`), **Cash on Delivery** (`CASH`) or **Wallet**.
+Online Payment opens Razorpay Checkout (`frontend/src/utils/razorpayCheckout.ts`) for the
+server-created gateway order - Checkout itself offers cards, UPI, UPI apps (Google Pay, PhonePe,
+Paytm) and netbanking, so none of those are integrated separately. Checkout's success callback is
+only forwarded to `verify`, and the result shown is always a fresh read of the payment from the
+backend (`frontend/src/utils/onlinePayment.ts`). A dismissed Checkout leaves the payment `PENDING`;
+Order Details then offers **Complete Payment**, which resumes the same gateway order. Against the
+mock provider (no `rzp_` key) no Checkout is opened and the documented mock signature is used.
+
 ### Verify payment (`POST /api/v1/payments/{id}/verify`)
 
 Called by the frontend right after the checkout widget reports a completed payment
 (`gatewayOrderId`, `gatewayPaymentId`, `signature`). The provider verifies the signature and
-(where supported) re-confirms the payment's status directly with the gateway rather than trusting
-the client's claim — a forged or stale signature can never flip a payment to SUCCESS. Resolves to
-SUCCESS or FAILED; unlike `initiate()`'s validation errors, an invalid signature is a normal
-business outcome here (mirrors `processCallback`'s existing shape) — the endpoint returns 200 with
-`paymentStatus: FAILED`, it does not throw.
+(where supported) re-fetches the payment from the gateway, checking it belongs to the expected
+gateway order and carries exactly the payment's stored amount and the configured currency, rather
+than trusting the client's claim. The payment row is locked for the duration.
+
+- **Invalid signature** → 400, the payment is left unchanged (the real outcome still arrives via
+  webhook/reconciliation). Changed from the earlier behaviour of recording FAILED, which could leave
+  a genuinely captured payment marked FAILED.
+- **Gateway confirms capture** → SUCCESS. **Gateway confirms failure** → FAILED.
+- **Authentic but not yet captured** (e.g. `authorized`) → stays PENDING, never FAILED.
+- **Repeat verify** for the gateway payment that already settled it → 200 with the current state
+  (idempotent). A gateway payment id already recorded on a different payment is rejected.
+- **Amount/currency/order mismatch** → 400, payment unchanged.
 
 ### Webhook handling (`POST /api/v1/payments/webhook`)
 
@@ -80,8 +105,13 @@ Server-to-server notification from the gateway (Razorpay's `payment.captured`/`p
 events) — public (no bearer auth, since the gateway cannot attach our JWT) but every payload's
 signature is verified before anything is acted on (`X-Razorpay-Signature` header, HMAC over the
 raw request body with the separate webhook secret). Idempotent: gateways routinely retry webhook
-delivery, and a payment already out of `PENDING` (resolved by `verify()`, a prior webhook, or a
-manual callback) is left untouched.
+delivery, and the payment row is locked so a webhook racing `verify()` is serialized with it. An
+event that doesn't change the payment's state is a no-op: a duplicate `payment.captured` for a
+SUCCESS payment, or a late `payment.failed` after SUCCESS, is ignored. A `payment.captured` whose
+amount differs from the payment's is ignored (logged). Because Razorpay lets a customer retry
+inside the same Checkout after a failed attempt, a capture on a gateway order whose payment was
+already marked FAILED recovers it to SUCCESS - money the gateway confirms it collected is never
+left recorded as failed.
 
 ### Refund (`POST /api/v1/payments/{id}/refund`, admin only)
 
@@ -108,7 +138,7 @@ tab before the checkout widget's callback fired. It finds PENDING gateway paymen
 `payment.gateway.reconciliation.stale-after-minutes` (default 5) and re-checks each one against
 the gateway via `PaymentService.syncStatus(paymentId)`. `syncStatus` reuses the exact same
 transition/event-publishing logic `verify()` and the webhook handler use (a single
-`applyGatewayStatus` helper) — the job only decides *which* payments to check, it never
+`applyGatewayOutcome` helper) — the job only decides *which* payments to check, it never
 duplicates the status-transition rules. `syncStatus` is also exposed for manual/admin-triggered
 resync if a support agent needs to force a re-check.
 

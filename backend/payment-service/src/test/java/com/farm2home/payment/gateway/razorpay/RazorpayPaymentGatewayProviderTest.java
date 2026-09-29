@@ -82,6 +82,12 @@ class RazorpayPaymentGatewayProviderTest {
         assertThat(providerReturning("{}").getName()).isEqualTo("RAZORPAY");
     }
 
+    @Test
+    @DisplayName("checkoutKeyId() is the public key id, never the secret")
+    void checkoutKeyId_isPublicKey() {
+        assertThat(providerReturning("{}").checkoutKeyId()).isEqualTo(KEY_ID).isNotEqualTo(KEY_SECRET);
+    }
+
     @Nested
     @DisplayName("createOrder()")
     class CreateOrder {
@@ -122,41 +128,97 @@ class RazorpayPaymentGatewayProviderTest {
     @DisplayName("verifyPayment()")
     class VerifyPayment {
 
+        private final BigDecimal expected = new BigDecimal("150.00");
+
+        private GatewayVerificationRequest request(String signature) {
+            return new GatewayVerificationRequest("order_ABC123", "pay_XYZ789", signature, expected);
+        }
+
         @Test
-        @DisplayName("valid signature + gateway reports captured → valid")
+        @DisplayName("valid signature + gateway reports captured → signature valid, CAPTURED")
         void validSignatureAndCaptured_valid() {
             String signature = hmac("order_ABC123|pay_XYZ789", KEY_SECRET);
-            var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"status\":\"captured\"}");
+            var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"order_id\":\"order_ABC123\","
+                    + "\"status\":\"captured\",\"amount\":15000,\"currency\":\"INR\"}");
 
-            var result = provider.verifyPayment(new GatewayVerificationRequest("order_ABC123", "pay_XYZ789", signature));
+            var result = provider.verifyPayment(request(signature));
 
-            assertThat(result.valid()).isTrue();
+            assertThat(result.signatureValid()).isTrue();
             assertThat(result.state()).isEqualTo(GatewayPaymentState.CAPTURED);
         }
 
         @Test
-        @DisplayName("valid signature but gateway reports failed → invalid")
-        void validSignatureButFailed_invalid() {
+        @DisplayName("valid signature but gateway reports failed → signature valid, FAILED")
+        void validSignatureButFailed_failedState() {
             String signature = hmac("order_ABC123|pay_XYZ789", KEY_SECRET);
             var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"status\":\"failed\"}");
 
-            var result = provider.verifyPayment(new GatewayVerificationRequest("order_ABC123", "pay_XYZ789", signature));
+            var result = provider.verifyPayment(request(signature));
 
-            assertThat(result.valid()).isFalse();
+            assertThat(result.signatureValid()).isTrue();
+            assertThat(result.state()).isEqualTo(GatewayPaymentState.FAILED);
         }
 
         @Test
-        @DisplayName("forged signature → invalid, never calls the gateway")
+        @DisplayName("valid signature but payment only authorized → signature valid, AUTHORIZED (not a failure)")
+        void validSignatureButAuthorized_notFailed() {
+            String signature = hmac("order_ABC123|pay_XYZ789", KEY_SECRET);
+            var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"status\":\"authorized\",\"amount\":15000}");
+
+            var result = provider.verifyPayment(request(signature));
+
+            assertThat(result.signatureValid()).isTrue();
+            assertThat(result.state()).isEqualTo(GatewayPaymentState.AUTHORIZED);
+        }
+
+        @Test
+        @DisplayName("forged signature → signature invalid, never calls the gateway")
         void forgedSignature_invalid() {
             WebClient.Builder builder = WebClient.builder().exchangeFunction(request -> {
                 throw new AssertionError("Should not call the gateway for a forged signature");
             });
             var provider = new RazorpayPaymentGatewayProvider(builder, properties(), new ObjectMapper());
 
-            var result = provider.verifyPayment(new GatewayVerificationRequest("order_ABC123", "pay_XYZ789", "forged"));
+            var result = provider.verifyPayment(request("forged"));
 
-            assertThat(result.valid()).isFalse();
-            assertThat(result.state()).isEqualTo(GatewayPaymentState.FAILED);
+            assertThat(result.signatureValid()).isFalse();
+            assertThat(result.state()).isNotEqualTo(GatewayPaymentState.CAPTURED);
+        }
+
+        @Test
+        @DisplayName("captured amount differs from the expected amount → PaymentGatewayException")
+        void amountMismatch_throws() {
+            String signature = hmac("order_ABC123|pay_XYZ789", KEY_SECRET);
+            var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"order_id\":\"order_ABC123\","
+                    + "\"status\":\"captured\",\"amount\":100,\"currency\":\"INR\"}");
+
+            assertThatThrownBy(() -> provider.verifyPayment(request(signature)))
+                    .isInstanceOf(PaymentGatewayException.class)
+                    .hasMessageContaining("amount");
+        }
+
+        @Test
+        @DisplayName("captured in a different currency → PaymentGatewayException")
+        void currencyMismatch_throws() {
+            String signature = hmac("order_ABC123|pay_XYZ789", KEY_SECRET);
+            var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"status\":\"captured\","
+                    + "\"amount\":15000,\"currency\":\"USD\"}");
+
+            assertThatThrownBy(() -> provider.verifyPayment(request(signature)))
+                    .isInstanceOf(PaymentGatewayException.class)
+                    .hasMessageContaining("currency");
+        }
+
+        @Test
+        @DisplayName("fetched payment belongs to a different gateway order → PaymentGatewayException")
+        void orderMismatch_throws() {
+            String signature = hmac("order_ABC123|pay_XYZ789", KEY_SECRET);
+            var provider = providerReturning("{\"id\":\"pay_XYZ789\",\"order_id\":\"order_OTHER\","
+                    + "\"status\":\"captured\",\"amount\":15000}");
+
+            assertThatThrownBy(() -> provider.verifyPayment(request(signature)))
+                    .isInstanceOf(PaymentGatewayException.class)
+                    .hasMessageContaining("does not belong");
         }
     }
 
@@ -226,7 +288,7 @@ class RazorpayPaymentGatewayProviderTest {
     class FetchOrderStatus {
 
         @Test
-        @DisplayName("returns the first terminal (captured/failed) payment in the order's payment list")
+        @DisplayName("returns the captured payment in the order's payment list")
         void findsTerminalPayment() {
             var provider = providerReturning(
                     "{\"items\":[{\"id\":\"pay_1\",\"status\":\"created\"},"
@@ -236,6 +298,30 @@ class RazorpayPaymentGatewayProviderTest {
 
             assertThat(status.gatewayPaymentId()).isEqualTo("pay_2");
             assertThat(status.state()).isEqualTo(GatewayPaymentState.CAPTURED);
+        }
+
+        @Test
+        @DisplayName("a failed attempt listed before a captured retry → CAPTURED wins")
+        void failedThenCapturedRetry_capturedWins() {
+            var provider = providerReturning(
+                    "{\"items\":[{\"id\":\"pay_1\",\"status\":\"failed\"},"
+                            + "{\"id\":\"pay_2\",\"status\":\"captured\"}]}");
+
+            GatewayPaymentStatus status = provider.fetchOrderStatus("order_ABC123");
+
+            assertThat(status.gatewayPaymentId()).isEqualTo("pay_2");
+            assertThat(status.state()).isEqualTo(GatewayPaymentState.CAPTURED);
+        }
+
+        @Test
+        @DisplayName("only failed attempts → FAILED")
+        void onlyFailed_failed() {
+            var provider = providerReturning("{\"items\":[{\"id\":\"pay_1\",\"status\":\"failed\"}]}");
+
+            GatewayPaymentStatus status = provider.fetchOrderStatus("order_ABC123");
+
+            assertThat(status.state()).isEqualTo(GatewayPaymentState.FAILED);
+            assertThat(status.gatewayPaymentId()).isEqualTo("pay_1");
         }
 
         @Test
@@ -258,13 +344,15 @@ class RazorpayPaymentGatewayProviderTest {
         @DisplayName("valid signature, payment.captured → CAPTURED event")
         void capturedEvent_parsed() {
             String payload = "{\"event\":\"payment.captured\",\"payload\":{\"payment\":{\"entity\":"
-                    + "{\"id\":\"pay_XYZ789\",\"order_id\":\"order_ABC123\",\"status\":\"captured\"}}}}";
+                    + "{\"id\":\"pay_XYZ789\",\"order_id\":\"order_ABC123\",\"status\":\"captured\","
+                    + "\"amount\":15000}}}}";
             String signature = hmac(payload, WEBHOOK_SECRET);
             var provider = providerReturning("{}");
 
             GatewayWebhookEvent event = provider.parseWebhookEvent(payload, signature);
 
             assertThat(event.eventType()).isEqualTo("payment.captured");
+            assertThat(event.amount()).isEqualByComparingTo("150.00");
             assertThat(event.gatewayOrderId()).isEqualTo("order_ABC123");
             assertThat(event.gatewayPaymentId()).isEqualTo("pay_XYZ789");
             assertThat(event.state()).isEqualTo(GatewayPaymentState.CAPTURED);

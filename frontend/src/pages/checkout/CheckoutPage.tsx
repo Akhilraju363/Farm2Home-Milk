@@ -1,11 +1,11 @@
 import {
   Box, Paper, Typography, Button, Divider, List, ListItem, ListItemText, Alert,
-  CircularProgress, Skeleton, Chip, TextField,
+  CircularProgress, Skeleton, Chip, TextField, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import { LocationOn, CheckCircle, HelpOutline, ArrowBack } from '@mui/icons-material'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSnackbar } from 'notistack'
 import dayjs from 'dayjs'
 import { PageHeader } from '../../components/common/PageHeader'
@@ -14,16 +14,26 @@ import { useAuth } from '../../hooks/useAuth'
 import { cartService } from '../../services/cartService'
 import { orderService } from '../../services/orderService'
 import { customerService } from '../../services/customerService'
+import { paymentService } from '../../services/paymentService'
 import { formatCurrency } from '../../utils/formatters'
+import { completeOnlinePayment } from '../../utils/onlinePayment'
+import type { OnlinePaymentOutcome } from '../../utils/onlinePayment'
+import type { Payment } from '../../types/payment.types'
+import { PaymentMethodSelector } from '../../components/payment/PaymentMethodSelector'
+import type { CustomerPaymentMethod } from '../../components/payment/PaymentMethodSelector'
+import { PaymentResultView } from '../../components/payment/PaymentResultView'
 
 /** Places a real order from the caller's own server-side Cart via POST /orders/checkout - see
  *  order-service's OrderServiceImpl.checkout(). Items/prices are never sent from here (the backend
  *  re-resolves and re-validates everything: price, stock, delivery eligibility - same pipeline as
  *  BuyNowDialog's single-item path, see priceItem()/verifyDeliveryEligibility()), so this page is
- *  just a summary + confirmation step, not a second source of truth. Payment happens on the Order
- *  Details page after checkout succeeds (reuses PayNowDialog there), matching the existing
- *  BuyNowDialog convention of "create order, then land on its details page" rather than
- *  duplicating payment-method selection here. */
+ *  just a summary + confirmation step, not a second source of truth.
+ *
+ *  The chosen payment method is collected right after the order is created, through the same
+ *  POST /payments call PayNowDialog uses, for the order's own server-computed total: Cash on
+ *  Delivery records a PENDING cash payment, Wallet debits immediately, and Online opens Razorpay
+ *  Checkout (see completeOnlinePayment - the outcome is always confirmed by the backend). If the
+ *  payment can't be completed the order still exists and can be paid from its details page. */
 export function CheckoutPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -33,6 +43,11 @@ export function CheckoutPage() {
   const [orderDate, setOrderDate] = useState(dayjs().format('YYYY-MM-DD'))
   const [addressDialogOpen, setAddressDialogOpen] = useState(false)
   const [serverError, setServerError] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<CustomerPaymentMethod>('RAZORPAY')
+  const [placing, setPlacing] = useState(false)
+  const [onlineResult, setOnlineResult] = useState<{
+    orderId: string; payment: Payment; outcome: OnlinePaymentOutcome; message?: string
+  } | null>(null)
 
   const { data: cartRes, isLoading: cartLoading, isError: cartError } = useQuery({
     queryKey: ['cart'],
@@ -63,18 +78,55 @@ export function CheckoutPage() {
     queryClient.invalidateQueries({ queryKey: ['customers', user?.id, 'addresses'] })
   }
 
-  const checkoutMutation = useMutation({
-    mutationFn: () => orderService.checkout({ orderDate }),
-    onSuccess: (res) => {
-      enqueueSnackbar('Order placed successfully', { variant: 'success' })
-      queryClient.invalidateQueries({ queryKey: ['cart'] })
-      navigate(`/orders/${res.data.data.id}`)
-    },
-    onError: (err: any) => setServerError(err.response?.data?.message ?? 'Could not place the order. Please try again.'),
-  })
+  const placeOrder = async () => {
+    setServerError('')
+    setPlacing(true)
+    let order
+    try {
+      order = (await orderService.checkout({ orderDate })).data.data
+    } catch (err: any) {
+      setServerError(err.response?.data?.message ?? 'Could not place the order. Please try again.')
+      setPlacing(false)
+      return
+    }
+    queryClient.invalidateQueries({ queryKey: ['cart'] })
+    queryClient.invalidateQueries({ queryKey: ['orders'] })
+
+    try {
+      const payment = (await paymentService.initiate({
+        orderId: order.id, amount: order.totalAmount, paymentMethod,
+      })).data.data
+      queryClient.invalidateQueries({ queryKey: ['payments'] })
+
+      if (paymentMethod === 'RAZORPAY') {
+        const result = await completeOnlinePayment(payment, {
+          description: `Order ${order.orderNumber}`,
+          prefill: { contact: user?.mobile, email: user?.email },
+        })
+        queryClient.invalidateQueries({ queryKey: ['payments'] })
+        setOnlineResult({ orderId: order.id, ...result })
+        return
+      }
+      if (paymentMethod === 'WALLET') {
+        queryClient.invalidateQueries({ queryKey: ['wallet'] })
+        enqueueSnackbar('Order placed and paid from your wallet', { variant: 'success' })
+      } else {
+        enqueueSnackbar('Order placed - pay in cash on delivery', { variant: 'success' })
+      }
+      navigate(`/orders/${order.id}`)
+    } catch (err: any) {
+      enqueueSnackbar(
+        `Order placed, but the payment couldn't be completed: ${err.response?.data?.message ?? err.message ?? 'please try again'}. You can pay from the order page.`,
+        { variant: 'warning' },
+      )
+      navigate(`/orders/${order.id}`)
+    } finally {
+      setPlacing(false)
+    }
+  }
 
   const knownOutOfRadius = availability?.deliveryAvailable === false
-  const canPlaceOrder = purchasableItems.length > 0 && !knownOutOfRadius && !checkoutMutation.isPending
+  const canPlaceOrder = purchasableItems.length > 0 && !knownOutOfRadius && !placing
 
   if (cartLoading) {
     return (
@@ -169,6 +221,11 @@ export function CheckoutPage() {
             />
           </Paper>
 
+          <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2 }}>
+            <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Payment Method</Typography>
+            <PaymentMethodSelector value={paymentMethod} onChange={setPaymentMethod} disabled={placing} />
+          </Paper>
+
           <Paper variant="outlined" sx={{ borderRadius: 2 }}>
             <Typography variant="subtitle1" fontWeight={700} sx={{ p: 2.5, pb: 1.5 }}>Items</Typography>
             <List disablePadding>
@@ -202,9 +259,10 @@ export function CheckoutPage() {
             <Button
               variant="contained" fullWidth size="large"
               disabled={!canPlaceOrder}
-              onClick={() => { setServerError(''); checkoutMutation.mutate() }}
+              onClick={placeOrder}
             >
-              {checkoutMutation.isPending ? <CircularProgress size={20} color="inherit" /> : 'Place Order'}
+              {placing ? <CircularProgress size={20} color="inherit" />
+                : paymentMethod === 'RAZORPAY' ? 'Place Order & Pay' : 'Place Order'}
             </Button>
             {knownOutOfRadius && (
               <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
@@ -212,11 +270,29 @@ export function CheckoutPage() {
               </Typography>
             )}
             <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>
-              You'll choose a payment method after placing your order.
+              {paymentMethod === 'RAZORPAY'
+                ? 'You\'ll pay securely with Razorpay right after placing the order.'
+                : paymentMethod === 'CASH'
+                  ? 'Pay the delivery partner in cash when your order arrives.'
+                  : 'The order total will be debited from your wallet.'}
             </Typography>
           </Paper>
         </Box>
       </Box>
+
+      <Dialog open={Boolean(onlineResult)} maxWidth="xs" fullWidth>
+        <DialogTitle fontWeight={700}>Order Placed</DialogTitle>
+        <DialogContent>
+          {onlineResult && (
+            <PaymentResultView payment={onlineResult.payment} outcome={onlineResult.outcome} message={onlineResult.message} />
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button variant="contained" fullWidth onClick={() => onlineResult && navigate(`/orders/${onlineResult.orderId}`)}>
+            View Order
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {user?.id && (
         <DeliveryAddressDialog

@@ -47,9 +47,9 @@ class MockPaymentGatewayProviderTest {
         @DisplayName("magic valid signature → valid, CAPTURED")
         void validSignature_valid() {
             var result = provider.verifyPayment(new GatewayVerificationRequest(
-                    "mock_order_1", "mock_pay_1", MockPaymentGatewayProvider.MOCK_VALID_SIGNATURE));
+                    "mock_order_1", "mock_pay_1", MockPaymentGatewayProvider.MOCK_VALID_SIGNATURE, BigDecimal.TEN));
 
-            assertThat(result.valid()).isTrue();
+            assertThat(result.signatureValid()).isTrue();
             assertThat(result.state()).isEqualTo(GatewayPaymentState.CAPTURED);
             assertThat(result.gatewayPaymentId()).isEqualTo("mock_pay_1");
         }
@@ -58,9 +58,9 @@ class MockPaymentGatewayProviderTest {
         @DisplayName("any other signature → invalid, FAILED")
         void wrongSignature_invalid() {
             var result = provider.verifyPayment(new GatewayVerificationRequest(
-                    "mock_order_1", "mock_pay_1", "not-the-magic-value"));
+                    "mock_order_1", "mock_pay_1", "not-the-magic-value", BigDecimal.TEN));
 
-            assertThat(result.valid()).isFalse();
+            assertThat(result.signatureValid()).isFalse();
             assertThat(result.state()).isEqualTo(GatewayPaymentState.FAILED);
         }
     }
